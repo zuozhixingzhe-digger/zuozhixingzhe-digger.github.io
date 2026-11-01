@@ -36,7 +36,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.0.0"
+VERSION = "0.0.0.1"
 
 
 def text_of(content):

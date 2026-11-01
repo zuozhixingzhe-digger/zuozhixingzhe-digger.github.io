@@ -11,7 +11,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.0';
+let HT_VERSION = '0.0.0.1';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',

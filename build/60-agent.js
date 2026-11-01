@@ -165,7 +165,11 @@ class AgentApp {
     } catch (e) { this.messages = []; }
     this.render();
     if (!this.messages.length) {
-      this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · 后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端</div>
+      const direct = Settings.get('agentMode') === 'direct';
+      const where = direct
+        ? `直连 ${esc(Settings.get('agentDirectUrl') || 'https://api.deepseek.com')} · 密钥在本机（仅测试用）`
+        : `后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端`;
+      this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
         <div class="msg assistant"><span class="role">agent</span>你好。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
     }
   }
@@ -268,50 +272,84 @@ class AgentApp {
 
   apiMessages() {
     const out = [{ role:'system', content:AGENT_SYSTEM }];
+    /* reasoning_content 只有 DeepSeek 认；发给 OpenAI 官方或别的兼容端点会 400。
+     * 所以只在「直连且地址是 deepseek」时才回传。 */
+    const keepReasoning = Settings.get('agentMode') === 'direct' &&
+      /deepseek/i.test(String(Settings.get('agentDirectUrl') || ''));
     for (const m of this.messages) {
       if (m.role === 'error') continue;
       const o = { role:m.role, content:m.content == null ? '' : String(m.content) };
       if (m.tool_calls) o.tool_calls = m.tool_calls;
       if (m.tool_call_id) o.tool_call_id = m.tool_call_id;
       if (m.name) o.name = m.name;
+      /* DeepSeek 思考模式 + tools 的硬性要求：所有历史轮的 reasoning_content 都要回传，
+       * 少一条就 400。非思考模式带了也会被忽略。 */
+      if (keepReasoning && m.reasoning_content) o.reasoning_content = m.reasoning_content;
       out.push(o);
     }
     return out;
   }
 
   async callModel() {
-    const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
-    if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在“更多 → 智能体”里填写地址。');
-    const provider = Settings.get('agentProvider') || 'openai';
-    const model = Settings.get('agentModel') || 'gpt-4o-mini';
+    const direct = Settings.get('agentMode') === 'direct';
+    const model = Settings.get('agentModel') || 'deepseek-flash';
     const ctrl = new AbortController();
     this.abort = ctrl;
     const timer = setTimeout(() => ctrl.abort(), 240000);
+
+    let endpoint, headers, payload, label;
+    if (direct) {
+      /* 直连：浏览器 → OpenAI 兼容服务。跳过 modelserver，适合临时测试。
+       * 代价是密钥落在本机（localStorage + .config.settings），设置页已明示风险。 */
+      const base = String(Settings.get('agentDirectUrl') || 'https://api.deepseek.com').replace(/\/+$/, '');
+      const key = String(Settings.get('agentKey') || '').trim();
+      if (!key) throw new Error('直连模式需要 API Key：更多 → 智能体 → 勾选「直连 API」后填写。');
+      endpoint = /\/chat\/completions$/i.test(base) ? base : base + '/chat/completions';
+      label = base.replace(/^https?:\/\//, '');
+      headers = { 'Content-Type':'application/json', 'Authorization':'Bearer ' + key };
+      payload = { model, stream:false, temperature:0.2, messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto' };
+      // 只有 DeepSeek 认 thinking 字段；别的 OpenAI 兼容端点收到未知参数会 400
+      if (/deepseek/i.test(base)) {
+        payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
+      }
+    } else {
+      const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
+      if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
+      endpoint = base + '/v1/chat/completions';
+      label = base.replace(/^https?:\/\//, '');
+      headers = {
+        'Content-Type':'application/json',
+        'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
+        'X-HTerm-Client':'hterminal'
+      };
+      payload = {
+        model, provider: Settings.get('agentProvider') || 'openai',
+        stream:false, temperature:0.2,
+        messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto'
+      };
+    }
+
     let res, raw;
     try {
-      res = await fetch(base + '/v1/chat/completions', {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json',
-          'X-HTerm-Provider':provider,
-          'X-HTerm-Client':'hterminal'
-        },
-        body:JSON.stringify({
-          model, provider, stream:false, temperature:0.2,
-          messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto'
-        }),
-        signal:ctrl.signal
+      res = await fetch(endpoint, {
+        method:'POST', headers, body:JSON.stringify(payload), signal:ctrl.signal
       });
       raw = await res.text();
     } catch (e) {
       clearTimeout(timer);
       if (e.name === 'AbortError') throw new Error('请求已取消或超时');
-      throw new Error('连不上后端 (' + base + ')。请先运行 modelserver.py / .js / .go。原始错误：' + e.message);
+      if (direct) {
+        throw new Error(
+          '直连 ' + label + ' 失败。常见原因：①密钥错误；②该服务不允许浏览器跨域（CORS）——那就改用后端模式；' +
+          '③网络不通。原始错误：' + (e.message || e)
+        );
+      }
+      throw new Error('连不上后端 (' + label + ')。请先运行 modelserver.py / .js / .go。原始错误：' + (e.message || e));
     }
     clearTimeout(timer);
     let data;
     try { data = JSON.parse(raw); }
-    catch (e) { throw new Error('后端返回了非 JSON（HTTP ' + res.status + '）：' + raw.slice(0, 400)); }
+    catch (e) { throw new Error('服务返回了非 JSON（HTTP ' + res.status + '）：' + raw.slice(0, 400)); }
     if (!res.ok || data.error) {
       const msg = data.error && (data.error.message || data.error) || raw.slice(0, 400);
       throw new Error('模型调用失败（HTTP ' + res.status + '）：' + msg);
@@ -320,6 +358,7 @@ class AgentApp {
     if (!choice || !choice.message) throw new Error('后端响应里没有 choices[0].message：' + raw.slice(0, 400));
     const msg = choice.message;
     const out = { role:'assistant', content: msg.content || '' };
+    if (msg.reasoning_content) out.reasoning_content = msg.reasoning_content;
     if (msg.tool_calls && msg.tool_calls.length) {
       out.tool_calls = msg.tool_calls.map((t, i) => ({
         id: t.id || ('call_' + Date.now() + '_' + i),

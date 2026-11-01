@@ -74,8 +74,11 @@
   --bar:36px;
   --top:clamp(44px,7.4vw,54px);
   --cell-pad:16px;
-  /* 字体：等宽 / 界面 / 符号 */
-  --mono:"JetBrains Mono","Cascadia Code","SF Mono","Fira Code",Menlo,Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC",monospace;
+  /* 字体：等宽 / 界面 / 符号
+   * 终端字体栈只放严格等宽的西文，最后用 monospace 兜底；
+   * 绝不放 ui-monospace（部分平台它并不严格等宽，回退过去就会逐列错位）。
+   * 启动时 40-term.js 还会用 canvas 实测一遍 M/i/W/0 宽度，过滤掉名义等宽的伪等宽字体。 */
+  --mono:"JetBrains Mono","Fira Code","DejaVu Sans Mono","Liberation Mono",Menlo,Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC",monospace;
   --ui:"Inter","Segoe UI Variable","Segoe UI","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
   --mono-sym:"JetBrains Mono","Noto Sans Symbols2","Segoe UI Symbol","Apple Symbols","Noto Sans Symbols","DejaVu Sans",sans-serif;
   --ease:cubic-bezier(.22,1,.36,1);
@@ -139,13 +142,11 @@ code{font-family:var(--mono);font-size:.94em;color:var(--amber)}
   padding:0 12px 0 14px; min-width:0; max-width:52vw;
 }
 .tb-brand{
-  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  display:flex; align-items:center; gap:7px; flex:0 0 auto;
   font-family:var(--mono); font-size:12.5px; letter-spacing:.02em;
   color:var(--fg); text-decoration:none;
 }
-.tb-logo{display:flex; flex:0 0 auto; color:var(--accent); filter:drop-shadow(0 0 8px rgba(94,234,212,.45))}
-.tb-logo svg{width:17px;height:17px;display:block}
-.tb-brand b{font-weight:600;color:var(--fg)}
+.tb-brand b{font-weight:600;color:var(--fg);letter-spacing:-.01em}
 .tb-ver{
   font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--fg-mute);
   border:1px solid var(--border); border-radius:5px; padding:1px 5px; margin-left:2px;
@@ -162,12 +163,13 @@ body.light .tb-where{background:rgba(0,0,0,.02)}
 /* 中间：符号控制键（修饰键 / Esc / Tab / 方向键） */
 .tb-mid{
   display:flex; align-items:stretch; flex:1 1 auto; min-width:0;
-  padding-left:4px;
-  overflow-x:auto; overflow-y:hidden; scrollbar-width:none;
-  -webkit-overflow-scrolling:touch;
+  /* 宽屏居中成一条紧凑的控制条；不铺满整条栏，否则 5 个键会被拉到 170px 一个。
+   * 窄屏再切成 flex:1 铺满（见 560px 媒体查询）。 */
+  justify-content:space-evenly;
+  padding-left:2px;
+  /* 不能用 auto/scroll：摇杆的四向符号故意画在圆盘之外，滚动容器会把它们裁掉。 */
+  overflow:visible;
 }
-.tb-mid::-webkit-scrollbar{display:none}
-.tb-gap{flex:1 1 auto; min-width:8px}
 .tb-right{display:flex; align-items:stretch; flex:0 0 auto; border-left:1px solid var(--border)}
 
 .k{
@@ -187,11 +189,13 @@ body.light .tb-where{background:rgba(0,0,0,.02)}
   .k:hover{color:var(--fg);background:rgba(255,255,255,.055)}
   .k--active:hover{color:#08110f;background:var(--accent)}
 }
-.tb-mid .k{flex:1 1 0;min-width:28px;max-width:54px}
-/* 宽屏不把按键摊到整条栏上——那样看着像漏了内容；窄屏才让它们自己挤满 */
-@media (min-width:980px){ .tb-mid{flex:0 1 auto;max-width:560px} }
+.tb-mid .k{flex:0 1 auto;min-width:52px;max-width:88px;padding:0 14px}
+/* 宽屏给固定最小宽度，避免单个键被拉成 170px；窄屏再放开成均分铺满。 */
 .tb-right .k{width:clamp(36px,8.4vw,44px);color:var(--fg-mute)}
 .tb-right .k:last-child{border-right:0}
+/* 「更多」用 ≥：单字符比 ☰ 更利落，且不会被系统当成菜单图标做特粗处理 */
+.tb-right .k[data-act="more"]{font-family:var(--mono);font-size:clamp(19px,4.6vw,23px);color:var(--fg-dim)}
+.tb-right .k[data-act="more"] span{display:block;transform:translateY(-.06em)}
 /* 锁定（短按切换）＝实心强调色；按住（长按 / 实体键按下）＝更浅的强调色 */
 .k--active{background:var(--accent);color:#08110f}
 .k--active:active{background:var(--accent)}
@@ -200,10 +204,77 @@ body.light .k--pressing{background:#6fd6c6;color:#04110e}
 .k[disabled]{opacity:.32;pointer-events:none}
 
 .sep{
-  flex:0 0 1px; align-self:center; height:20px; margin:0 8px;
+  flex:0 0 1px; align-self:center; height:20px; margin:0 6px;
   background:rgba(120,190,180,.30);
 }
 body.light .sep{background:rgba(20,60,55,.22)}
+
+/* =====================================================================
+ * 方向摇杆（顶栏中部）
+ * 参考项目 draw-http-terminal 的实现：拖动中心圆点，按主导方向发方向键，
+ * 保持方向时 180ms 连发。尺寸变量单值，宽高同源，绝不出现椭圆。
+ * ===================================================================== */
+.joystick{
+  --joy:clamp(34px,7.4vw,42px);
+  position:relative; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  width:calc(var(--joy) + 32px); height:100%;
+  overflow:visible; touch-action:none;
+  user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+}
+.joystick__base{
+  position:relative; flex:0 0 auto;
+  width:var(--joy); height:var(--joy); aspect-ratio:1/1;
+  border-radius:50%;
+  background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.07),rgba(255,255,255,.012) 70%),
+             rgba(255,255,255,.035);
+  border:1px solid var(--border-strong);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.45);
+  touch-action:none; overflow:visible;
+  transition:background .12s var(--ease),box-shadow .12s var(--ease);
+}
+body.light .joystick__base{
+  background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.9),rgba(255,255,255,.35) 70%),rgba(20,60,55,.05);
+  box-shadow:inset 0 1px 2px rgba(20,60,55,.12);
+}
+.joystick__base--active{
+  background:rgba(94,234,212,.14);
+  box-shadow:0 0 0 6px rgba(94,234,212,.10),0 0 16px rgba(94,234,212,.26);
+}
+body.light .joystick__base--active{
+  background:rgba(13,148,136,.14);
+  box-shadow:0 0 0 6px rgba(13,148,136,.10),0 0 16px rgba(13,148,136,.22);
+}
+.joy-arrow{
+  position:absolute; z-index:2; pointer-events:none;
+  font-family:var(--mono-sym); font-size:10px; font-weight:700; line-height:1;
+  color:var(--fg-mute); opacity:.5; font-variant-emoji:text;
+  transition:color .12s var(--ease),opacity .12s var(--ease),
+             transform .12s var(--ease),text-shadow .12s var(--ease);
+}
+.joy-arrow--up   {top:0;   left:50%; transform:translateX(-50%)}
+.joy-arrow--down {bottom:0;left:50%; transform:translateX(-50%)}
+.joy-arrow--left {left:0;  top:50%;  transform:translateY(-50%)}
+.joy-arrow--right{right:0; top:50%;  transform:translateY(-50%)}
+.joy-arrow--on{color:var(--accent);opacity:1;text-shadow:0 0 6px var(--accent),0 0 12px rgba(94,234,212,.85)}
+.joy-arrow--on.joy-arrow--up   {transform:translateX(-50%) translateY(-2px) scale(1.35)}
+.joy-arrow--on.joy-arrow--down {transform:translateX(-50%) translateY(2px)  scale(1.35)}
+.joy-arrow--on.joy-arrow--left {transform:translateY(-50%) translateX(-2px) scale(1.35)}
+.joy-arrow--on.joy-arrow--right{transform:translateY(-50%) translateX(2px)  scale(1.35)}
+.joystick__ring{position:absolute;inset:5px;border-radius:50%;border:1px solid rgba(120,190,180,.16);pointer-events:none}
+.joystick__cross{
+  position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(rgba(120,190,180,.26),rgba(120,190,180,.26)) center/1px 58% no-repeat,
+    linear-gradient(rgba(120,190,180,.26),rgba(120,190,180,.26)) center/58% 1px no-repeat;
+}
+.joystick__knob{
+  position:absolute; top:50%; left:50%; width:42%; height:42%; margin:-21% 0 0 -21%;
+  border-radius:50%; pointer-events:none;
+  background:linear-gradient(180deg,#b9fff3,var(--accent));
+  box-shadow:0 2px 6px rgba(0,0,0,.45),0 0 10px rgba(94,234,212,.35);
+  transform:translate(0,0); transition:transform .06s linear;
+}
+body.light .joystick__knob{background:linear-gradient(180deg,#7fe3d4,var(--accent))}
 
 /* =====================================================================
  * 桌面：底层终端 + 浮动窗口
@@ -267,7 +338,14 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
   padding:0 8px; background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);
   border-bottom:1px solid var(--line-soft); cursor:default;
   user-select:none; -webkit-user-select:none;
+  /* 触摸设备上必须禁掉浏览器手势，否则 pointerdown 之后会被滚动手势抢走（pointercancel），
+   * 表现就是「按下去纹丝不动」。拖动本身用 setPointerCapture 接管。 */
+  touch-action:none;
 }
+/* 拖动/改大小期间：iframe 会吃掉指针事件（父文档 pointermove 断流），
+ * 双保险——即使没捕获到指针，也保证指针在窗口内容上时事件仍归父文档。 */
+body.win-drag iframe{pointer-events:none!important}
+body.win-drag,body.win-drag *{cursor:grabbing!important;user-select:none!important}
 .win.focus .win-bar{background:linear-gradient(180deg,rgba(94,234,212,.055),transparent)}
 .win-dots{display:flex;gap:6px;align-items:center;flex:0 0 auto;padding:0 2px}
 .win-dots i{width:10px;height:10px;border-radius:50%;background:#2b3a3a;display:block;transition:background .15s}
@@ -288,7 +366,7 @@ body.light .win-dots i{background:#c6d2cf}
 .win-body{flex:1 1 auto; min-height:0; position:relative; overflow:hidden; background:rgba(9,13,14,.88)}
 body.light .win-body{background:rgba(252,254,253,.94)}
 .win-body.pad{padding:14px}
-.rz{position:absolute;z-index:5}
+.rz{position:absolute;z-index:5;touch-action:none}
 .rz.n{top:-3px;left:8px;right:8px;height:7px;cursor:ns-resize}
 .rz.s{bottom:-3px;left:8px;right:8px;height:7px;cursor:ns-resize}
 .rz.w{left:-3px;top:8px;bottom:8px;width:7px;cursor:ew-resize}
@@ -404,6 +482,40 @@ body.light .win-body{background:rgba(252,254,253,.94)}
 .drawer__row input:focus,.drawer__row select:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px rgba(94,234,212,.08)}
 .drawer__grid{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 6px}
 .drawer__note{font-size:10.5px;line-height:1.7;color:var(--fg-faint);padding:4px 0 6px}
+
+/* 开关：凡是「只有两个状态」的设置一律用它，不再用下拉框 */
+.sw{
+  position:relative; flex:0 0 auto; margin-left:auto;
+  width:42px; height:24px; display:inline-flex; align-items:center;
+  cursor:pointer; touch-action:manipulation;
+}
+.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1}
+.sw i{
+  position:absolute; inset:0; border-radius:999px;
+  background:rgba(120,190,180,.16); border:1px solid var(--border);
+  transition:background .18s var(--ease),border-color .18s var(--ease);
+}
+.sw i::after{
+  content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+  background:#e7f5f2; box-shadow:0 1px 3px rgba(0,0,0,.45);
+  transition:transform .18s var(--ease),background .18s var(--ease);
+}
+.sw input:checked + i{background:var(--accent);border-color:var(--accent)}
+.sw input:checked + i::after{transform:translateX(18px);background:#04110e}
+.sw input:focus-visible + i{outline:2px solid var(--accent);outline-offset:2px}
+body.light .sw i{background:rgba(20,60,55,.12)}
+body.light .sw input:checked + i{background:var(--accent)}
+.sw[aria-disabled="true"]{opacity:.45;pointer-events:none}
+
+/* 分段选择：三选项（如光标形态）用横向按钮组 */
+.seg{display:inline-flex;margin-left:auto;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{
+  height:26px; padding:0 10px; font-size:11px; color:var(--fg-mute); font-family:var(--mono);
+  border-left:1px solid var(--border); transition:background .14s var(--ease),color .14s var(--ease);
+}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#04110e}
+body.light .seg button[aria-pressed="true"]{color:#fff}
 .drawer__list{display:flex;flex-direction:column;gap:4px;padding:2px 0 6px;max-height:220px;overflow:auto}
 .drawer__item{
   display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;
@@ -533,6 +645,17 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
   color:var(--fg-dim);font-size:12px;line-height:1.8;text-align:center}
 .br-frame.blocked iframe{display:none}
 .br-frame.blocked .br-fallback{display:grid}
+/* 非网页协议（mailto:/tel:/intent:// 等）：不塞进 iframe，改在这里给出路 */
+.br-notice{
+  position:absolute; inset:0; z-index:2; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:10px; padding:28px 24px;
+  background:var(--panel-solid); color:var(--fg-dim); text-align:center;
+}
+.br-notice[hidden]{display:none}
+.br-notice__title{font-size:13.5px;font-weight:600;color:var(--fg)}
+.br-notice__text{font-size:11.5px;line-height:1.8;max-width:460px;color:var(--fg-dim)}
+.br-notice__acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:6px}
+.br-frame.has-notice iframe{visibility:hidden}
 .br-tabs{display:flex;gap:2px;padding:4px 6px 0;border-bottom:1px solid var(--line-soft);overflow:auto;flex:0 0 auto;scrollbar-width:none}
 .br-tabs::-webkit-scrollbar{display:none}
 .br-tab{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px 7px 0 0;font-size:11px;color:var(--fg-mute);
@@ -604,13 +727,12 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 }
 @media (max-width:560px){
   :root{--cell-pad:10px;--top:46px}
-  .tb-left{padding:0 8px;gap:6px}
+  /* 窄屏没有品牌的位置：整块隐藏，让 ⌃ 直接从最左边开始（参考项目同样没有品牌块） */
+  .tb-left{display:none}
   .tb-ver{display:none}
   .tb-where{display:none}
   .tb-right .k{width:38px}
-  .tb-mid .k{max-width:44px}
-  /* 手机上先砍掉左右方向键（键盘上本来也没有），把位置留给历史与补全 */
-  .k[data-key="ArrowLeft"],.k[data-key="ArrowRight"]{display:none}
+  .tb-mid .k{flex:1 1 0;min-width:0;max-width:44px;padding:0}
   .sep{margin:0 2px}
   #term-view{padding:8px 8px 54px}
   .win{min-width:0}

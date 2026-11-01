@@ -17,6 +17,13 @@ const FIT_JS = [
   'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js',
   'https://unpkg.com/@xterm/addon-fit@0.10.0/lib/addon-fit.js'
 ];
+/* Unicode 11 宽度表：CJK、emoji、ZWJ 组合按 1/2 格精确计算。
+ * 不加载它时 xterm 用旧宽度表，遇到中文/emoji 会把单元格算错，
+ * 渲染位置与光标一起累积偏移——正是「输出文字错位」的主因之一。 */
+const UNI11_JS = [
+  'https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js',
+  'https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js'
+];
 async function loadXterm(onLog) {
   if (window.Terminal && window.FitAddon) return true;
   onLog && onLog('加载 xterm.css');
@@ -31,15 +38,55 @@ async function loadXterm(onLog) {
     const ok = await CDN.js(FIT_JS);
     if (!ok || !window.FitAddon) throw new Error('addon-fit 加载失败');
   }
+  // Unicode11 是「锦上添花」：CDN 不通时不让它拖死启动，退化为默认宽度表。
+  if (!window.Unicode11Addon) {
+    try { await CDN.js(UNI11_JS); } catch (e) { /* 忽略，见上 */ }
+  }
   return true;
+}
+
+/* ---------------------------------------------------------------- 等宽字体挑选
+ * 错位的另一半原因在字体：只要栈里混进一个「名义等宽、实际不等宽」的字体
+ * （ui-monospace 在部分平台 ± 比 M 窄 34%，某些 CJK 回退字体也如此），
+ * 每个字符宽度就不同，xterm 按单元格定位后文字会逐列漂移。
+ * 这里在启动时实测 M/i/W/0/空格的宽度，只放行真正等宽的候选。
+ * 未安装的字体测量会退回 monospace（本身等宽），误选也无害。 */
+let _monoCache = null;
+function isStrictMono(family) {
+  try {
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = '16px ' + family + ', monospace';
+    const w = s => c.measureText(s).width;
+    const m = w('M');
+    if (!(m > 0)) return false;
+    return Math.abs(w('i') - m) < 0.51 && Math.abs(w('W') - m) < 0.51 &&
+           Math.abs(w('0') - m) < 0.51 && Math.abs(w(' ') - m) < 0.51;
+  } catch (e) { return false; }
+}
+function xtermFont() {
+  if (_monoCache) return _monoCache;
+  const raw = cssVar('--mono') || 'monospace';
+  const cands = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const CJK = ['Noto Sans Mono CJK SC', 'Sarasa Mono SC'];
+  const picked = [];
+  for (const f of cands) {
+    const name = f.replace(/^["']|["']$/g, '');
+    if (name === 'monospace') break;
+    if (CJK.includes(name)) continue;   // CJK 统一追加到末尾，避免重复
+    if (isStrictMono('"' + name + '"')) picked.push(f);
+  }
+  // CJK 必须有等宽回退，否则中文会落到比例字体上
+  _monoCache = (picked.length ? picked.join(', ') + ', ' : '') +
+               '"Noto Sans Mono CJK SC", "Sarasa Mono SC", monospace';
+  return _monoCache;
 }
 
 /* ---------------------------------------------------------------- 主题取值 */
 function cssVar(name) {
   return getComputedStyle(document.body).getPropertyValue(name).trim();
 }
-function termTheme() {
-  const light = document.body.classList.contains('light');
+function termTheme(forceLight) {
+  const light = forceLight === undefined ? document.body.classList.contains('light') : !!forceLight;
   return {
     background: 'rgba(0,0,0,0)',
     foreground: cssVar('--fg') || (light ? '#182624' : '#d6e7e3'),
@@ -193,6 +240,67 @@ function initTopbarKeys() {
     btn.addEventListener('click', e => { e.preventDefault(); sendKeyToTerm(Keys.shape(Keys.seq(btn.dataset.key))); });
   });
 
+  // —— 方向摇杆 ——
+  // 与参考项目同一套手感：拖动中心圆点，取主导方向发方向键；保持方向 180ms 连发。
+  const joyEl = document.getElementById('joystick');
+  const joyBase = document.getElementById('joyBase');
+  const joyKnob = document.getElementById('joyKnob');
+  if (joyBase && joyKnob) {
+    const arrows = $$('.joy-arrow', joyEl);
+    let active = false, joyPid = null, joyDir = null, joyTimer = null, joyRadius = 0;
+    const setArrow = d => arrows.forEach(el => el.classList.toggle('joy-arrow--on', !!d && el.dataset.dir === d));
+    const arrowKey = { up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight' };
+    const sendDir = d => sendKeyToTerm(Keys.seq(arrowKey[d]));
+    const center = () => {
+      const r = joyBase.getBoundingClientRect();
+      joyRadius = Math.max(6, r.width / 2 - 4);
+      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    };
+    const update = (cx, cy) => {
+      const c = center();
+      let dx = cx - c.cx, dy = cy - c.cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > joyRadius) { const k = joyRadius / dist; dx *= k; dy *= k; }
+      joyKnob.style.transform = `translate(${dx}px,${dy}px)`;
+      let d = null;
+      if (dist > 8) d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+      if (d !== joyDir) {
+        joyDir = d;
+        if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+        setArrow(d);
+        if (d) {
+          sendDir(d);
+          joyTimer = setInterval(() => sendDir(d), 180);
+        }
+      }
+    };
+    const end = () => {
+      if (!active) return;
+      active = false;
+      if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+      joyDir = null;
+      joyKnob.style.transform = 'translate(0,0)';
+      joyBase.classList.remove('joystick__base--active');
+      setArrow(null);
+      try { joyBase.releasePointerCapture(joyPid); } catch (_) {}
+      joyPid = null;
+      keepTermFocus();
+    };
+    joyBase.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      active = true; joyPid = e.pointerId;
+      try { joyBase.setPointerCapture(joyPid); } catch (_) {}
+      joyBase.classList.add('joystick__base--active');
+      update(e.clientX, e.clientY);
+    });
+    joyBase.addEventListener('pointermove', e => {
+      if (active && e.pointerId === joyPid) update(e.clientX, e.clientY);
+    });
+    joyBase.addEventListener('pointerup', end);
+    joyBase.addEventListener('pointercancel', end);
+    joyEl.addEventListener('contextmenu', e => e.preventDefault());
+  }
+
   // 实体键盘按住 Ctrl/Alt/Shift：只做浅色提示（组合键本身由浏览器/终端原生处理）
   const physOf = (k) => k === 'Control' ? 'ctrl' : k === 'Alt' ? 'alt' : k === 'Shift' ? 'shift' : null;
   window.addEventListener('keydown', e => { const m = physOf(e.key); if (m) { Keys.held[m] = true; Keys.refresh(); } }, true);
@@ -234,16 +342,25 @@ class TerminalSession {
   _mount() {
     if (!this.container) throw new Error('终端缺少容器');
     this.term = new window.Terminal({
+      /* 光标与参考项目对齐：默认竖线（bar）+ 不闪烁；失焦时描边而不是消失。
+       * 形态/闪烁可在「更多 → 外观」里改，改完只动 options，不重建终端。 */
       cursorBlink: Settings.get('cursorBlink') === '1',
-      cursorStyle: 'bar',
+      cursorStyle: Settings.get('cursorStyle') || 'bar',
+      cursorInactiveStyle: 'outline',
       cursorWidth: 2,
-      fontFamily: cssVar('--mono') || 'monospace',
+      fontFamily: xtermFont(),
       fontSize: Number(Settings.get('font')) || 14,
       lineHeight: (Number(Settings.get('lineHeight')) || 12) / 10,
+      /* 必须为 0：非零字距只加在字符右侧、不计入单元格宽度，列会逐字累积偏移。 */
       letterSpacing: 0,
       allowTransparency: true,
       scrollback: 8000,
-      convertEol: false,
+      /* 关键：我们的 shell/解释器只发 \n。convertEol=false 时 LF 只下移一行、
+       * 列位置不变，下一行会从上一行末尾继续写——表现就是「每行开头逐行右移、
+       * 编号跑到右边」。convertEol 把 LF 视作 CRLF，从根上修掉。 */
+      convertEol: true,
+      /* Unicode11 的 activeVersion 属于 proposed API，必须显式开启（参考项目同样如此）。 */
+      allowProposedApi: true,
       theme: termTheme(),
       windowsMode: false,
       macOptionIsMeta: true,
@@ -259,6 +376,13 @@ class TerminalSession {
       return true;
     });
     this.term.open(this.container);
+    // Unicode 11 宽度表：CJK/emoji 占 1 格还是 2 格，必须与渲染一致，否则会错位。
+    if (window.Unicode11Addon) {
+      try {
+        this.term.loadAddon(new window.Unicode11Addon.Unicode11Addon());
+        this.term.unicode.activeVersion = '11';
+      } catch (e) { console.warn('unicode11 加载失败', e); }
+    }
     try {
       this.fit = new window.FitAddon.FitAddon();
       this.term.loadAddon(this.fit);
@@ -352,6 +476,8 @@ class TerminalSession {
     this.term.options.fontSize = Number(Settings.get('font')) || 14;
     this.term.options.lineHeight = (Number(Settings.get('lineHeight')) || 12) / 10;
     this.term.options.cursorBlink = Settings.get('cursorBlink') === '1';
+    const cs = Settings.get('cursorStyle') || 'bar';
+    if (this.term.options.cursorStyle !== cs) this.term.options.cursorStyle = cs;
     this.term.options.theme = termTheme();
     setTimeout(() => this.fitNow(), 20);
   }
@@ -409,10 +535,11 @@ const TerminalManager = {
   },
 
   applyAll() { for (const s of this.sessions) s.applySettings(); },
-  applyTheme() {
+  applyTheme(t) {
+    const light = typeof t === 'string' ? t === 'light' : document.body.classList.contains('light');
     for (const s of this.sessions) {
       if (!s.term) continue;
-      s.term.options.theme = termTheme();
+      s.term.options.theme = termTheme(light);
       try { s.term.refresh(0, Math.max(0, s.term.rows - 1)); } catch (e) {}
     }
   },
@@ -570,30 +697,51 @@ const WindowManager = {
   },
 
   _startDrag(e, win) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || win.maximized) return;
+    if (e.isPrimary === false) return;
     if (e.target.closest('.win-dots') || e.target.closest('.win-tools')) return;
-    if (win.maximized) return;
-    e.preventDefault();
+    const bar = e.currentTarget;
+    const pid = e.pointerId;
+
+    /* 关键技术：在标题栏上 setPointerCapture。
+     * 不捕获时，指针一旦移到窗口内容区（尤其是 iframe 上），pointermove 就派发给
+     * iframe 文档，父文档的监听收不到——表现为「拖着拖着不动了」。
+     * 捕获之后，事件序列始终回到标题栏，指针跑到哪都跟得住。 */
+    try { bar.setPointerCapture(pid); } catch (_) {}
+
     this.focus(win.id);
     const startX = e.clientX, startY = e.clientY;
+    const box0 = deskBox();
     const r = win.el.getBoundingClientRect();
-    const dbox = document.getElementById('desk').getBoundingClientRect();
-    // style.left/top 是相对 #desk 的，getBoundingClientRect 是相对视口的——必须先换算，
-    // 否则顶栏高度会被重复计进位移（表现为每次拖动都往下/右多跳一截）。
-    const ox = r.left - dbox.left, oy = r.top - dbox.top;
-    let snap = null;
+    const sl = parseFloat(win.el.style.left), st = parseFloat(win.el.style.top);
+    // style.left/top 相对 #desk；getBoundingClientRect 相对视口。优先用已写死的 style 值，
+    // 没写过才用 rect 换算（少了这一步会把顶栏高度重复计进位移，拖一次往下跳一截）。
+    const ox = Number.isFinite(sl) ? sl : r.left - box0.left;
+    const oy = Number.isFinite(st) ? st : r.top - box0.top;
+    const w0 = r.width, h0 = r.height;
+
+    let moved = false, snap = null, raf = 0, last = null;
     const snapEl = document.getElementById('winSnap');
-    const move = (ev) => {
-      const nx = ox + ev.clientX - startX;
-      const ny = oy + ev.clientY - startY;
+    document.body.classList.add('win-drag');
+
+    const draw = () => {
+      raf = 0;
+      const ev = last; if (!ev) return;
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;  // 3px 阈值：防手抖
+      moved = true;
       const box = deskBox();
-      win.el.style.left = clamp(nx, -win.el.offsetWidth + 80, box.w - 80) + 'px';
-      win.el.style.top = clamp(ny, 0, box.h - 40) + 'px';
+      // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
+      const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
+      const ny = clamp(Math.round(oy + dy), 0, box.h - 44);
+      win.el.style.left = nx + 'px';
+      win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
-      const vw = box.w, vh = box.h;
-      if (ev.clientY <= 6) snap = { x:0, y:0, w:vw, h:vh };
-      else if (ev.clientX <= 6) snap = { x:0, y:0, w:vw / 2, h:vh };
-      else if (ev.clientX >= vw - 6) snap = { x:vw / 2, y:0, w:vw / 2, h:vh };
+
+      const px = ev.clientX - box0.left, py = ev.clientY - box0.top;
+      if (py <= 8) snap = { x:0, y:0, w:box.w, h:box.h };
+      else if (px <= 8) snap = { x:0, y:0, w:Math.round(box.w / 2), h:box.h };
+      else if (px >= box.w - 8) snap = { x:Math.round(box.w / 2), y:0, w:Math.round(box.w / 2), h:box.h };
       else snap = null;
       if (snap) {
         snapEl.style.display = 'block';
@@ -601,13 +749,23 @@ const WindowManager = {
         snapEl.style.width = snap.w + 'px'; snapEl.style.height = snap.h + 'px';
       } else snapEl.style.display = 'none';
     };
-    const up = () => {
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
+    const move = (ev) => {
+      if (ev.pointerId !== pid) return;
+      last = ev;
+      if (!raf) raf = requestAnimationFrame(draw);   // 合并到帧，避免高频 move 抖动
+    };
+    const finish = (ev) => {
+      if (ev && ev.pointerId !== pid) return;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', finish);
+      bar.removeEventListener('pointercancel', finish);
+      try { bar.releasePointerCapture(pid); } catch (_) {}
+      document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
-      snapEl.style.display = 'none';
+      if (snapEl) snapEl.style.display = 'none';
       if (snap) {
-        win.restoreRect = { x:parseFloat(win.el.style.left), y:parseFloat(win.el.style.top), w:r.width, h:r.height };
+        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:w0, h:h0 };
         win.el.style.left = snap.x + 'px'; win.el.style.top = snap.y + 'px';
         win.el.style.width = snap.w + 'px'; win.el.style.height = snap.h + 'px';
         const box = deskBox();
@@ -616,37 +774,72 @@ const WindowManager = {
         win.content && win.content.onResize && win.content.onResize();
       }
     };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', finish);
+    bar.addEventListener('pointercancel', finish);
   },
 
   _startResize(e, win, dir) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || win.maximized) return;
     e.preventDefault(); e.stopPropagation();
+    const handle = e.currentTarget;
+    const pid = e.pointerId;
+    try { handle.setPointerCapture(pid); } catch (_) {}
     this.focus(win.id);
-    if (win.maximized) return;
+
+    const box0 = deskBox();
     const r = win.el.getBoundingClientRect();
+    const sl = parseFloat(win.el.style.left), st = parseFloat(win.el.style.top);
+    // 同样：一律用 #desk 相对坐标，禁止把视口坐标直接写进 style.left/top。
+    const start = {
+      x: Number.isFinite(sl) ? sl : r.left - box0.left,
+      y: Number.isFinite(st) ? st : r.top - box0.top,
+      w: r.width, h: r.height
+    };
     const sx = e.clientX, sy = e.clientY;
-    const start = { x:r.left, y:r.top, w:r.width, h:r.height };
-    const move = (ev) => {
+    let raf = 0, last = null;
+    const MINW = 280, MINH = 150;
+    document.body.classList.add('win-drag');
+
+    const draw = () => {
+      raf = 0;
+      const ev = last; if (!ev) return;
       let { x, y, w, h } = start;
       const dx = ev.clientX - sx, dy = ev.clientY - sy;
-      if (dir.includes('e')) w = Math.max(280, start.w + dx);
-      if (dir.includes('s')) h = Math.max(150, start.h + dy);
-      if (dir.includes('w')) { w = Math.max(280, start.w - dx); x = start.x + (start.w - w); }
-      if (dir.includes('n')) { h = Math.max(150, start.h - dy); y = start.y + (start.h - h); }
-      win.el.style.left = x + 'px'; win.el.style.top = y + 'px';
-      win.el.style.width = w + 'px'; win.el.style.height = h + 'px';
+      const box = deskBox();
+      if (dir.includes('e')) w = clamp(start.w + dx, MINW, box.w - x);
+      if (dir.includes('s')) h = clamp(start.h + dy, MINH, box.h - y);
+      if (dir.includes('w')) {
+        w = clamp(start.w - dx, MINW, start.x + start.w);
+        x = start.x + start.w - w;
+      }
+      if (dir.includes('n')) {
+        h = clamp(start.h - dy, MINH, start.y + start.h);
+        y = start.y + start.h - h;
+      }
+      win.el.style.left = Math.round(x) + 'px'; win.el.style.top = Math.round(y) + 'px';
+      win.el.style.width = Math.round(w) + 'px'; win.el.style.height = Math.round(h) + 'px';
       win.el.classList.add('resizing');
     };
-    const up = () => {
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
+    const move = (ev) => {
+      if (ev.pointerId !== pid) return;
+      last = ev;
+      if (!raf) raf = requestAnimationFrame(draw);
+    };
+    const finish = (ev) => {
+      if (ev && ev.pointerId !== pid) return;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', finish);
+      handle.removeEventListener('pointercancel', finish);
+      try { handle.releasePointerCapture(pid); } catch (_) {}
+      document.body.classList.remove('win-drag');
       win.el.classList.remove('resizing');
       win.content && win.content.onResize && win.content.onResize();
     };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
   },
 
   focus(id) {

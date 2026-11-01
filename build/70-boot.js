@@ -145,6 +145,14 @@ function toggleFullscreen() {
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
+/* 光标形态分段按钮的高亮同步 */
+function syncCursorSeg() {
+  const seg = document.getElementById('setCursorStyle');
+  if (!seg) return;
+  const cur = Settings.get('cursorStyle') || 'bar';
+  $$('[data-cursor]', seg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cursor === cur)));
+}
+
 const Drawer = {
   opened: false,
   init() {
@@ -177,13 +185,32 @@ const Drawer = {
         Settings.set(key, v);
       });
     };
-    $('#setTheme').onchange = e => Settings.set('theme', e.target.value);
     bindRange('setFont', 'font');
     bindRange('setLine', 'lineHeight', v => (v / 10).toFixed(1));
-    $('#setCursor').onchange = e => Settings.set('cursorBlink', e.target.value);
-    $('#setGrid').onchange = e => Settings.set('grid', e.target.value);
+    // 光标形态（三选一，用分段按钮）
+    const seg = $('#setCursorStyle');
+    if (seg) {
+      $$('[data-cursor]', seg).forEach(b => b.onclick = () => {
+        Settings.set('cursorStyle', b.dataset.cursor);
+        syncCursorSeg();
+      });
+    }
+    // 二选一的一律用开关
+    const bindSwitch = (id, key, onVal, offVal) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
+    };
+    bindSwitch('setCursorBlink', 'cursorBlink', '1', '0');
+    bindSwitch('setGrid', 'grid', '1', '0');
     $('#setPrompt').onchange = e => Settings.set('prompt', e.target.value || '> ');
     $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
+    // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
+    bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
+    bindSwitch('setAgentThinking', 'agentThinking', '1', '0');
+    $('#setAgentDirect').addEventListener('change', () => this.syncAgentMode());
+    $('#setAgentDirectUrl').onchange = e => Settings.set('agentDirectUrl', e.target.value.trim());
+    $('#setAgentKey').onchange = e => { Settings.set('agentKey', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentUrl').onchange = e => { Settings.set('agentUrl', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
@@ -208,22 +235,35 @@ const Drawer = {
     this.refreshPkgList();
   },
   syncControls() {
-    $('#setTheme').value = Settings.get('theme');
     $('#setFont').value = Settings.get('font');
     $('#setFontVal').textContent = String(Settings.get('font'));
     $('#setLine').value = Settings.get('lineHeight');
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
-    $('#setCursor').value = Settings.get('cursorBlink');
-    $('#setGrid').value = Settings.get('grid');
+    if ($('#setCursorBlink')) $('#setCursorBlink').checked = Settings.get('cursorBlink') === '1';
+    if ($('#setGrid')) $('#setGrid').checked = Settings.get('grid') === '1';
+    syncCursorSeg();
     $('#setPrompt').value = Settings.get('prompt');
     $('#setCdn').value = Settings.get('cdn');
+    $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');
+    $('#setAgentDirectUrl').value = Settings.get('agentDirectUrl');
+    $('#setAgentKey').value = Settings.get('agentKey');
+    if ($('#setAgentThinking')) $('#setAgentThinking').checked = Settings.get('agentThinking') === '1';
     $('#setAgentProvider').value = Settings.get('agentProvider');
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
+    this.syncAgentMode();
+    applyTheme();   // 顺带把「主题」那行的取值刷新成当前系统主题
     $('#stVersion').textContent = 'v' + HT_VERSION;
     ['#tbVer', '#drVersion', '#bootVer'].forEach(sel => { const el = $(sel); if (el) el.textContent = HT_VERSION; });
     if (this.opened) this.refresh();
+  },
+  /* 后端 / 直连 两种模式互斥：直连才展开密钥与端点，并始终显示风险提示 */
+  syncAgentMode() {
+    const direct = $('#setAgentDirect') && $('#setAgentDirect').checked;
+    $$('[data-when="direct"]').forEach(el => { el.hidden = !direct; });
+    $$('[data-when="backend"]').forEach(el => { el.hidden = !!direct; });
+    this.refreshAgentLabel();
   },
   open(section) {
     this.opened = true;
@@ -525,7 +565,9 @@ async function boot() {
   try {
     step('读取设置', 5);
     Settings.load();
-    applyTheme(Settings.get('theme'));
+    // 主题不读设置，直接跟随系统；watchSystemTheme 之后系统切换会实时生效。
+    applyTheme();
+    watchSystemTheme();
     applyGrid(Settings.get('grid'));
 
     step('装载 xterm.js', 15);

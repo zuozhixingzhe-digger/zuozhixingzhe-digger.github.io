@@ -12,8 +12,8 @@
   <header class="topbar" id="topbar" data-state="ok">
     <div class="tb-left">
       <a class="tb-brand" id="tbBrand" href="#" title="关于 hterminal">
-        <span class="tb-logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l7 7-7 7"/><path d="M13 19h7"/></svg></span><b>hterminal</b>
-        <span class="tb-ver" id="tbVer">0.0.0.0</span>
+        <b>hterminal</b>
+        <span class="tb-ver" id="tbVer">0.0.0.1</span>
       </a>
       <span class="tb-where" id="tbWhere" title="当前目录">.home</span>
     </div>
@@ -22,21 +22,29 @@
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="shift" title="Shift（短按锁定 / 长按当组合键）"><span>⇧</span></button>
+
+      <!-- 方向摇杆：拖动中心圆点发方向键，按住同一方向连发 -->
+      <div class="joystick" id="joystick" title="方向控制（拖动中心圆点）" role="group" aria-label="方向键摇杆">
+        <span class="joy-arrow joy-arrow--up"    data-dir="up"    aria-hidden="true">▲</span>
+        <span class="joy-arrow joy-arrow--down"  data-dir="down"  aria-hidden="true">▼</span>
+        <span class="joy-arrow joy-arrow--left"  data-dir="left"  aria-hidden="true">≪</span>
+        <span class="joy-arrow joy-arrow--right" data-dir="right" aria-hidden="true">≫</span>
+        <div class="joystick__base" id="joyBase">
+          <div class="joystick__ring"></div>
+          <div class="joystick__cross"></div>
+          <div class="joystick__knob" id="joyKnob"></div>
+        </div>
+      </div>
+
       <span class="sep" aria-hidden="true"></span>
       <button class="k" type="button" tabindex="-1" data-key="Escape" title="Esc"><span>␛</span></button>
       <button class="k" type="button" tabindex="-1" data-key="Tab" title="Tab 补全"><span>⇥</span></button>
-      <span class="sep" aria-hidden="true"></span>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowLeft"  title="左"><span>←</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowUp"    title="上（历史）"><span>↑</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowDown"  title="下（历史）"><span>↓</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowRight" title="右"><span>→</span></button>
     </div>
 
-    <span class="tb-gap" aria-hidden="true"></span>
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
-      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）"><span>☰</span></button>
+      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）" aria-label="更多"><span>≥</span></button>
     </div>
   </header>
 
@@ -56,7 +64,7 @@
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">0.0.0.0</span></div>
+      <div class="boot-title">hterminal <span id="bootVer">0.0.0.1</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -83,7 +91,7 @@
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.0</span></div>
+      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.1</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -100,17 +108,23 @@
 
     <section class="drawer__section">
       <div class="drawer__title">外观</div>
-      <div class="drawer__row"><span>主题</span>
-        <select id="setTheme"><option value="dark">深色</option><option value="light">浅色</option></select>
-      </div>
+      <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
       <div class="drawer__row"><span>字号</span><input id="setFont" type="range" min="9" max="26" step="1"><b id="setFontVal">14</b></div>
       <div class="drawer__row"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
+      <div class="drawer__row"><span>光标形态</span>
+        <div class="seg" id="setCursorStyle" role="group" aria-label="光标形态">
+          <button type="button" data-cursor="bar" aria-pressed="true" title="竖线（bar）">▏</button>
+          <button type="button" data-cursor="block" aria-pressed="false" title="方块（block）">▌</button>
+          <button type="button" data-cursor="underline" aria-pressed="false" title="下划线（underline）">▁</button>
+        </div>
+      </div>
       <div class="drawer__row"><span>光标闪烁</span>
-        <select id="setCursor"><option value="1">开</option><option value="0">关</option></select>
+        <label class="sw" title="闪烁 / 不闪烁"><input type="checkbox" id="setCursorBlink"><i></i></label>
       </div>
       <div class="drawer__row"><span>背景网格</span>
-        <select id="setGrid"><option value="1">开</option><option value="0">关</option></select>
+        <label class="sw" title="显示 / 隐藏桌面网格"><input type="checkbox" id="setGrid"><i></i></label>
       </div>
+      <div class="drawer__note">主题跟随系统：系统切换深/浅色时自动跟随，不提供手动开关。</div>
     </section>
 
     <section class="drawer__section">
@@ -153,8 +167,21 @@
 
     <section class="drawer__section">
       <div class="drawer__title">智能体</div>
-      <div class="drawer__row"><span>后端地址</span><input id="setAgentUrl" type="text" placeholder="http://127.0.0.1:8787"></div>
-      <div class="drawer__row"><span>提供方</span>
+      <div class="drawer__row"><span>直连 API</span>
+        <label class="sw" title="浏览器直接请求模型服务，跳过本地后端"><input type="checkbox" id="setAgentDirect"><i></i></label>
+      </div>
+      <div class="drawer__note" data-when="direct" hidden>
+        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连模式下 API Key 以明文存在本机
+        localStorage 和 <code>.config.settings</code> 里，任何能打开这个页面、或用过这台设备的人都能读走；
+        请求也直接从你的浏览器发出。请只用临时/低额度密钥测试。在意安全就把开关关掉，用下面后端模式——密钥只留在服务端。
+      </div>
+      <div class="drawer__row" data-when="direct" hidden><span>API 地址</span><input id="setAgentDirectUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>深度思考</span>
+        <label class="sw" title="开启后先输出推理过程，更慢也更费 token"><input type="checkbox" id="setAgentThinking"><i></i></label>
+      </div>
+      <div class="drawer__row" data-when="backend"><span>后端地址</span><input id="setAgentUrl" type="text" placeholder="http://127.0.0.1:8787"></div>
+      <div class="drawer__row" data-when="backend"><span>提供方</span>
         <select id="setAgentProvider">
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
@@ -162,7 +189,7 @@
           <option value="custom">自定义 / 兼容</option>
         </select>
       </div>
-      <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" placeholder="gpt-4o-mini"></div>
+      <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" spellcheck="false" placeholder="deepseek-flash"></div>
       <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="60" step="1"></div>
       <div class="drawer__grid">
         <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
@@ -170,7 +197,7 @@
         <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
         <button class="dbtn danger" id="btnAgentClear">清空会话</button>
       </div>
-      <div class="drawer__note">密钥只放后端环境变量，前端永远接触不到。后端仅监听本机，只做格式转换与转发，不保存任何对话。</div>
+      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
     </section>
 
     <section class="drawer__section">

@@ -74,8 +74,11 @@
   --bar:36px;
   --top:clamp(44px,7.4vw,54px);
   --cell-pad:16px;
-  /* 字体：等宽 / 界面 / 符号 */
-  --mono:"JetBrains Mono","Cascadia Code","SF Mono","Fira Code",Menlo,Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC",monospace;
+  /* 字体：等宽 / 界面 / 符号
+   * 终端字体栈只放严格等宽的西文，最后用 monospace 兜底；
+   * 绝不放 ui-monospace（部分平台它并不严格等宽，回退过去就会逐列错位）。
+   * 启动时 40-term.js 还会用 canvas 实测一遍 M/i/W/0 宽度，过滤掉名义等宽的伪等宽字体。 */
+  --mono:"JetBrains Mono","Fira Code","DejaVu Sans Mono","Liberation Mono",Menlo,Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC",monospace;
   --ui:"Inter","Segoe UI Variable","Segoe UI","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif;
   --mono-sym:"JetBrains Mono","Noto Sans Symbols2","Segoe UI Symbol","Apple Symbols","Noto Sans Symbols","DejaVu Sans",sans-serif;
   --ease:cubic-bezier(.22,1,.36,1);
@@ -139,13 +142,11 @@ code{font-family:var(--mono);font-size:.94em;color:var(--amber)}
   padding:0 12px 0 14px; min-width:0; max-width:52vw;
 }
 .tb-brand{
-  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  display:flex; align-items:center; gap:7px; flex:0 0 auto;
   font-family:var(--mono); font-size:12.5px; letter-spacing:.02em;
   color:var(--fg); text-decoration:none;
 }
-.tb-logo{display:flex; flex:0 0 auto; color:var(--accent); filter:drop-shadow(0 0 8px rgba(94,234,212,.45))}
-.tb-logo svg{width:17px;height:17px;display:block}
-.tb-brand b{font-weight:600;color:var(--fg)}
+.tb-brand b{font-weight:600;color:var(--fg);letter-spacing:-.01em}
 .tb-ver{
   font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--fg-mute);
   border:1px solid var(--border); border-radius:5px; padding:1px 5px; margin-left:2px;
@@ -162,12 +163,13 @@ body.light .tb-where{background:rgba(0,0,0,.02)}
 /* 中间：符号控制键（修饰键 / Esc / Tab / 方向键） */
 .tb-mid{
   display:flex; align-items:stretch; flex:1 1 auto; min-width:0;
-  padding-left:4px;
-  overflow-x:auto; overflow-y:hidden; scrollbar-width:none;
-  -webkit-overflow-scrolling:touch;
+  /* 宽屏居中成一条紧凑的控制条；不铺满整条栏，否则 5 个键会被拉到 170px 一个。
+   * 窄屏再切成 flex:1 铺满（见 560px 媒体查询）。 */
+  justify-content:space-evenly;
+  padding-left:2px;
+  /* 不能用 auto/scroll：摇杆的四向符号故意画在圆盘之外，滚动容器会把它们裁掉。 */
+  overflow:visible;
 }
-.tb-mid::-webkit-scrollbar{display:none}
-.tb-gap{flex:1 1 auto; min-width:8px}
 .tb-right{display:flex; align-items:stretch; flex:0 0 auto; border-left:1px solid var(--border)}
 
 .k{
@@ -187,11 +189,13 @@ body.light .tb-where{background:rgba(0,0,0,.02)}
   .k:hover{color:var(--fg);background:rgba(255,255,255,.055)}
   .k--active:hover{color:#08110f;background:var(--accent)}
 }
-.tb-mid .k{flex:1 1 0;min-width:28px;max-width:54px}
-/* 宽屏不把按键摊到整条栏上——那样看着像漏了内容；窄屏才让它们自己挤满 */
-@media (min-width:980px){ .tb-mid{flex:0 1 auto;max-width:560px} }
+.tb-mid .k{flex:0 1 auto;min-width:52px;max-width:88px;padding:0 14px}
+/* 宽屏给固定最小宽度，避免单个键被拉成 170px；窄屏再放开成均分铺满。 */
 .tb-right .k{width:clamp(36px,8.4vw,44px);color:var(--fg-mute)}
 .tb-right .k:last-child{border-right:0}
+/* 「更多」用 ≥：单字符比 ☰ 更利落，且不会被系统当成菜单图标做特粗处理 */
+.tb-right .k[data-act="more"]{font-family:var(--mono);font-size:clamp(19px,4.6vw,23px);color:var(--fg-dim)}
+.tb-right .k[data-act="more"] span{display:block;transform:translateY(-.06em)}
 /* 锁定（短按切换）＝实心强调色；按住（长按 / 实体键按下）＝更浅的强调色 */
 .k--active{background:var(--accent);color:#08110f}
 .k--active:active{background:var(--accent)}
@@ -200,10 +204,77 @@ body.light .k--pressing{background:#6fd6c6;color:#04110e}
 .k[disabled]{opacity:.32;pointer-events:none}
 
 .sep{
-  flex:0 0 1px; align-self:center; height:20px; margin:0 8px;
+  flex:0 0 1px; align-self:center; height:20px; margin:0 6px;
   background:rgba(120,190,180,.30);
 }
 body.light .sep{background:rgba(20,60,55,.22)}
+
+/* =====================================================================
+ * 方向摇杆（顶栏中部）
+ * 参考项目 draw-http-terminal 的实现：拖动中心圆点，按主导方向发方向键，
+ * 保持方向时 180ms 连发。尺寸变量单值，宽高同源，绝不出现椭圆。
+ * ===================================================================== */
+.joystick{
+  --joy:clamp(34px,7.4vw,42px);
+  position:relative; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  width:calc(var(--joy) + 32px); height:100%;
+  overflow:visible; touch-action:none;
+  user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+}
+.joystick__base{
+  position:relative; flex:0 0 auto;
+  width:var(--joy); height:var(--joy); aspect-ratio:1/1;
+  border-radius:50%;
+  background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.07),rgba(255,255,255,.012) 70%),
+             rgba(255,255,255,.035);
+  border:1px solid var(--border-strong);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.45);
+  touch-action:none; overflow:visible;
+  transition:background .12s var(--ease),box-shadow .12s var(--ease);
+}
+body.light .joystick__base{
+  background:radial-gradient(circle at 50% 42%,rgba(255,255,255,.9),rgba(255,255,255,.35) 70%),rgba(20,60,55,.05);
+  box-shadow:inset 0 1px 2px rgba(20,60,55,.12);
+}
+.joystick__base--active{
+  background:rgba(94,234,212,.14);
+  box-shadow:0 0 0 6px rgba(94,234,212,.10),0 0 16px rgba(94,234,212,.26);
+}
+body.light .joystick__base--active{
+  background:rgba(13,148,136,.14);
+  box-shadow:0 0 0 6px rgba(13,148,136,.10),0 0 16px rgba(13,148,136,.22);
+}
+.joy-arrow{
+  position:absolute; z-index:2; pointer-events:none;
+  font-family:var(--mono-sym); font-size:10px; font-weight:700; line-height:1;
+  color:var(--fg-mute); opacity:.5; font-variant-emoji:text;
+  transition:color .12s var(--ease),opacity .12s var(--ease),
+             transform .12s var(--ease),text-shadow .12s var(--ease);
+}
+.joy-arrow--up   {top:0;   left:50%; transform:translateX(-50%)}
+.joy-arrow--down {bottom:0;left:50%; transform:translateX(-50%)}
+.joy-arrow--left {left:0;  top:50%;  transform:translateY(-50%)}
+.joy-arrow--right{right:0; top:50%;  transform:translateY(-50%)}
+.joy-arrow--on{color:var(--accent);opacity:1;text-shadow:0 0 6px var(--accent),0 0 12px rgba(94,234,212,.85)}
+.joy-arrow--on.joy-arrow--up   {transform:translateX(-50%) translateY(-2px) scale(1.35)}
+.joy-arrow--on.joy-arrow--down {transform:translateX(-50%) translateY(2px)  scale(1.35)}
+.joy-arrow--on.joy-arrow--left {transform:translateY(-50%) translateX(-2px) scale(1.35)}
+.joy-arrow--on.joy-arrow--right{transform:translateY(-50%) translateX(2px)  scale(1.35)}
+.joystick__ring{position:absolute;inset:5px;border-radius:50%;border:1px solid rgba(120,190,180,.16);pointer-events:none}
+.joystick__cross{
+  position:absolute;inset:0;pointer-events:none;
+  background:
+    linear-gradient(rgba(120,190,180,.26),rgba(120,190,180,.26)) center/1px 58% no-repeat,
+    linear-gradient(rgba(120,190,180,.26),rgba(120,190,180,.26)) center/58% 1px no-repeat;
+}
+.joystick__knob{
+  position:absolute; top:50%; left:50%; width:42%; height:42%; margin:-21% 0 0 -21%;
+  border-radius:50%; pointer-events:none;
+  background:linear-gradient(180deg,#b9fff3,var(--accent));
+  box-shadow:0 2px 6px rgba(0,0,0,.45),0 0 10px rgba(94,234,212,.35);
+  transform:translate(0,0); transition:transform .06s linear;
+}
+body.light .joystick__knob{background:linear-gradient(180deg,#7fe3d4,var(--accent))}
 
 /* =====================================================================
  * 桌面：底层终端 + 浮动窗口
@@ -267,7 +338,14 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
   padding:0 8px; background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);
   border-bottom:1px solid var(--line-soft); cursor:default;
   user-select:none; -webkit-user-select:none;
+  /* 触摸设备上必须禁掉浏览器手势，否则 pointerdown 之后会被滚动手势抢走（pointercancel），
+   * 表现就是「按下去纹丝不动」。拖动本身用 setPointerCapture 接管。 */
+  touch-action:none;
 }
+/* 拖动/改大小期间：iframe 会吃掉指针事件（父文档 pointermove 断流），
+ * 双保险——即使没捕获到指针，也保证指针在窗口内容上时事件仍归父文档。 */
+body.win-drag iframe{pointer-events:none!important}
+body.win-drag,body.win-drag *{cursor:grabbing!important;user-select:none!important}
 .win.focus .win-bar{background:linear-gradient(180deg,rgba(94,234,212,.055),transparent)}
 .win-dots{display:flex;gap:6px;align-items:center;flex:0 0 auto;padding:0 2px}
 .win-dots i{width:10px;height:10px;border-radius:50%;background:#2b3a3a;display:block;transition:background .15s}
@@ -288,7 +366,7 @@ body.light .win-dots i{background:#c6d2cf}
 .win-body{flex:1 1 auto; min-height:0; position:relative; overflow:hidden; background:rgba(9,13,14,.88)}
 body.light .win-body{background:rgba(252,254,253,.94)}
 .win-body.pad{padding:14px}
-.rz{position:absolute;z-index:5}
+.rz{position:absolute;z-index:5;touch-action:none}
 .rz.n{top:-3px;left:8px;right:8px;height:7px;cursor:ns-resize}
 .rz.s{bottom:-3px;left:8px;right:8px;height:7px;cursor:ns-resize}
 .rz.w{left:-3px;top:8px;bottom:8px;width:7px;cursor:ew-resize}
@@ -404,6 +482,40 @@ body.light .win-body{background:rgba(252,254,253,.94)}
 .drawer__row input:focus,.drawer__row select:focus{border-color:var(--accent-dim);box-shadow:0 0 0 3px rgba(94,234,212,.08)}
 .drawer__grid{display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 6px}
 .drawer__note{font-size:10.5px;line-height:1.7;color:var(--fg-faint);padding:4px 0 6px}
+
+/* 开关：凡是「只有两个状态」的设置一律用它，不再用下拉框 */
+.sw{
+  position:relative; flex:0 0 auto; margin-left:auto;
+  width:42px; height:24px; display:inline-flex; align-items:center;
+  cursor:pointer; touch-action:manipulation;
+}
+.sw input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;z-index:1}
+.sw i{
+  position:absolute; inset:0; border-radius:999px;
+  background:rgba(120,190,180,.16); border:1px solid var(--border);
+  transition:background .18s var(--ease),border-color .18s var(--ease);
+}
+.sw i::after{
+  content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+  background:#e7f5f2; box-shadow:0 1px 3px rgba(0,0,0,.45);
+  transition:transform .18s var(--ease),background .18s var(--ease);
+}
+.sw input:checked + i{background:var(--accent);border-color:var(--accent)}
+.sw input:checked + i::after{transform:translateX(18px);background:#04110e}
+.sw input:focus-visible + i{outline:2px solid var(--accent);outline-offset:2px}
+body.light .sw i{background:rgba(20,60,55,.12)}
+body.light .sw input:checked + i{background:var(--accent)}
+.sw[aria-disabled="true"]{opacity:.45;pointer-events:none}
+
+/* 分段选择：三选项（如光标形态）用横向按钮组 */
+.seg{display:inline-flex;margin-left:auto;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{
+  height:26px; padding:0 10px; font-size:11px; color:var(--fg-mute); font-family:var(--mono);
+  border-left:1px solid var(--border); transition:background .14s var(--ease),color .14s var(--ease);
+}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#04110e}
+body.light .seg button[aria-pressed="true"]{color:#fff}
 .drawer__list{display:flex;flex-direction:column;gap:4px;padding:2px 0 6px;max-height:220px;overflow:auto}
 .drawer__item{
   display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;
@@ -533,6 +645,17 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
   color:var(--fg-dim);font-size:12px;line-height:1.8;text-align:center}
 .br-frame.blocked iframe{display:none}
 .br-frame.blocked .br-fallback{display:grid}
+/* 非网页协议（mailto:/tel:/intent:// 等）：不塞进 iframe，改在这里给出路 */
+.br-notice{
+  position:absolute; inset:0; z-index:2; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:10px; padding:28px 24px;
+  background:var(--panel-solid); color:var(--fg-dim); text-align:center;
+}
+.br-notice[hidden]{display:none}
+.br-notice__title{font-size:13.5px;font-weight:600;color:var(--fg)}
+.br-notice__text{font-size:11.5px;line-height:1.8;max-width:460px;color:var(--fg-dim)}
+.br-notice__acts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:6px}
+.br-frame.has-notice iframe{visibility:hidden}
 .br-tabs{display:flex;gap:2px;padding:4px 6px 0;border-bottom:1px solid var(--line-soft);overflow:auto;flex:0 0 auto;scrollbar-width:none}
 .br-tabs::-webkit-scrollbar{display:none}
 .br-tab{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:7px 7px 0 0;font-size:11px;color:var(--fg-mute);
@@ -604,13 +727,12 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 }
 @media (max-width:560px){
   :root{--cell-pad:10px;--top:46px}
-  .tb-left{padding:0 8px;gap:6px}
+  /* 窄屏没有品牌的位置：整块隐藏，让 ⌃ 直接从最左边开始（参考项目同样没有品牌块） */
+  .tb-left{display:none}
   .tb-ver{display:none}
   .tb-where{display:none}
   .tb-right .k{width:38px}
-  .tb-mid .k{max-width:44px}
-  /* 手机上先砍掉左右方向键（键盘上本来也没有），把位置留给历史与补全 */
-  .k[data-key="ArrowLeft"],.k[data-key="ArrowRight"]{display:none}
+  .tb-mid .k{flex:1 1 0;min-width:0;max-width:44px;padding:0}
   .sep{margin:0 2px}
   #term-view{padding:8px 8px 54px}
   .win{min-width:0}
@@ -639,8 +761,8 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   <header class="topbar" id="topbar" data-state="ok">
     <div class="tb-left">
       <a class="tb-brand" id="tbBrand" href="#" title="关于 hterminal">
-        <span class="tb-logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l7 7-7 7"/><path d="M13 19h7"/></svg></span><b>hterminal</b>
-        <span class="tb-ver" id="tbVer">0.0.0.0</span>
+        <b>hterminal</b>
+        <span class="tb-ver" id="tbVer">0.0.0.1</span>
       </a>
       <span class="tb-where" id="tbWhere" title="当前目录">.home</span>
     </div>
@@ -649,21 +771,29 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="shift" title="Shift（短按锁定 / 长按当组合键）"><span>⇧</span></button>
+
+      <!-- 方向摇杆：拖动中心圆点发方向键，按住同一方向连发 -->
+      <div class="joystick" id="joystick" title="方向控制（拖动中心圆点）" role="group" aria-label="方向键摇杆">
+        <span class="joy-arrow joy-arrow--up"    data-dir="up"    aria-hidden="true">▲</span>
+        <span class="joy-arrow joy-arrow--down"  data-dir="down"  aria-hidden="true">▼</span>
+        <span class="joy-arrow joy-arrow--left"  data-dir="left"  aria-hidden="true">≪</span>
+        <span class="joy-arrow joy-arrow--right" data-dir="right" aria-hidden="true">≫</span>
+        <div class="joystick__base" id="joyBase">
+          <div class="joystick__ring"></div>
+          <div class="joystick__cross"></div>
+          <div class="joystick__knob" id="joyKnob"></div>
+        </div>
+      </div>
+
       <span class="sep" aria-hidden="true"></span>
       <button class="k" type="button" tabindex="-1" data-key="Escape" title="Esc"><span>␛</span></button>
       <button class="k" type="button" tabindex="-1" data-key="Tab" title="Tab 补全"><span>⇥</span></button>
-      <span class="sep" aria-hidden="true"></span>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowLeft"  title="左"><span>←</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowUp"    title="上（历史）"><span>↑</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowDown"  title="下（历史）"><span>↓</span></button>
-      <button class="k" type="button" tabindex="-1" data-key="ArrowRight" title="右"><span>→</span></button>
     </div>
 
-    <span class="tb-gap" aria-hidden="true"></span>
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
-      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）"><span>☰</span></button>
+      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）" aria-label="更多"><span>≥</span></button>
     </div>
   </header>
 
@@ -683,7 +813,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">0.0.0.0</span></div>
+      <div class="boot-title">hterminal <span id="bootVer">0.0.0.1</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -710,7 +840,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.0</span></div>
+      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.1</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -727,17 +857,23 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 
     <section class="drawer__section">
       <div class="drawer__title">外观</div>
-      <div class="drawer__row"><span>主题</span>
-        <select id="setTheme"><option value="dark">深色</option><option value="light">浅色</option></select>
-      </div>
+      <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
       <div class="drawer__row"><span>字号</span><input id="setFont" type="range" min="9" max="26" step="1"><b id="setFontVal">14</b></div>
       <div class="drawer__row"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
+      <div class="drawer__row"><span>光标形态</span>
+        <div class="seg" id="setCursorStyle" role="group" aria-label="光标形态">
+          <button type="button" data-cursor="bar" aria-pressed="true" title="竖线（bar）">▏</button>
+          <button type="button" data-cursor="block" aria-pressed="false" title="方块（block）">▌</button>
+          <button type="button" data-cursor="underline" aria-pressed="false" title="下划线（underline）">▁</button>
+        </div>
+      </div>
       <div class="drawer__row"><span>光标闪烁</span>
-        <select id="setCursor"><option value="1">开</option><option value="0">关</option></select>
+        <label class="sw" title="闪烁 / 不闪烁"><input type="checkbox" id="setCursorBlink"><i></i></label>
       </div>
       <div class="drawer__row"><span>背景网格</span>
-        <select id="setGrid"><option value="1">开</option><option value="0">关</option></select>
+        <label class="sw" title="显示 / 隐藏桌面网格"><input type="checkbox" id="setGrid"><i></i></label>
       </div>
+      <div class="drawer__note">主题跟随系统：系统切换深/浅色时自动跟随，不提供手动开关。</div>
     </section>
 
     <section class="drawer__section">
@@ -780,8 +916,21 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 
     <section class="drawer__section">
       <div class="drawer__title">智能体</div>
-      <div class="drawer__row"><span>后端地址</span><input id="setAgentUrl" type="text" placeholder="http://127.0.0.1:8787"></div>
-      <div class="drawer__row"><span>提供方</span>
+      <div class="drawer__row"><span>直连 API</span>
+        <label class="sw" title="浏览器直接请求模型服务，跳过本地后端"><input type="checkbox" id="setAgentDirect"><i></i></label>
+      </div>
+      <div class="drawer__note" data-when="direct" hidden>
+        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连模式下 API Key 以明文存在本机
+        localStorage 和 <code>.config.settings</code> 里，任何能打开这个页面、或用过这台设备的人都能读走；
+        请求也直接从你的浏览器发出。请只用临时/低额度密钥测试。在意安全就把开关关掉，用下面后端模式——密钥只留在服务端。
+      </div>
+      <div class="drawer__row" data-when="direct" hidden><span>API 地址</span><input id="setAgentDirectUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>深度思考</span>
+        <label class="sw" title="开启后先输出推理过程，更慢也更费 token"><input type="checkbox" id="setAgentThinking"><i></i></label>
+      </div>
+      <div class="drawer__row" data-when="backend"><span>后端地址</span><input id="setAgentUrl" type="text" placeholder="http://127.0.0.1:8787"></div>
+      <div class="drawer__row" data-when="backend"><span>提供方</span>
         <select id="setAgentProvider">
           <option value="openai">OpenAI</option>
           <option value="anthropic">Anthropic</option>
@@ -789,7 +938,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
           <option value="custom">自定义 / 兼容</option>
         </select>
       </div>
-      <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" placeholder="gpt-4o-mini"></div>
+      <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" spellcheck="false" placeholder="deepseek-flash"></div>
       <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="60" step="1"></div>
       <div class="drawer__grid">
         <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
@@ -797,7 +946,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
         <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
         <button class="dbtn danger" id="btnAgentClear">清空会话</button>
       </div>
-      <div class="drawer__note">密钥只放后端环境变量，前端永远接触不到。后端仅监听本机，只做格式转换与转发，不保存任何对话。</div>
+      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
     </section>
 
     <section class="drawer__section">
@@ -848,7 +997,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.0';
+let HT_VERSION = '0.0.0.1';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
@@ -1967,7 +2116,7 @@ self.onmessage = async (ev) => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.0';
+const HT_VERSION = '0.0.0.1';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -2000,9 +2149,19 @@ function svgIcon(name, cls) {
 /* ---------------------------------------------------------------- 设置 */
 const Settings = {
   DEFAULTS: {
-    theme: 'dark', font: 14, lineHeight: 12, cursorBlink: '1', grid: '1',
+    font: 14, lineHeight: 12, cursorStyle: 'bar', cursorBlink: '0', grid: '1',
     prompt: '> ', cdn: 'esm.sh',
-    agentUrl: 'http://127.0.0.1:8787', agentProvider: 'openai', agentModel: 'gpt-4o-mini',
+    /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
+     * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
+    agentMode: 'backend',
+    agentUrl: 'http://127.0.0.1:8787',
+    agentDirectUrl: 'https://api.deepseek.com',
+    agentKey: '',
+    agentProvider: 'openai', agentModel: 'deepseek-flash',
+    /* 直连时的深度思考：默认关。DeepSeek 默认开启思考模式，
+     * 响应先吐 reasoning_content 再吐 content，测试时又慢又费 token；
+     * 关掉后 temperature 才有意义。需要推理时在设置里打开（会正确回传 reasoning_content）。 */
+    agentThinking: '0',
     agentSteps: 16, historyLimit: 500
   },
   data: {},
@@ -2017,17 +2176,37 @@ const Settings = {
   set(k, v) {
     this.data[k] = v;
     try { localStorage.setItem('ht.settings', JSON.stringify(this.data)); } catch (e) {}
-    if (k === 'theme') applyTheme(v);
     if (k === 'grid') applyGrid(v);
-    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink') TerminalManager.applyAll();
+    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink' || k === 'cursorStyle') TerminalManager.applyAll();
     FS.write('.config.settings', JSON.stringify(this.data, null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
     return v;
   },
   all() { return Object.assign({}, this.data); }
 };
-function applyTheme(t) {
-  document.body.classList.toggle('light', t === 'light');
-  TerminalManager.applyTheme(t);
+
+/* ---------------------------------------------------------------- 主题（跟随系统）
+ * 不提供手动开关：设置里只有一行只读的「主题」，值随系统变。
+ * 监听 prefers-color-scheme，系统切深浅时整页（含 xterm）一起换。 */
+function systemTheme() {
+  try {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } catch (e) { return 'dark'; }
+}
+function applyTheme() {
+  const t = systemTheme();
+  const light = t === 'light';
+  document.body.classList.toggle('light', light);
+  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+  const st = document.getElementById('stTheme');
+  if (st) st.textContent = light ? '浅色（随系统）' : '深色（随系统）';
+  if (typeof TerminalManager !== 'undefined') TerminalManager.applyTheme(t);
+}
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  const on = () => applyTheme();
+  if (mq.addEventListener) mq.addEventListener('change', on);
+  else if (mq.addListener) mq.addListener(on);   // Safari < 14
 }
 function applyGrid(on) {
   document.body.classList.toggle('nogrid', on !== '1');
@@ -2152,7 +2331,7 @@ const APP_DEFS = [
   { name:'agent', title:'智能体', desc:'轻量 AI harness（需要后端）', type:'agent', icon:'✦' },
   { name:'files', title:'文件', desc:'浏览一切皆文件的世界', type:'files', icon:'▤' },
   { name:'editor', title:'编辑器', desc:'查看/编辑文本文件', type:'editor', icon:'✎' },
-  { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'☰' },
+  { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'≥' },
   { name:'about', title:'关于', desc:'版本、许可与第三方声明', type:'about', icon:'ⓘ' },
 ];
 const DEV_DEFS = [
@@ -3001,6 +3180,13 @@ const FIT_JS = [
   'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js',
   'https://unpkg.com/@xterm/addon-fit@0.10.0/lib/addon-fit.js'
 ];
+/* Unicode 11 宽度表：CJK、emoji、ZWJ 组合按 1/2 格精确计算。
+ * 不加载它时 xterm 用旧宽度表，遇到中文/emoji 会把单元格算错，
+ * 渲染位置与光标一起累积偏移——正是「输出文字错位」的主因之一。 */
+const UNI11_JS = [
+  'https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js',
+  'https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js'
+];
 async function loadXterm(onLog) {
   if (window.Terminal && window.FitAddon) return true;
   onLog && onLog('加载 xterm.css');
@@ -3015,15 +3201,55 @@ async function loadXterm(onLog) {
     const ok = await CDN.js(FIT_JS);
     if (!ok || !window.FitAddon) throw new Error('addon-fit 加载失败');
   }
+  // Unicode11 是「锦上添花」：CDN 不通时不让它拖死启动，退化为默认宽度表。
+  if (!window.Unicode11Addon) {
+    try { await CDN.js(UNI11_JS); } catch (e) { /* 忽略，见上 */ }
+  }
   return true;
+}
+
+/* ---------------------------------------------------------------- 等宽字体挑选
+ * 错位的另一半原因在字体：只要栈里混进一个「名义等宽、实际不等宽」的字体
+ * （ui-monospace 在部分平台 ± 比 M 窄 34%，某些 CJK 回退字体也如此），
+ * 每个字符宽度就不同，xterm 按单元格定位后文字会逐列漂移。
+ * 这里在启动时实测 M/i/W/0/空格的宽度，只放行真正等宽的候选。
+ * 未安装的字体测量会退回 monospace（本身等宽），误选也无害。 */
+let _monoCache = null;
+function isStrictMono(family) {
+  try {
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = '16px ' + family + ', monospace';
+    const w = s => c.measureText(s).width;
+    const m = w('M');
+    if (!(m > 0)) return false;
+    return Math.abs(w('i') - m) < 0.51 && Math.abs(w('W') - m) < 0.51 &&
+           Math.abs(w('0') - m) < 0.51 && Math.abs(w(' ') - m) < 0.51;
+  } catch (e) { return false; }
+}
+function xtermFont() {
+  if (_monoCache) return _monoCache;
+  const raw = cssVar('--mono') || 'monospace';
+  const cands = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const CJK = ['Noto Sans Mono CJK SC', 'Sarasa Mono SC'];
+  const picked = [];
+  for (const f of cands) {
+    const name = f.replace(/^["']|["']$/g, '');
+    if (name === 'monospace') break;
+    if (CJK.includes(name)) continue;   // CJK 统一追加到末尾，避免重复
+    if (isStrictMono('"' + name + '"')) picked.push(f);
+  }
+  // CJK 必须有等宽回退，否则中文会落到比例字体上
+  _monoCache = (picked.length ? picked.join(', ') + ', ' : '') +
+               '"Noto Sans Mono CJK SC", "Sarasa Mono SC", monospace';
+  return _monoCache;
 }
 
 /* ---------------------------------------------------------------- 主题取值 */
 function cssVar(name) {
   return getComputedStyle(document.body).getPropertyValue(name).trim();
 }
-function termTheme() {
-  const light = document.body.classList.contains('light');
+function termTheme(forceLight) {
+  const light = forceLight === undefined ? document.body.classList.contains('light') : !!forceLight;
   return {
     background: 'rgba(0,0,0,0)',
     foreground: cssVar('--fg') || (light ? '#182624' : '#d6e7e3'),
@@ -3177,6 +3403,67 @@ function initTopbarKeys() {
     btn.addEventListener('click', e => { e.preventDefault(); sendKeyToTerm(Keys.shape(Keys.seq(btn.dataset.key))); });
   });
 
+  // —— 方向摇杆 ——
+  // 与参考项目同一套手感：拖动中心圆点，取主导方向发方向键；保持方向 180ms 连发。
+  const joyEl = document.getElementById('joystick');
+  const joyBase = document.getElementById('joyBase');
+  const joyKnob = document.getElementById('joyKnob');
+  if (joyBase && joyKnob) {
+    const arrows = $$('.joy-arrow', joyEl);
+    let active = false, joyPid = null, joyDir = null, joyTimer = null, joyRadius = 0;
+    const setArrow = d => arrows.forEach(el => el.classList.toggle('joy-arrow--on', !!d && el.dataset.dir === d));
+    const arrowKey = { up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight' };
+    const sendDir = d => sendKeyToTerm(Keys.seq(arrowKey[d]));
+    const center = () => {
+      const r = joyBase.getBoundingClientRect();
+      joyRadius = Math.max(6, r.width / 2 - 4);
+      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    };
+    const update = (cx, cy) => {
+      const c = center();
+      let dx = cx - c.cx, dy = cy - c.cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > joyRadius) { const k = joyRadius / dist; dx *= k; dy *= k; }
+      joyKnob.style.transform = `translate(${dx}px,${dy}px)`;
+      let d = null;
+      if (dist > 8) d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+      if (d !== joyDir) {
+        joyDir = d;
+        if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+        setArrow(d);
+        if (d) {
+          sendDir(d);
+          joyTimer = setInterval(() => sendDir(d), 180);
+        }
+      }
+    };
+    const end = () => {
+      if (!active) return;
+      active = false;
+      if (joyTimer) { clearInterval(joyTimer); joyTimer = null; }
+      joyDir = null;
+      joyKnob.style.transform = 'translate(0,0)';
+      joyBase.classList.remove('joystick__base--active');
+      setArrow(null);
+      try { joyBase.releasePointerCapture(joyPid); } catch (_) {}
+      joyPid = null;
+      keepTermFocus();
+    };
+    joyBase.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      active = true; joyPid = e.pointerId;
+      try { joyBase.setPointerCapture(joyPid); } catch (_) {}
+      joyBase.classList.add('joystick__base--active');
+      update(e.clientX, e.clientY);
+    });
+    joyBase.addEventListener('pointermove', e => {
+      if (active && e.pointerId === joyPid) update(e.clientX, e.clientY);
+    });
+    joyBase.addEventListener('pointerup', end);
+    joyBase.addEventListener('pointercancel', end);
+    joyEl.addEventListener('contextmenu', e => e.preventDefault());
+  }
+
   // 实体键盘按住 Ctrl/Alt/Shift：只做浅色提示（组合键本身由浏览器/终端原生处理）
   const physOf = (k) => k === 'Control' ? 'ctrl' : k === 'Alt' ? 'alt' : k === 'Shift' ? 'shift' : null;
   window.addEventListener('keydown', e => { const m = physOf(e.key); if (m) { Keys.held[m] = true; Keys.refresh(); } }, true);
@@ -3218,16 +3505,25 @@ class TerminalSession {
   _mount() {
     if (!this.container) throw new Error('终端缺少容器');
     this.term = new window.Terminal({
+      /* 光标与参考项目对齐：默认竖线（bar）+ 不闪烁；失焦时描边而不是消失。
+       * 形态/闪烁可在「更多 → 外观」里改，改完只动 options，不重建终端。 */
       cursorBlink: Settings.get('cursorBlink') === '1',
-      cursorStyle: 'bar',
+      cursorStyle: Settings.get('cursorStyle') || 'bar',
+      cursorInactiveStyle: 'outline',
       cursorWidth: 2,
-      fontFamily: cssVar('--mono') || 'monospace',
+      fontFamily: xtermFont(),
       fontSize: Number(Settings.get('font')) || 14,
       lineHeight: (Number(Settings.get('lineHeight')) || 12) / 10,
+      /* 必须为 0：非零字距只加在字符右侧、不计入单元格宽度，列会逐字累积偏移。 */
       letterSpacing: 0,
       allowTransparency: true,
       scrollback: 8000,
-      convertEol: false,
+      /* 关键：我们的 shell/解释器只发 \n。convertEol=false 时 LF 只下移一行、
+       * 列位置不变，下一行会从上一行末尾继续写——表现就是「每行开头逐行右移、
+       * 编号跑到右边」。convertEol 把 LF 视作 CRLF，从根上修掉。 */
+      convertEol: true,
+      /* Unicode11 的 activeVersion 属于 proposed API，必须显式开启（参考项目同样如此）。 */
+      allowProposedApi: true,
       theme: termTheme(),
       windowsMode: false,
       macOptionIsMeta: true,
@@ -3243,6 +3539,13 @@ class TerminalSession {
       return true;
     });
     this.term.open(this.container);
+    // Unicode 11 宽度表：CJK/emoji 占 1 格还是 2 格，必须与渲染一致，否则会错位。
+    if (window.Unicode11Addon) {
+      try {
+        this.term.loadAddon(new window.Unicode11Addon.Unicode11Addon());
+        this.term.unicode.activeVersion = '11';
+      } catch (e) { console.warn('unicode11 加载失败', e); }
+    }
     try {
       this.fit = new window.FitAddon.FitAddon();
       this.term.loadAddon(this.fit);
@@ -3336,6 +3639,8 @@ class TerminalSession {
     this.term.options.fontSize = Number(Settings.get('font')) || 14;
     this.term.options.lineHeight = (Number(Settings.get('lineHeight')) || 12) / 10;
     this.term.options.cursorBlink = Settings.get('cursorBlink') === '1';
+    const cs = Settings.get('cursorStyle') || 'bar';
+    if (this.term.options.cursorStyle !== cs) this.term.options.cursorStyle = cs;
     this.term.options.theme = termTheme();
     setTimeout(() => this.fitNow(), 20);
   }
@@ -3393,10 +3698,11 @@ const TerminalManager = {
   },
 
   applyAll() { for (const s of this.sessions) s.applySettings(); },
-  applyTheme() {
+  applyTheme(t) {
+    const light = typeof t === 'string' ? t === 'light' : document.body.classList.contains('light');
     for (const s of this.sessions) {
       if (!s.term) continue;
-      s.term.options.theme = termTheme();
+      s.term.options.theme = termTheme(light);
       try { s.term.refresh(0, Math.max(0, s.term.rows - 1)); } catch (e) {}
     }
   },
@@ -3554,30 +3860,51 @@ const WindowManager = {
   },
 
   _startDrag(e, win) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || win.maximized) return;
+    if (e.isPrimary === false) return;
     if (e.target.closest('.win-dots') || e.target.closest('.win-tools')) return;
-    if (win.maximized) return;
-    e.preventDefault();
+    const bar = e.currentTarget;
+    const pid = e.pointerId;
+
+    /* 关键技术：在标题栏上 setPointerCapture。
+     * 不捕获时，指针一旦移到窗口内容区（尤其是 iframe 上），pointermove 就派发给
+     * iframe 文档，父文档的监听收不到——表现为「拖着拖着不动了」。
+     * 捕获之后，事件序列始终回到标题栏，指针跑到哪都跟得住。 */
+    try { bar.setPointerCapture(pid); } catch (_) {}
+
     this.focus(win.id);
     const startX = e.clientX, startY = e.clientY;
+    const box0 = deskBox();
     const r = win.el.getBoundingClientRect();
-    const dbox = document.getElementById('desk').getBoundingClientRect();
-    // style.left/top 是相对 #desk 的，getBoundingClientRect 是相对视口的——必须先换算，
-    // 否则顶栏高度会被重复计进位移（表现为每次拖动都往下/右多跳一截）。
-    const ox = r.left - dbox.left, oy = r.top - dbox.top;
-    let snap = null;
+    const sl = parseFloat(win.el.style.left), st = parseFloat(win.el.style.top);
+    // style.left/top 相对 #desk；getBoundingClientRect 相对视口。优先用已写死的 style 值，
+    // 没写过才用 rect 换算（少了这一步会把顶栏高度重复计进位移，拖一次往下跳一截）。
+    const ox = Number.isFinite(sl) ? sl : r.left - box0.left;
+    const oy = Number.isFinite(st) ? st : r.top - box0.top;
+    const w0 = r.width, h0 = r.height;
+
+    let moved = false, snap = null, raf = 0, last = null;
     const snapEl = document.getElementById('winSnap');
-    const move = (ev) => {
-      const nx = ox + ev.clientX - startX;
-      const ny = oy + ev.clientY - startY;
+    document.body.classList.add('win-drag');
+
+    const draw = () => {
+      raf = 0;
+      const ev = last; if (!ev) return;
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;  // 3px 阈值：防手抖
+      moved = true;
       const box = deskBox();
-      win.el.style.left = clamp(nx, -win.el.offsetWidth + 80, box.w - 80) + 'px';
-      win.el.style.top = clamp(ny, 0, box.h - 40) + 'px';
+      // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
+      const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
+      const ny = clamp(Math.round(oy + dy), 0, box.h - 44);
+      win.el.style.left = nx + 'px';
+      win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
-      const vw = box.w, vh = box.h;
-      if (ev.clientY <= 6) snap = { x:0, y:0, w:vw, h:vh };
-      else if (ev.clientX <= 6) snap = { x:0, y:0, w:vw / 2, h:vh };
-      else if (ev.clientX >= vw - 6) snap = { x:vw / 2, y:0, w:vw / 2, h:vh };
+
+      const px = ev.clientX - box0.left, py = ev.clientY - box0.top;
+      if (py <= 8) snap = { x:0, y:0, w:box.w, h:box.h };
+      else if (px <= 8) snap = { x:0, y:0, w:Math.round(box.w / 2), h:box.h };
+      else if (px >= box.w - 8) snap = { x:Math.round(box.w / 2), y:0, w:Math.round(box.w / 2), h:box.h };
       else snap = null;
       if (snap) {
         snapEl.style.display = 'block';
@@ -3585,13 +3912,23 @@ const WindowManager = {
         snapEl.style.width = snap.w + 'px'; snapEl.style.height = snap.h + 'px';
       } else snapEl.style.display = 'none';
     };
-    const up = () => {
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
+    const move = (ev) => {
+      if (ev.pointerId !== pid) return;
+      last = ev;
+      if (!raf) raf = requestAnimationFrame(draw);   // 合并到帧，避免高频 move 抖动
+    };
+    const finish = (ev) => {
+      if (ev && ev.pointerId !== pid) return;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', finish);
+      bar.removeEventListener('pointercancel', finish);
+      try { bar.releasePointerCapture(pid); } catch (_) {}
+      document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
-      snapEl.style.display = 'none';
+      if (snapEl) snapEl.style.display = 'none';
       if (snap) {
-        win.restoreRect = { x:parseFloat(win.el.style.left), y:parseFloat(win.el.style.top), w:r.width, h:r.height };
+        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:w0, h:h0 };
         win.el.style.left = snap.x + 'px'; win.el.style.top = snap.y + 'px';
         win.el.style.width = snap.w + 'px'; win.el.style.height = snap.h + 'px';
         const box = deskBox();
@@ -3600,37 +3937,72 @@ const WindowManager = {
         win.content && win.content.onResize && win.content.onResize();
       }
     };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', finish);
+    bar.addEventListener('pointercancel', finish);
   },
 
   _startResize(e, win, dir) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || win.maximized) return;
     e.preventDefault(); e.stopPropagation();
+    const handle = e.currentTarget;
+    const pid = e.pointerId;
+    try { handle.setPointerCapture(pid); } catch (_) {}
     this.focus(win.id);
-    if (win.maximized) return;
+
+    const box0 = deskBox();
     const r = win.el.getBoundingClientRect();
+    const sl = parseFloat(win.el.style.left), st = parseFloat(win.el.style.top);
+    // 同样：一律用 #desk 相对坐标，禁止把视口坐标直接写进 style.left/top。
+    const start = {
+      x: Number.isFinite(sl) ? sl : r.left - box0.left,
+      y: Number.isFinite(st) ? st : r.top - box0.top,
+      w: r.width, h: r.height
+    };
     const sx = e.clientX, sy = e.clientY;
-    const start = { x:r.left, y:r.top, w:r.width, h:r.height };
-    const move = (ev) => {
+    let raf = 0, last = null;
+    const MINW = 280, MINH = 150;
+    document.body.classList.add('win-drag');
+
+    const draw = () => {
+      raf = 0;
+      const ev = last; if (!ev) return;
       let { x, y, w, h } = start;
       const dx = ev.clientX - sx, dy = ev.clientY - sy;
-      if (dir.includes('e')) w = Math.max(280, start.w + dx);
-      if (dir.includes('s')) h = Math.max(150, start.h + dy);
-      if (dir.includes('w')) { w = Math.max(280, start.w - dx); x = start.x + (start.w - w); }
-      if (dir.includes('n')) { h = Math.max(150, start.h - dy); y = start.y + (start.h - h); }
-      win.el.style.left = x + 'px'; win.el.style.top = y + 'px';
-      win.el.style.width = w + 'px'; win.el.style.height = h + 'px';
+      const box = deskBox();
+      if (dir.includes('e')) w = clamp(start.w + dx, MINW, box.w - x);
+      if (dir.includes('s')) h = clamp(start.h + dy, MINH, box.h - y);
+      if (dir.includes('w')) {
+        w = clamp(start.w - dx, MINW, start.x + start.w);
+        x = start.x + start.w - w;
+      }
+      if (dir.includes('n')) {
+        h = clamp(start.h - dy, MINH, start.y + start.h);
+        y = start.y + start.h - h;
+      }
+      win.el.style.left = Math.round(x) + 'px'; win.el.style.top = Math.round(y) + 'px';
+      win.el.style.width = Math.round(w) + 'px'; win.el.style.height = Math.round(h) + 'px';
       win.el.classList.add('resizing');
     };
-    const up = () => {
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', up);
+    const move = (ev) => {
+      if (ev.pointerId !== pid) return;
+      last = ev;
+      if (!raf) raf = requestAnimationFrame(draw);
+    };
+    const finish = (ev) => {
+      if (ev && ev.pointerId !== pid) return;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', finish);
+      handle.removeEventListener('pointercancel', finish);
+      try { handle.releasePointerCapture(pid); } catch (_) {}
+      document.body.classList.remove('win-drag');
       win.el.classList.remove('resizing');
       win.content && win.content.onResize && win.content.onResize();
     };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', up);
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
   },
 
   focus(id) {
@@ -3772,12 +4144,60 @@ const HOME_PAGE = (() => {
 function joinPath(dir, name) {
   return (dir === '.' ? '.' : dir + '.') + name;
 }
+
+/* ---------------------------------------------------------------- URL 分类
+ * ERR_UNKNOWN_URL_SCHEME 的来源：把 mailto: / tel: / intent:// 之类塞进 iframe.src，
+ * 或者地址栏把未知协议拼成 https://mailto:xxx。浏览器内核不会在 iframe 里处理这些协议，
+ * 于是控制台刷错误、窗口一片白。解决办法不是「捕获错误」（跨域根本读不到），
+ * 而是**导航前就分类**：只把 http(s)/data/blob 交给 iframe，其余走明确的出路。 */
+const KNOWN_SCHEMES = new Set([
+  'http','https','about','data','blob','javascript',
+  'mailto','tel','sms','geo','maps','market','intent',
+  'ftp','ftps','sftp','file','chrome','edge','view-source',
+  'weixin','wechat','alipays','alipay','taobao','mqq',
+  'itms-apps','itms-services','bitcoin','magnet','thunder'
+]);
+function schemeOf(s) {
+  const m = /^\s*([a-zA-Z][a-zA-Z0-9+.-]*):(\/\/)?/.exec(s || '');
+  if (!m) return '';
+  const name = m[1].toLowerCase();
+  // 只有「显式带 ://」或「在已知协议表里」才算协议。
+  // 否则 example.com:8080 会被误认成 example.com 协议。
+  return (m[2] || KNOWN_SCHEMES.has(name)) ? name : '';
+}
+function classifyUrl(input) {
+  const s = String(input || '').trim();
+  if (!s) return { kind:'blank' };
+  const scheme = schemeOf(s);
+  if (scheme) {
+    if (scheme === 'http' || scheme === 'https' || scheme === 'data' || scheme === 'blob') {
+      return { kind:'web', url:s, scheme };
+    }
+    if (scheme === 'about') {
+      return /^about:blank/i.test(s)
+        ? { kind:'blank', scheme }
+        : { kind:'blocked', scheme, url:s, reason:'about: 开头的浏览器内部页面不能在窗口里嵌入。' };
+    }
+    if (scheme === 'javascript') {
+      return { kind:'blocked', scheme, url:s, reason:'javascript: 地址会执行脚本，不作为网页打开。' };
+    }
+    return { kind:'external', scheme, url:s };
+  }
+  // 无协议：localhost / IP / 域名 → 补协议；其余当搜索词
+  if (/^(localhost|(\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:]+\])(:\d+)?([/?#].*)?$/i.test(s) && !/\s/.test(s)) {
+    return { kind:'web', url:'http://' + s };
+  }
+  if (/^[\w-]+(\.[\w-]+)+([:\/?#].*)?$/.test(s) && !/\s/.test(s)) {
+    return { kind:'web', url:'https://' + s };
+  }
+  return { kind:'search', q:s };
+}
 function normalizeUrl(input) {
-  let s = String(input || '').trim();
-  if (!s) return '';
-  if (/^(https?|about|data|blob|file):/i.test(s)) return s;
-  if (/^[\w-]+(\.[\w-]+)+([\/?#].*)?$/.test(s) && !/\s/.test(s)) return 'https://' + s;
-  return 'https://cn.bing.com/search?q=' + encodeURIComponent(s);
+  const c = classifyUrl(input);
+  if (c.kind === 'web') return c.url;
+  if (c.kind === 'search') return 'https://cn.bing.com/search?q=' + encodeURIComponent(c.q);
+  if (c.kind === 'blank') return '';
+  return c.url || '';
 }
 
 class BrowserApp {
@@ -3800,7 +4220,20 @@ class BrowserApp {
         <button data-a="new" title="新标签">＋</button>
       </div>
       <div class="br-frame">
-        <iframe referrerpolicy="no-referrer" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <!-- sandbox 是这里的关键：它会让 mailto:/intent:// 之类的顶层式导航被内核直接拦下，
+             不再产生 ERR_UNKNOWN_URL_SCHEME；allow-same-origin 只用于同源首页的链接拦截。 -->
+        <iframe referrerpolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
+          allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <div class="br-notice" id="brNotice" hidden>
+          <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
+          <div class="br-notice__text" id="brNoticeText"></div>
+          <div class="br-notice__acts">
+            <button class="dbtn primary" data-n="open">用系统应用打开</button>
+            <button class="dbtn" data-n="copy">复制链接</button>
+            <button class="dbtn" data-n="home">返回主页</button>
+          </div>
+        </div>
         <div class="br-fallback"><div>这个站点拒绝被嵌入（X-Frame-Options / CSP）。<br><br>
           <button class="btn primary" data-a="ext">在新标签打开</button></div></div>
       </div>
@@ -3809,8 +4242,13 @@ class BrowserApp {
     this.addr = $('.br-addr input', this.el);
     this.frame = $('iframe', this.el);
     this.frameEl = $('.br-frame', this.el);
+    this.noticeEl = $('#brNotice', this.el);
+    this.noticeTitle = $('#brNoticeTitle', this.el);
+    this.noticeText = $('#brNoticeText', this.el);
+    this.notice = null;
 
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
+    $$('[data-n]', this.el).forEach(b => b.onclick = () => this._noticeAct(b.dataset.n));
     this.addr.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); this.act('go'); }
     });
@@ -3819,9 +4257,15 @@ class BrowserApp {
         const t = this.frame.contentDocument && this.frame.contentDocument.title;
         if (t) this.setTab(this.active, { title:t });
       } catch (e) {}
+      this._hardenFrame();
     });
     this._msg = (e) => {
-      if (e.data && e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      if (!e.data) return;
+      if (e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      // 同源注入的脚本抓到外部协议时，转成面板，而不是让 iframe 去撞 ERR_UNKNOWN_URL_SCHEME
+      if (e.data.htExternal && e.source === this.frame.contentWindow) {
+        this.showNotice(e.data.htExternal.kind || 'external', e.data.htExternal);
+      }
     };
     window.addEventListener('message', this._msg);
 
@@ -3834,8 +4278,80 @@ class BrowserApp {
     else if (a === 'reload') this.reload();
     else if (a === 'home') this.navigate('');
     else if (a === 'go') this.navigate(this.addr.value);
-    else if (a === 'ext') { const u = this.current().url; if (u) window.open(u, '_blank', 'noopener'); }
+    else if (a === 'ext') {
+      const u = this.current() && this.current().url;
+      if (!u) return;
+      const c = classifyUrl(u);
+      if (c.kind === 'external') this.showNotice('external', c);
+      else window.open(u, '_blank', 'noopener');
+    }
     else if (a === 'new') this.addTab('');
+  }
+
+  /* —— 非网页协议：不交给 iframe，给出明确出路 —— */
+  showNotice(kind, c) {
+    this.notice = { kind, ...c };
+    if (!this.noticeEl) return;
+    const external = kind === 'external';
+    this.noticeTitle.textContent = external ? '这个链接需要外部应用' : '这个地址不能在窗口里打开';
+    this.noticeText.textContent = external
+      ? `「${c.scheme || '未知'}」不是网页协议。浏览器内核不会在 iframe 里处理它，强行加载只会得到 ERR_UNKNOWN_URL_SCHEME。可以复制链接，或用系统里的应用打开。`
+      : (c.reason || '浏览器安全策略禁止把这个地址嵌入 iframe。');
+    $('[data-n="open"]', this.noticeEl).hidden = !external;
+    this.noticeEl.hidden = false;
+    this.frameEl.classList.add('has-notice');
+  }
+  hideNotice() {
+    this.notice = null;
+    if (this.noticeEl) this.noticeEl.hidden = true;
+    this.frameEl.classList.remove('has-notice');
+  }
+  _noticeAct(n) {
+    const c = this.notice;
+    if (n === 'home') { this.hideNotice(); this.loadHome(); return; }
+    if (!c) return;
+    if (n === 'copy') {
+      const t = c.url || '';
+      try { navigator.clipboard.writeText(t); toast('链接已复制'); } catch (e) { toast('复制失败，请手动选择', true); }
+      return;
+    }
+    if (n === 'open' && c.kind === 'external') {
+      // 只允许用户手势里主动跳转，避免页面自己把用户踢到外部应用
+      try { location.href = c.url; } catch (e) { toast('系统没有能打开它的应用', true); }
+    }
+  }
+
+  /* —— 同源页面注入：拦住 <a href="mailto:…"> 与 window.open ——
+   * 跨域 iframe 的 DOM 读不到，这是浏览器安全模型决定的；
+   * 对能读到的（我们的 srcdoc 首页等）就把协议在点击阶段截下来，
+   * 让用户看到面板而不是白屏。 */
+  _hardenFrame() {
+    let doc = null;
+    try { doc = this.frame.contentDocument; } catch (e) { return; }
+    if (!doc || doc.__htHardened) return;
+    doc.__htHardened = true;
+    const relay = (u) => {
+      const c = classifyUrl(u);
+      if (c.kind === 'external' || c.kind === 'blocked') {
+        try { window.postMessage({ htExternal: c }, location.origin); } catch (e) {}
+        return true;
+      }
+      return false;
+    };
+    doc.addEventListener('click', (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      const href = a.getAttribute('href') || '';
+      if (relay(href)) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+    try {
+      const w = doc.defaultView;
+      if (w && !w.__htOpenPatched) {
+        w.__htOpenPatched = true;
+        const orig = w.open;
+        w.open = function (u, ...rest) { return (u && relay(String(u))) ? null : orig.call(w, u, ...rest); };
+      }
+    } catch (e) {}
   }
 
   current() { return this.tabs[this.active] || null; }
@@ -3876,6 +4392,7 @@ class BrowserApp {
   setAddr(u) { if (this.addr && document.activeElement !== this.addr) this.addr.value = u === 'about:blank' ? '' : (u || ''); }
 
   loadHome() {
+    this.hideNotice();
     this.frame.removeAttribute('src');
     this.frame.srcdoc = HOME_PAGE;
     this.frameEl.classList.remove('blocked');
@@ -3886,12 +4403,26 @@ class BrowserApp {
   }
   navigate(input, push) {
     if (push === undefined) push = true;
-    const url = normalizeUrl(input);
     const t = this.current();
     if (!t) return;
-    if (!url) { this.loadHome(); return; }
+    const c = classifyUrl(input);
+
+    if (c.kind === 'blank') { this.loadHome(); return; }
+    if (c.kind === 'search') {
+      return this.navigate('https://cn.bing.com/search?q=' + encodeURIComponent(c.q), push);
+    }
+    // 外部协议 / 被禁地址：**绝不写进 iframe.src**，这就是不再出现
+    // ERR_UNKNOWN_URL_SCHEME 的根本原因。改为展示面板让用户选出路。
+    if (c.kind === 'external' || c.kind === 'blocked') {
+      this.showNotice(c.kind, c);
+      this.setAddr(c.url || input);
+      return;
+    }
+
+    const url = c.url;
+    this.hideNotice();
     t.url = url;
-    t.title = url.replace(/^https?:\/\//, '').split('/')[0] || url;
+    t.title = url.replace(/^(https?|data|blob):/, '').split('/')[0] || url;
     if (push) { t.hist = t.hist.slice(0, t.idx + 1); t.hist.push(url); t.idx = t.hist.length - 1; }
     this.frame.removeAttribute('srcdoc');
     this.frame.src = url;
@@ -3906,6 +4437,7 @@ class BrowserApp {
     t.idx += d;
     const url = t.hist[t.idx];
     t.url = url;
+    this.hideNotice();
     this.frame.removeAttribute('srcdoc');
     this.frame.src = url;
     this.setAddr(url);
@@ -3915,8 +4447,14 @@ class BrowserApp {
     const t = this.current();
     if (!t) return;
     if (!t.url) { this.loadHome(); return; }
+    this.hideNotice();
     try { this.frame.contentWindow.location.reload(); }
-    catch (e) { this.frame.src = t.url; this.frameEl.classList.remove('blocked'); }
+    catch (e) {
+      // 跨域读不到 contentWindow：先清空再设回，强制一次真正的重载
+      this.frame.removeAttribute('srcdoc');
+      this.frame.src = 'about:blank';
+      setTimeout(() => { this.frame.src = t.url; }, 0);
+    }
   }
   restore() {
     const t = this.current();
@@ -4298,7 +4836,11 @@ class AgentApp {
     } catch (e) { this.messages = []; }
     this.render();
     if (!this.messages.length) {
-      this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · 后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端</div>
+      const direct = Settings.get('agentMode') === 'direct';
+      const where = direct
+        ? `直连 ${esc(Settings.get('agentDirectUrl') || 'https://api.deepseek.com')} · 密钥在本机（仅测试用）`
+        : `后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端`;
+      this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
         <div class="msg assistant"><span class="role">agent</span>你好。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
     }
   }
@@ -4401,50 +4943,84 @@ class AgentApp {
 
   apiMessages() {
     const out = [{ role:'system', content:AGENT_SYSTEM }];
+    /* reasoning_content 只有 DeepSeek 认；发给 OpenAI 官方或别的兼容端点会 400。
+     * 所以只在「直连且地址是 deepseek」时才回传。 */
+    const keepReasoning = Settings.get('agentMode') === 'direct' &&
+      /deepseek/i.test(String(Settings.get('agentDirectUrl') || ''));
     for (const m of this.messages) {
       if (m.role === 'error') continue;
       const o = { role:m.role, content:m.content == null ? '' : String(m.content) };
       if (m.tool_calls) o.tool_calls = m.tool_calls;
       if (m.tool_call_id) o.tool_call_id = m.tool_call_id;
       if (m.name) o.name = m.name;
+      /* DeepSeek 思考模式 + tools 的硬性要求：所有历史轮的 reasoning_content 都要回传，
+       * 少一条就 400。非思考模式带了也会被忽略。 */
+      if (keepReasoning && m.reasoning_content) o.reasoning_content = m.reasoning_content;
       out.push(o);
     }
     return out;
   }
 
   async callModel() {
-    const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
-    if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在“更多 → 智能体”里填写地址。');
-    const provider = Settings.get('agentProvider') || 'openai';
-    const model = Settings.get('agentModel') || 'gpt-4o-mini';
+    const direct = Settings.get('agentMode') === 'direct';
+    const model = Settings.get('agentModel') || 'deepseek-flash';
     const ctrl = new AbortController();
     this.abort = ctrl;
     const timer = setTimeout(() => ctrl.abort(), 240000);
+
+    let endpoint, headers, payload, label;
+    if (direct) {
+      /* 直连：浏览器 → OpenAI 兼容服务。跳过 modelserver，适合临时测试。
+       * 代价是密钥落在本机（localStorage + .config.settings），设置页已明示风险。 */
+      const base = String(Settings.get('agentDirectUrl') || 'https://api.deepseek.com').replace(/\/+$/, '');
+      const key = String(Settings.get('agentKey') || '').trim();
+      if (!key) throw new Error('直连模式需要 API Key：更多 → 智能体 → 勾选「直连 API」后填写。');
+      endpoint = /\/chat\/completions$/i.test(base) ? base : base + '/chat/completions';
+      label = base.replace(/^https?:\/\//, '');
+      headers = { 'Content-Type':'application/json', 'Authorization':'Bearer ' + key };
+      payload = { model, stream:false, temperature:0.2, messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto' };
+      // 只有 DeepSeek 认 thinking 字段；别的 OpenAI 兼容端点收到未知参数会 400
+      if (/deepseek/i.test(base)) {
+        payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
+      }
+    } else {
+      const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
+      if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
+      endpoint = base + '/v1/chat/completions';
+      label = base.replace(/^https?:\/\//, '');
+      headers = {
+        'Content-Type':'application/json',
+        'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
+        'X-HTerm-Client':'hterminal'
+      };
+      payload = {
+        model, provider: Settings.get('agentProvider') || 'openai',
+        stream:false, temperature:0.2,
+        messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto'
+      };
+    }
+
     let res, raw;
     try {
-      res = await fetch(base + '/v1/chat/completions', {
-        method:'POST',
-        headers:{
-          'Content-Type':'application/json',
-          'X-HTerm-Provider':provider,
-          'X-HTerm-Client':'hterminal'
-        },
-        body:JSON.stringify({
-          model, provider, stream:false, temperature:0.2,
-          messages:this.apiMessages(), tools:AGENT_TOOLS, tool_choice:'auto'
-        }),
-        signal:ctrl.signal
+      res = await fetch(endpoint, {
+        method:'POST', headers, body:JSON.stringify(payload), signal:ctrl.signal
       });
       raw = await res.text();
     } catch (e) {
       clearTimeout(timer);
       if (e.name === 'AbortError') throw new Error('请求已取消或超时');
-      throw new Error('连不上后端 (' + base + ')。请先运行 modelserver.py / .js / .go。原始错误：' + e.message);
+      if (direct) {
+        throw new Error(
+          '直连 ' + label + ' 失败。常见原因：①密钥错误；②该服务不允许浏览器跨域（CORS）——那就改用后端模式；' +
+          '③网络不通。原始错误：' + (e.message || e)
+        );
+      }
+      throw new Error('连不上后端 (' + label + ')。请先运行 modelserver.py / .js / .go。原始错误：' + (e.message || e));
     }
     clearTimeout(timer);
     let data;
     try { data = JSON.parse(raw); }
-    catch (e) { throw new Error('后端返回了非 JSON（HTTP ' + res.status + '）：' + raw.slice(0, 400)); }
+    catch (e) { throw new Error('服务返回了非 JSON（HTTP ' + res.status + '）：' + raw.slice(0, 400)); }
     if (!res.ok || data.error) {
       const msg = data.error && (data.error.message || data.error) || raw.slice(0, 400);
       throw new Error('模型调用失败（HTTP ' + res.status + '）：' + msg);
@@ -4453,6 +5029,7 @@ class AgentApp {
     if (!choice || !choice.message) throw new Error('后端响应里没有 choices[0].message：' + raw.slice(0, 400));
     const msg = choice.message;
     const out = { role:'assistant', content: msg.content || '' };
+    if (msg.reasoning_content) out.reasoning_content = msg.reasoning_content;
     if (msg.tool_calls && msg.tool_calls.length) {
       out.tool_calls = msg.tool_calls.map((t, i) => ({
         id: t.id || ('call_' + Date.now() + '_' + i),
@@ -4722,6 +5299,14 @@ function toggleFullscreen() {
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
+/* 光标形态分段按钮的高亮同步 */
+function syncCursorSeg() {
+  const seg = document.getElementById('setCursorStyle');
+  if (!seg) return;
+  const cur = Settings.get('cursorStyle') || 'bar';
+  $$('[data-cursor]', seg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cursor === cur)));
+}
+
 const Drawer = {
   opened: false,
   init() {
@@ -4754,13 +5339,32 @@ const Drawer = {
         Settings.set(key, v);
       });
     };
-    $('#setTheme').onchange = e => Settings.set('theme', e.target.value);
     bindRange('setFont', 'font');
     bindRange('setLine', 'lineHeight', v => (v / 10).toFixed(1));
-    $('#setCursor').onchange = e => Settings.set('cursorBlink', e.target.value);
-    $('#setGrid').onchange = e => Settings.set('grid', e.target.value);
+    // 光标形态（三选一，用分段按钮）
+    const seg = $('#setCursorStyle');
+    if (seg) {
+      $$('[data-cursor]', seg).forEach(b => b.onclick = () => {
+        Settings.set('cursorStyle', b.dataset.cursor);
+        syncCursorSeg();
+      });
+    }
+    // 二选一的一律用开关
+    const bindSwitch = (id, key, onVal, offVal) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
+    };
+    bindSwitch('setCursorBlink', 'cursorBlink', '1', '0');
+    bindSwitch('setGrid', 'grid', '1', '0');
     $('#setPrompt').onchange = e => Settings.set('prompt', e.target.value || '> ');
     $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
+    // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
+    bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
+    bindSwitch('setAgentThinking', 'agentThinking', '1', '0');
+    $('#setAgentDirect').addEventListener('change', () => this.syncAgentMode());
+    $('#setAgentDirectUrl').onchange = e => Settings.set('agentDirectUrl', e.target.value.trim());
+    $('#setAgentKey').onchange = e => { Settings.set('agentKey', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentUrl').onchange = e => { Settings.set('agentUrl', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
@@ -4785,22 +5389,35 @@ const Drawer = {
     this.refreshPkgList();
   },
   syncControls() {
-    $('#setTheme').value = Settings.get('theme');
     $('#setFont').value = Settings.get('font');
     $('#setFontVal').textContent = String(Settings.get('font'));
     $('#setLine').value = Settings.get('lineHeight');
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
-    $('#setCursor').value = Settings.get('cursorBlink');
-    $('#setGrid').value = Settings.get('grid');
+    if ($('#setCursorBlink')) $('#setCursorBlink').checked = Settings.get('cursorBlink') === '1';
+    if ($('#setGrid')) $('#setGrid').checked = Settings.get('grid') === '1';
+    syncCursorSeg();
     $('#setPrompt').value = Settings.get('prompt');
     $('#setCdn').value = Settings.get('cdn');
+    $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');
+    $('#setAgentDirectUrl').value = Settings.get('agentDirectUrl');
+    $('#setAgentKey').value = Settings.get('agentKey');
+    if ($('#setAgentThinking')) $('#setAgentThinking').checked = Settings.get('agentThinking') === '1';
     $('#setAgentProvider').value = Settings.get('agentProvider');
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
+    this.syncAgentMode();
+    applyTheme();   // 顺带把「主题」那行的取值刷新成当前系统主题
     $('#stVersion').textContent = 'v' + HT_VERSION;
     ['#tbVer', '#drVersion', '#bootVer'].forEach(sel => { const el = $(sel); if (el) el.textContent = HT_VERSION; });
     if (this.opened) this.refresh();
+  },
+  /* 后端 / 直连 两种模式互斥：直连才展开密钥与端点，并始终显示风险提示 */
+  syncAgentMode() {
+    const direct = $('#setAgentDirect') && $('#setAgentDirect').checked;
+    $$('[data-when="direct"]').forEach(el => { el.hidden = !direct; });
+    $$('[data-when="backend"]').forEach(el => { el.hidden = !!direct; });
+    this.refreshAgentLabel();
   },
   open(section) {
     this.opened = true;
@@ -5102,7 +5719,9 @@ async function boot() {
   try {
     step('读取设置', 5);
     Settings.load();
-    applyTheme(Settings.get('theme'));
+    // 主题不读设置，直接跟随系统；watchSystemTheme 之后系统切换会实时生效。
+    applyTheme();
+    watchSystemTheme();
     applyGrid(Settings.get('grid'));
 
     step('装载 xterm.js', 15);

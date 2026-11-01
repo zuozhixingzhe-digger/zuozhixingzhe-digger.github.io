@@ -36,12 +36,60 @@ const HOME_PAGE = (() => {
 function joinPath(dir, name) {
   return (dir === '.' ? '.' : dir + '.') + name;
 }
+
+/* ---------------------------------------------------------------- URL 分类
+ * ERR_UNKNOWN_URL_SCHEME 的来源：把 mailto: / tel: / intent:// 之类塞进 iframe.src，
+ * 或者地址栏把未知协议拼成 https://mailto:xxx。浏览器内核不会在 iframe 里处理这些协议，
+ * 于是控制台刷错误、窗口一片白。解决办法不是「捕获错误」（跨域根本读不到），
+ * 而是**导航前就分类**：只把 http(s)/data/blob 交给 iframe，其余走明确的出路。 */
+const KNOWN_SCHEMES = new Set([
+  'http','https','about','data','blob','javascript',
+  'mailto','tel','sms','geo','maps','market','intent',
+  'ftp','ftps','sftp','file','chrome','edge','view-source',
+  'weixin','wechat','alipays','alipay','taobao','mqq',
+  'itms-apps','itms-services','bitcoin','magnet','thunder'
+]);
+function schemeOf(s) {
+  const m = /^\s*([a-zA-Z][a-zA-Z0-9+.-]*):(\/\/)?/.exec(s || '');
+  if (!m) return '';
+  const name = m[1].toLowerCase();
+  // 只有「显式带 ://」或「在已知协议表里」才算协议。
+  // 否则 example.com:8080 会被误认成 example.com 协议。
+  return (m[2] || KNOWN_SCHEMES.has(name)) ? name : '';
+}
+function classifyUrl(input) {
+  const s = String(input || '').trim();
+  if (!s) return { kind:'blank' };
+  const scheme = schemeOf(s);
+  if (scheme) {
+    if (scheme === 'http' || scheme === 'https' || scheme === 'data' || scheme === 'blob') {
+      return { kind:'web', url:s, scheme };
+    }
+    if (scheme === 'about') {
+      return /^about:blank/i.test(s)
+        ? { kind:'blank', scheme }
+        : { kind:'blocked', scheme, url:s, reason:'about: 开头的浏览器内部页面不能在窗口里嵌入。' };
+    }
+    if (scheme === 'javascript') {
+      return { kind:'blocked', scheme, url:s, reason:'javascript: 地址会执行脚本，不作为网页打开。' };
+    }
+    return { kind:'external', scheme, url:s };
+  }
+  // 无协议：localhost / IP / 域名 → 补协议；其余当搜索词
+  if (/^(localhost|(\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:]+\])(:\d+)?([/?#].*)?$/i.test(s) && !/\s/.test(s)) {
+    return { kind:'web', url:'http://' + s };
+  }
+  if (/^[\w-]+(\.[\w-]+)+([:\/?#].*)?$/.test(s) && !/\s/.test(s)) {
+    return { kind:'web', url:'https://' + s };
+  }
+  return { kind:'search', q:s };
+}
 function normalizeUrl(input) {
-  let s = String(input || '').trim();
-  if (!s) return '';
-  if (/^(https?|about|data|blob|file):/i.test(s)) return s;
-  if (/^[\w-]+(\.[\w-]+)+([\/?#].*)?$/.test(s) && !/\s/.test(s)) return 'https://' + s;
-  return 'https://cn.bing.com/search?q=' + encodeURIComponent(s);
+  const c = classifyUrl(input);
+  if (c.kind === 'web') return c.url;
+  if (c.kind === 'search') return 'https://cn.bing.com/search?q=' + encodeURIComponent(c.q);
+  if (c.kind === 'blank') return '';
+  return c.url || '';
 }
 
 class BrowserApp {
@@ -64,7 +112,20 @@ class BrowserApp {
         <button data-a="new" title="新标签">＋</button>
       </div>
       <div class="br-frame">
-        <iframe referrerpolicy="no-referrer" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <!-- sandbox 是这里的关键：它会让 mailto:/intent:// 之类的顶层式导航被内核直接拦下，
+             不再产生 ERR_UNKNOWN_URL_SCHEME；allow-same-origin 只用于同源首页的链接拦截。 -->
+        <iframe referrerpolicy="no-referrer"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
+          allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <div class="br-notice" id="brNotice" hidden>
+          <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
+          <div class="br-notice__text" id="brNoticeText"></div>
+          <div class="br-notice__acts">
+            <button class="dbtn primary" data-n="open">用系统应用打开</button>
+            <button class="dbtn" data-n="copy">复制链接</button>
+            <button class="dbtn" data-n="home">返回主页</button>
+          </div>
+        </div>
         <div class="br-fallback"><div>这个站点拒绝被嵌入（X-Frame-Options / CSP）。<br><br>
           <button class="btn primary" data-a="ext">在新标签打开</button></div></div>
       </div>
@@ -73,8 +134,13 @@ class BrowserApp {
     this.addr = $('.br-addr input', this.el);
     this.frame = $('iframe', this.el);
     this.frameEl = $('.br-frame', this.el);
+    this.noticeEl = $('#brNotice', this.el);
+    this.noticeTitle = $('#brNoticeTitle', this.el);
+    this.noticeText = $('#brNoticeText', this.el);
+    this.notice = null;
 
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
+    $$('[data-n]', this.el).forEach(b => b.onclick = () => this._noticeAct(b.dataset.n));
     this.addr.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); this.act('go'); }
     });
@@ -83,9 +149,15 @@ class BrowserApp {
         const t = this.frame.contentDocument && this.frame.contentDocument.title;
         if (t) this.setTab(this.active, { title:t });
       } catch (e) {}
+      this._hardenFrame();
     });
     this._msg = (e) => {
-      if (e.data && e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      if (!e.data) return;
+      if (e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      // 同源注入的脚本抓到外部协议时，转成面板，而不是让 iframe 去撞 ERR_UNKNOWN_URL_SCHEME
+      if (e.data.htExternal && e.source === this.frame.contentWindow) {
+        this.showNotice(e.data.htExternal.kind || 'external', e.data.htExternal);
+      }
     };
     window.addEventListener('message', this._msg);
 
@@ -98,8 +170,80 @@ class BrowserApp {
     else if (a === 'reload') this.reload();
     else if (a === 'home') this.navigate('');
     else if (a === 'go') this.navigate(this.addr.value);
-    else if (a === 'ext') { const u = this.current().url; if (u) window.open(u, '_blank', 'noopener'); }
+    else if (a === 'ext') {
+      const u = this.current() && this.current().url;
+      if (!u) return;
+      const c = classifyUrl(u);
+      if (c.kind === 'external') this.showNotice('external', c);
+      else window.open(u, '_blank', 'noopener');
+    }
     else if (a === 'new') this.addTab('');
+  }
+
+  /* —— 非网页协议：不交给 iframe，给出明确出路 —— */
+  showNotice(kind, c) {
+    this.notice = { kind, ...c };
+    if (!this.noticeEl) return;
+    const external = kind === 'external';
+    this.noticeTitle.textContent = external ? '这个链接需要外部应用' : '这个地址不能在窗口里打开';
+    this.noticeText.textContent = external
+      ? `「${c.scheme || '未知'}」不是网页协议。浏览器内核不会在 iframe 里处理它，强行加载只会得到 ERR_UNKNOWN_URL_SCHEME。可以复制链接，或用系统里的应用打开。`
+      : (c.reason || '浏览器安全策略禁止把这个地址嵌入 iframe。');
+    $('[data-n="open"]', this.noticeEl).hidden = !external;
+    this.noticeEl.hidden = false;
+    this.frameEl.classList.add('has-notice');
+  }
+  hideNotice() {
+    this.notice = null;
+    if (this.noticeEl) this.noticeEl.hidden = true;
+    this.frameEl.classList.remove('has-notice');
+  }
+  _noticeAct(n) {
+    const c = this.notice;
+    if (n === 'home') { this.hideNotice(); this.loadHome(); return; }
+    if (!c) return;
+    if (n === 'copy') {
+      const t = c.url || '';
+      try { navigator.clipboard.writeText(t); toast('链接已复制'); } catch (e) { toast('复制失败，请手动选择', true); }
+      return;
+    }
+    if (n === 'open' && c.kind === 'external') {
+      // 只允许用户手势里主动跳转，避免页面自己把用户踢到外部应用
+      try { location.href = c.url; } catch (e) { toast('系统没有能打开它的应用', true); }
+    }
+  }
+
+  /* —— 同源页面注入：拦住 <a href="mailto:…"> 与 window.open ——
+   * 跨域 iframe 的 DOM 读不到，这是浏览器安全模型决定的；
+   * 对能读到的（我们的 srcdoc 首页等）就把协议在点击阶段截下来，
+   * 让用户看到面板而不是白屏。 */
+  _hardenFrame() {
+    let doc = null;
+    try { doc = this.frame.contentDocument; } catch (e) { return; }
+    if (!doc || doc.__htHardened) return;
+    doc.__htHardened = true;
+    const relay = (u) => {
+      const c = classifyUrl(u);
+      if (c.kind === 'external' || c.kind === 'blocked') {
+        try { window.postMessage({ htExternal: c }, location.origin); } catch (e) {}
+        return true;
+      }
+      return false;
+    };
+    doc.addEventListener('click', (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+      if (!a) return;
+      const href = a.getAttribute('href') || '';
+      if (relay(href)) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+    try {
+      const w = doc.defaultView;
+      if (w && !w.__htOpenPatched) {
+        w.__htOpenPatched = true;
+        const orig = w.open;
+        w.open = function (u, ...rest) { return (u && relay(String(u))) ? null : orig.call(w, u, ...rest); };
+      }
+    } catch (e) {}
   }
 
   current() { return this.tabs[this.active] || null; }
@@ -140,6 +284,7 @@ class BrowserApp {
   setAddr(u) { if (this.addr && document.activeElement !== this.addr) this.addr.value = u === 'about:blank' ? '' : (u || ''); }
 
   loadHome() {
+    this.hideNotice();
     this.frame.removeAttribute('src');
     this.frame.srcdoc = HOME_PAGE;
     this.frameEl.classList.remove('blocked');
@@ -150,12 +295,26 @@ class BrowserApp {
   }
   navigate(input, push) {
     if (push === undefined) push = true;
-    const url = normalizeUrl(input);
     const t = this.current();
     if (!t) return;
-    if (!url) { this.loadHome(); return; }
+    const c = classifyUrl(input);
+
+    if (c.kind === 'blank') { this.loadHome(); return; }
+    if (c.kind === 'search') {
+      return this.navigate('https://cn.bing.com/search?q=' + encodeURIComponent(c.q), push);
+    }
+    // 外部协议 / 被禁地址：**绝不写进 iframe.src**，这就是不再出现
+    // ERR_UNKNOWN_URL_SCHEME 的根本原因。改为展示面板让用户选出路。
+    if (c.kind === 'external' || c.kind === 'blocked') {
+      this.showNotice(c.kind, c);
+      this.setAddr(c.url || input);
+      return;
+    }
+
+    const url = c.url;
+    this.hideNotice();
     t.url = url;
-    t.title = url.replace(/^https?:\/\//, '').split('/')[0] || url;
+    t.title = url.replace(/^(https?|data|blob):/, '').split('/')[0] || url;
     if (push) { t.hist = t.hist.slice(0, t.idx + 1); t.hist.push(url); t.idx = t.hist.length - 1; }
     this.frame.removeAttribute('srcdoc');
     this.frame.src = url;
@@ -170,6 +329,7 @@ class BrowserApp {
     t.idx += d;
     const url = t.hist[t.idx];
     t.url = url;
+    this.hideNotice();
     this.frame.removeAttribute('srcdoc');
     this.frame.src = url;
     this.setAddr(url);
@@ -179,8 +339,14 @@ class BrowserApp {
     const t = this.current();
     if (!t) return;
     if (!t.url) { this.loadHome(); return; }
+    this.hideNotice();
     try { this.frame.contentWindow.location.reload(); }
-    catch (e) { this.frame.src = t.url; this.frameEl.classList.remove('blocked'); }
+    catch (e) {
+      // 跨域读不到 contentWindow：先清空再设回，强制一次真正的重载
+      this.frame.removeAttribute('srcdoc');
+      this.frame.src = 'about:blank';
+      setTimeout(() => { this.frame.src = t.url; }, 0);
+    }
   }
   restore() {
     const t = this.current();

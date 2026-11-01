@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.0';
+const HT_VERSION = '0.0.0.1';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -38,9 +38,19 @@ function svgIcon(name, cls) {
 /* ---------------------------------------------------------------- 设置 */
 const Settings = {
   DEFAULTS: {
-    theme: 'dark', font: 14, lineHeight: 12, cursorBlink: '1', grid: '1',
+    font: 14, lineHeight: 12, cursorStyle: 'bar', cursorBlink: '0', grid: '1',
     prompt: '> ', cdn: 'esm.sh',
-    agentUrl: 'http://127.0.0.1:8787', agentProvider: 'openai', agentModel: 'gpt-4o-mini',
+    /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
+     * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
+    agentMode: 'backend',
+    agentUrl: 'http://127.0.0.1:8787',
+    agentDirectUrl: 'https://api.deepseek.com',
+    agentKey: '',
+    agentProvider: 'openai', agentModel: 'deepseek-flash',
+    /* 直连时的深度思考：默认关。DeepSeek 默认开启思考模式，
+     * 响应先吐 reasoning_content 再吐 content，测试时又慢又费 token；
+     * 关掉后 temperature 才有意义。需要推理时在设置里打开（会正确回传 reasoning_content）。 */
+    agentThinking: '0',
     agentSteps: 16, historyLimit: 500
   },
   data: {},
@@ -55,17 +65,37 @@ const Settings = {
   set(k, v) {
     this.data[k] = v;
     try { localStorage.setItem('ht.settings', JSON.stringify(this.data)); } catch (e) {}
-    if (k === 'theme') applyTheme(v);
     if (k === 'grid') applyGrid(v);
-    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink') TerminalManager.applyAll();
+    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink' || k === 'cursorStyle') TerminalManager.applyAll();
     FS.write('.config.settings', JSON.stringify(this.data, null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
     return v;
   },
   all() { return Object.assign({}, this.data); }
 };
-function applyTheme(t) {
-  document.body.classList.toggle('light', t === 'light');
-  TerminalManager.applyTheme(t);
+
+/* ---------------------------------------------------------------- 主题（跟随系统）
+ * 不提供手动开关：设置里只有一行只读的「主题」，值随系统变。
+ * 监听 prefers-color-scheme，系统切深浅时整页（含 xterm）一起换。 */
+function systemTheme() {
+  try {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  } catch (e) { return 'dark'; }
+}
+function applyTheme() {
+  const t = systemTheme();
+  const light = t === 'light';
+  document.body.classList.toggle('light', light);
+  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+  const st = document.getElementById('stTheme');
+  if (st) st.textContent = light ? '浅色（随系统）' : '深色（随系统）';
+  if (typeof TerminalManager !== 'undefined') TerminalManager.applyTheme(t);
+}
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  const on = () => applyTheme();
+  if (mq.addEventListener) mq.addEventListener('change', on);
+  else if (mq.addListener) mq.addListener(on);   // Safari < 14
 }
 function applyGrid(on) {
   document.body.classList.toggle('nogrid', on !== '1');
@@ -190,7 +220,7 @@ const APP_DEFS = [
   { name:'agent', title:'智能体', desc:'轻量 AI harness（需要后端）', type:'agent', icon:'✦' },
   { name:'files', title:'文件', desc:'浏览一切皆文件的世界', type:'files', icon:'▤' },
   { name:'editor', title:'编辑器', desc:'查看/编辑文本文件', type:'editor', icon:'✎' },
-  { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'☰' },
+  { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'≥' },
   { name:'about', title:'关于', desc:'版本、许可与第三方声明', type:'about', icon:'ⓘ' },
 ];
 const DEV_DEFS = [

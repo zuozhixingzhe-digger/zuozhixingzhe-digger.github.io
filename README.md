@@ -1,9 +1,9 @@
 # hterminal
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.0.0**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.0.1**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 220 KB，无构建依赖、无外链脚本、可直接双击打开）。
+`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 254 KB，无构建依赖、无外链脚本、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
 
@@ -86,7 +86,7 @@ readme     welcome
 5. 想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Ctrl+Shift+A` 开智能体。
 
 > **数据在哪**：所有文件都在浏览器 IndexedDB 里（库名 `hterm-fs`）。
-> 换浏览器、换设备、清缓存就没了——所以请定期在「☰ 更多 → 文件系统 → 导出为 JSON」里备份。
+> 换浏览器、换设备、清缓存就没了——所以请定期在「≥ 更多 → 文件系统 → 导出为 JSON」里备份。
 
 清空一切：终端里敲 `nuke()`，或「更多 → 数据 → 清除本页全部数据」。
 
@@ -99,15 +99,20 @@ readme     welcome
 ### 顶栏
 
 ```text
-┌────────────────────────────────────────────────────────────────────────┐
-│ ▸ hterminal 0.0.0.0  (.home)  │ ⌃ ⌥ ⇧ │ ␛ ⇥ │ ← ↑ ↓ → │      ▦ ⛶ ☰ │
-└────────────────────────────────────────────────────────────────────────┘
-  品牌      版本        当前目录   修饰键    Esc/Tab   方向键        右侧按钮
+┌────────────────────────────────────────────────────────────────────────────┐
+│ hterminal 0.0.0.1  (.home)      ⌃   ⌥   ⇧  (◉)  ␛   ⇥        ▦  ⛶  ≥ │
+└────────────────────────────────────────────────────────────────────────────┘
+  品牌/版本/当前目录               修饰键   摇杆  Esc Tab        右按钮
 ```
 
-- **左**：品牌（点击＝关于）、版本号、当前目录（跟着 `cd` 变）。
-- **中**：符号控制键。手机上没有实体键盘时，`Ctrl+C`、`Tab` 补全、历史翻页全靠它。
-- **右**：`▦` 应用启动器 / `⛶` 全屏 / `☰` 更多。
+- **左**：`hterminal` + 版本号（点击＝关于）+ 当前目录（跟着 `cd` 变）。**没有图标**——
+  左上角那个 `>_` 纯装饰，删掉了。
+- **中**：`⌃ ⌥ ⇧` 修饰键 + **方向摇杆** + `␛`/`⇥`。手机上没有实体键盘时，
+  `Ctrl+C`、`Tab` 补全、历史翻页全靠它。摇杆拖动中心圆点按主导方向发方向键，按住连发（180 ms）。
+- **右**：`▦` 应用启动器 / `⛶` 全屏 / **`≥` 更多**（原来的 `☰` 换成 `≥`，单字符更利落）。
+
+> 为什么用 `≥`：它本身是「大于等于」的数学符号，视觉上是一个指向右侧的折角，
+> 天然表达「展开到右边」；`☰` 会被不少系统当成列表/菜单图标做特粗处理，字重不可控。
 
 符号控制键的规则（与参考项目一致）：
 
@@ -125,7 +130,7 @@ readme     welcome
 **底层终端只有一个**，永远铺在窗口下面。窗口可以拖拽移动、八向改大小、最小化 / 最大化 / 关闭；
 拖到屏幕边缘会吸附成半屏或全屏。底部 dock 列出所有窗口，点击切换。
 
-### 更多（`☰` / `Ctrl+,`）
+### 更多（`≥` / `Ctrl+,`）
 
 右侧滑出，分八段：**状态 · 外观 · 终端 · 文件系统 · 软件包 · 智能体 · 快捷键 · 数据**。
 `Esc` 或点遮罩关闭。
@@ -372,6 +377,25 @@ about() / sleep(ms) / uuid() / storage(IDB)
 
 `js` 工具走控制台语义（先当表达式求值，`SyntaxError` 才当语句块），所以 `1+1` 返回 `2`。
 
+### 两种接入方式
+
+| 方式 | 密钥在哪 | 适用 |
+| --- | --- | --- |
+| **后端**（默认） | 只在 modelserver 的环境变量里，前端永远拿不到 | 长期使用、共享设备 |
+| **直连** | 本机 `localStorage` + `.config.settings`（**明文**） | 临时测试，图省事 |
+
+直连就是让浏览器直接 `POST https://api.deepseek.com/chat/completions`，跳过 modelserver。
+默认预填 **`deepseek-flash`**（DeepSeek V4.1 Flash，OpenAI 兼容格式），地址 `https://api.deepseek.com`；
+实测该端点对浏览器放行 CORS，填上密钥就能用。
+
+> ⚠️ **直连的风险**：API Key 以明文存在浏览器里，任何能打开这个页面、或用过这台设备的人
+> 都能读走；请求也直接从浏览器发出（会暴露你的 IP）。只建议用临时/低额度密钥。
+> 在意安全就把「直连 API」开关关掉，改用后端模式。设置页在直连模式下会一直显示这段警告。
+
+DeepSeek 的思考模式默认开启：直连时默认请求 `thinking.type = "disabled"`（快、省 token，
+测试更顺手）；打开「深度思考」开关才会带 `enabled`，并把每轮的 `reasoning_content` 原样回传——
+**带 `tools` 时不回传会 400**，这是 API 的硬要求，`apiMessages()` 里已处理。
+
 JSONL 会话长这样（每行一条）：
 
 ```jsonl
@@ -420,7 +444,7 @@ python3 modelserver.py
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `GET` | `/health` | `{"ok":true,"version":"0.0.0.0",...}`，前端启动后自动探测 |
+| `GET` | `/health` | `{"ok":true,"version":"0.0.0.1",...}`，前端启动后自动探测 |
 | `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**前后端之间只用这一种** |
 | `OPTIONS` | `*` | CORS 预检，返回 204 |
 
@@ -477,7 +501,7 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 - 若用户未指定，**默认第四位加一**（如 `0.0.0.7 → 0.0.0.8`）。
 - 每次版本变更**必须**在第 9 节「开发日志」置顶追加一行，并在第 10 节「智能体操作记录」追加一条。
 - 版本号常量：
-  - 前端 `build/30-core.js` → `const HT_VERSION = '0.0.0.0';`
+  - 前端 `build/30-core.js` → `const HT_VERSION = '0.0.0.1';`
   - 后端 `modelserver.py` → `VERSION`、`modelserver.js` → `VERSION`、`modelserver.go` → `version`
   - 两者必须一致；前端会把 `HT_VERSION` 注进顶栏、抽屉、启动屏、`.sys.version`、`uname`
 
@@ -552,15 +576,19 @@ licenses/                  ← 第三方许可见 licenses/README.md
 ### 5.2 顶栏
 
 - 高度 `--top: clamp(44px, 7.4vw, 54px)`，跟着屏幕宽度走，窄屏不占太多。
-- 分四段：`.tb-left`（品牌/版本/路径）· `.tb-mid`（符号控制键）· `.tb-gap`（弹性填充）· `.tb-right`（窗口按钮）。
-- `.tb-mid` 在窄屏 `flex:1` 让按键挤满、在宽屏 `max-width:560px` 免得摊成一条空栏；
-  手机（≤560px）隐藏 `←` `→` 两个方向键，把宽度让给历史与补全。
+- 分三段：`.tb-left`（品牌/版本/路径）· `.tb-mid`（修饰键 + 摇杆 + Esc/Tab）· `.tb-right`（窗口按钮）。
+  中间**不留 `.tb-gap`**，否则宽屏会在按键与右按钮之间空出一大片。
+- `.tb-mid` 宽屏 `justify-content:space-evenly` + 按键 `min-width:52px / max-width:88px`，
+  均匀分布且不会被拉成 170px 一个；手机（≤560px）改成 `flex:1` 均分，并整块隐藏 `.tb-left`
+  （没有品牌的位置），让 `⌃` 从最左边开始。
+- 摇杆 `.joystick` 的容器比圆盘宽 32px，给四角外溢的 `▲▼≪≫` 留地盘；
+  容器绝不能进滚动区（`overflow:auto` 会裁掉外溢符号），所以 `.tb-mid` 用 `overflow:visible` + flex 收缩。
 - 按钮统一用 `.k`，视觉状态只有两个：`.k--active`（锁定，实心强调色）与 `.k--pressing`（正被按住，浅强调色）。
 
 ### 5.3 符号与字体
 
 顶栏用的是**控制字符与修饰键符号**：`⌃`(U+2303) `⌥`(U+2325) `⇧`(U+21E7) `␛`(U+241B) `⇥`(U+21E5)
-`←↑↓→` `☰`(U+2630) `⛶`(U+26F6) `▦`(U+25A6) `✕`。这些字符在很多设备上会被：
+`≥`(U+2265) `⛶`(U+26F6) `▦`(U+25A6) `◉` `✕`。这些字符在很多设备上会被：
 
 - 渲染成**彩色 emoji**（大小不受控、颜色不受控）→ 用 `font-variant-emoji: text` 强制按文本呈现；
 - 或者**缺字形**变成豆腐块 → 单独给一条符号字体栈：
@@ -624,15 +652,30 @@ licenses/                  ← 第三方许可见 licenses/README.md
 颜色全部走 CSS 变量，明暗两套只在 `body.light` 里覆盖值。**xterm 的主题也读同一套变量**
 （`termTheme()` 里 `cssVar('--accent')`），所以改配色只改一处。
 
+**主题跟随系统，不提供手动开关。** `applyTheme()` 读 `matchMedia('(prefers-color-scheme: light)')`，
+`watchSystemTheme()` 监听 `change`，系统切深浅时整页（含 xterm）一起换。
+设置页「外观 → 主题」只是一行只读文案，显示当前跟随到的是哪个。
+
+> 为什么不给选项：多一个可选项就多一个「用户停在旧主题上」的状态。
+> 系统已经有明确的明暗偏好，跟它走最省心；真要强制，改系统设置即可。
+
 一个坑：xterm 默认 `drawBoldTextInBrightColors = true`，ANSI 的「粗体+颜色」实际取的是
 `bright*` 系列。浅色主题下如果沿用深色那套淡彩色（`#99f6e4` 之类），粗体标题会糊在白底上。
 所以 `termTheme()` 里 `bright*` 必须按主题分别给值。
+
+### 5.7 光标
+
+与参考项目对齐：**`cursorStyle: 'bar'` + `cursorBlink: false`**（竖线、不闪），
+`cursorInactiveStyle: 'outline'`（失焦时描边而不是整块消失），`cursorWidth: 2`。
+
+「更多 → 外观」里可以改成 `block` / `underline`，也可以打开闪烁；
+两处都只改 `term.options`，不重建终端（`applySettings()` 负责同步）。
 
 ## 6. 构建与验证
 
 ```bash
 ./build.sh
-# index.html: 228750 bytes
+# index.html: 262214 bytes
 ```
 
 脚本做的事：拼接分片 → 内联 Worker 源码 → 写出 `index.html` → `node --check` 校验主线程与 Worker 两份 JS。
@@ -708,6 +751,28 @@ Node 版把请求头写成 `x-htem-client`（少个 `r`），且 Node 的 header
 **14. 浅色主题下粗体标题看不见**
 见 [5.6](#56-主题)：`bright*` 系列没跟主题走。
 
+**15. 输出整段错位：每行开头逐行向右缩进（截图里编号跑到右边）**
+根因不是字体，是 **`convertEol: false` + 只发 `\n`**。xterm 里 LF 只下移一行、列位置不变，
+所以第二行从第一行结尾的列继续写，行首标号被顶到右侧，越往后越靠右。
+**修法**：`convertEol: true`（把 LF 当 CRLF）。同时补上 `@xterm/addon-unicode11`
+并设 `unicode.activeVersion = '11'`——CJK/emoji 的 1/2 格宽度算错也会造成同样的漂移；
+`allowProposedApi: true` 是改这个字段的前提。
+
+**16. 窗口「拖不动 / 跑偏」**
+两个独立原因叠在一起：①拖动只监听 `document` 的 `pointermove`，指针一进 iframe 就断流，
+窗口卡住不动；②`_startResize` 把视口坐标 `r.left/top` 直接写进相对的 `style.left/top`，
+一动手就往下跳一个顶栏高度（54px）。
+**修法**：标题栏/手柄上 `setPointerCapture`（指针跑到哪事件都回来）+ `touch-action:none` +
+拖动期 `body.win-drag iframe{pointer-events:none}` 双保险；坐标一律从 `style.left/top` 读，
+读不到才用 `rect - deskRect` 换算；`requestAnimationFrame` 合并高频 move。
+
+**17. 内嵌浏览器刷 `ERR_UNKNOWN_URL_SCHEME`**
+把 `mailto:` / `tel:` / `intent://` 直接赋给 `iframe.src`，内核不会在 iframe 里处理这些协议，
+只会报错 + 白屏。跨域 iframe 的 DOM 读不到，**没法事后捕获**，只能在导航前分类。
+**修法**：`classifyUrl()` 白名单——`http(s)/data/blob` 进 iframe；其余协议走「需要外部应用」面板
+（复制 / 用系统应用打开），`javascript:`/`about:`（非 blank）直接拒绝；iframe 加 `sandbox`
+让内核提前拦掉越权导航；同源页面注入 `click`/`window.open` 拦截，点击阶段就转成面板。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -737,6 +802,7 @@ Node 版把请求头写成 `x-htem-client`（少个 `r`），且 Node 的 header
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.0.1 | 2026-11-01 | **修错位、换顶栏、直连可用**：①**输出错位（截图里编号跑到右边）**——根因是 `convertEol:false` 且只发 `\n`，LF 只下移不回列，下一行从上一行末尾继续写；改 `convertEol:true`。同时补 `@xterm/addon-unicode11`（`activeVersion='11'`、`allowProposedApi:true`）修 CJK/emoji 宽度漂移，字体栈改严格等宽（去掉 `ui-monospace`/`SF Mono`，启动时 canvas 实测 M/i/W/0）。②**顶栏**——删掉左上角纯装饰的 `>_` 图标；「更多」从 `☰` 换成 `≥` 并留在右侧；中部新增**圆盘摇杆**（拖动发方向键、保持 180ms 连发、`setPointerCapture`），移除原来那四个 `←↑↓→` 按钮；宽屏改 `space-evenly` 均匀分布、窄屏均分铺满且隐藏 `.tb-left`。③**光标**——对齐参考项目：`bar` + 不闪烁 + 失焦描边 + 宽度 2；设置里可选 `bar/block/underline` 与闪烁开关。④**窗口拖拽**——标题栏/缩放手柄改 `setPointerCapture`（指针进 iframe 不再断流）+ `touch-action:none` + 拖动期 `iframe{pointer-events:none}`；`_startResize` 改用 `#desk` 相对坐标，修掉「一改大小就往下跳 54px」。⑤**ERR_UNKNOWN_URL_SCHEME**——新增 `classifyUrl()` 白名单，`mailto:/tel:/intent://` 等不再进 `iframe.src`，改为「需要外部应用」面板；iframe 加 `sandbox`；同源页面注入 `click`/`window.open` 拦截。⑥**主题**——删除手动选择，`matchMedia` 自动跟随系统并监听变化；「光标闪烁」「背景网格」「直连 API」「深度思考」全部改成开关。⑦**智能体直连**——可跳过 modelserver 由浏览器直接请求 OpenAI 兼容端点，密钥存本机并常驻风险警告；默认 `deepseek-flash`（`https://api.deepseek.com`），默认关闭思考模式（需要时可开，且正确回传 `reasoning_content`，否则带 tools 会 400）。⑧**实测**——多行输出 L1/L2/L3 均从第 0 列起；摇杆发送 3×`\x1b[B`；拖动 +120/+60 精确、穿越 iframe 时 +220 不丢事件；东侧改宽 +120 且 left 不变；`mailto:`/`tel:` 只出面板块、`src` 不含协议；390×844 顶栏 46px 零溢出；系统切深浅即时跟随；DeepSeek 直连纯对话 760ms、工具调用 1256ms、思考模式 5 轮工具 5606ms，均无 400。 |
 | 0.0.0.0 | 2026-11-01 | **首版：确立版本号规则并把界面重做成参考项目的三段式**：①**版本号**——改为四段式 `X.Y.Z.W`，起始 `0.0.0.0`，以后每次默认末位加一；前端唯一来源是 `build/30-core.js` 的 `HT_VERSION`，Worker 通过 `init` 消息取（不再各自硬编码），顶栏/抽屉/启动屏/`.sys.version`/`uname` 全部读同一处；三份后端 `VERSION` 同步。②**顶栏**——原先是右上角一撮悬浮按钮，终端没有「顶」，不像一个终端应用；现改为整条 `header.topbar`：左品牌+版本+当前目录，中 `⌃⌥⇧ │ ␛ ⇥ │ ←↑↓→` 符号控制键，右 `▦` 应用启动器 / `⛶` 全屏 / `☰` 更多。③**修饰键**——完整实现参考项目的规则：短按切换锁定、按住临时生效、按住期间有输入则松手解锁；锁定 `⌃` 后敲 `c` 就是 `Ctrl+C`，手机终于能中断长任务。④**应用启动器**——新增 `▦` 弹出菜单（终端/浏览器/文件/编辑器/Python/智能体/更多），带快捷键提示。⑤**抽屉**——重排为 `drawer__user`（`>_` 头像 + 名称 + 版本 + 副标题）+ 八段 `drawer__section` + `drawer__foot`，标签列固定 72px 对齐。⑥**特殊字符**——新增 `--mono-sym` 符号字体栈与 `font-variant-emoji:text`，防止 `⌃⌥⛶` 被渲染成彩色 emoji 或缺字形；纯装饰图标（品牌）改内联 SVG。⑦**HTML 规范**——viewport 加 `maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover`；补 `theme-color`（明暗两条）、`format-detection`、`apple-mobile-web-app-*`；加 `<noscript>`；骨架改语义标签 `header/main/aside/footer`。⑧**修复**——顶栏出现后窗口 `style.top`（相对 `#desk`）与 `getBoundingClientRect()`（相对视口）混用，导致拖动多跳一截、最大化还原下移一格；浅色主题下 `bright*` 未跟主题走导致粗体标题看不清。⑨**实测**——顶栏锁定 `⌃`+`c` 捕获 `\u0003`、`⇥`/`␛` 分别 `\t`/`\u001b`；最大化尺寸 = `#desk`（1280×766）、还原 820×540、拖动位移与鼠标位移一致（+120/+60）；手机 390×844 顶栏 46px 且 `#ctrlRow` 零溢出；导入导出回环、Python 进出、`Ctrl+D` 重载、三份后端 `/health` 全部通过。 |
 | — | — | （更早的历史见 git log；本表自 0.0.0.0 起建立） |
 
@@ -746,6 +812,7 @@ Node 版把请求头写成 `x-htem-client`（少个 `r`），且 Node 的 header
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-01 22:05 | 错位/顶栏/光标/拖拽/协议/主题/直连（0.0.0.1） | `build/00-head.html`（摇杆与开关/分段样式、无 logo、顶栏三段重排、`win-drag`、`.br-notice`）、`build/10-body.html`（顶栏结构、外观与智能体设置）、`build/30-core.js`（`Settings` 新增 `cursorStyle/agentMode/agentDirectUrl/agentKey/agentThinking`、`systemTheme`/`watchSystemTheme`）、`build/40-term.js`（`convertEol`、`unicode11`、`isStrictMono`/`xtermFont`、`_startDrag`/`_startResize` 重写、摇杆逻辑）、`build/50-apps.js`（`classifyUrl`/`schemeOf`、协议面板、iframe `sandbox`、同源注入）、`build/60-agent.js`（直连分支、`reasoning_content` 回传）、`build/70-boot.js`（开关/分段绑定、`syncAgentMode`、主题启动）、`modelserver.{py,js,go}`（版本）、`README.md`（顶栏图、直连说明、5.6/5.7、踩坑 15-17、日志） | 无头 Chromium：L1/L2/L3 均从第 0 列起；摇杆向下发 3×`\x1b[B` 且箭头高亮；拖动 +120/+60 精确、穿越 iframe +220 不丢事件；东侧改宽 +120 且 `left` 不变；`mailto:`/`tel:` 只出面板块且 `iframe.src` 不含协议；390×844 顶栏 46px、`docW=390`；`prefers-color-scheme` 切换即时跟；DeepSeek 直连 760/1256/5606 ms，工具与思考模式均无 400 | `main` |
 | 2026-11-01 20:20 | 版本号规则 + 前端布局重做（0.0.0.0） | `build/00-head.html`（整份重写）、`build/10-body.html`（整份重写）、`build/40-term.js`（新增 `Keys`/`initTopbarKeys`/`deskBox`，窗口坐标改桌面相对）、`build/70-boot.js`（`AppMenu`/`toggleFullscreen`/抽屉类名/版本注入）、`build/30-core.js`（`HT_VERSION`、`applyGrid`）、`build/20-worker.js`（`state.version`）、`modelserver.{py,js,go}`（版本）、`README.md`（重写为两部分 + 开发日志 + 本表） | 无头 Chromium：启动无 pageerror；`⌃` 锁定+`c`→`\u0003`；`⇥`/`␛`→`\t`/`\u001b`；启动器开文件窗口；最大化＝桌面尺寸、拖动位移精确；390×844 顶栏 46px 零溢出；浅色主题粗体可读；导入导出回环、Python 进出、`Ctrl+D` 重载、三份后端 `/health` 均返回 `0.0.0.0` | `main` |
 
 ## 11. 许可证
@@ -788,7 +855,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 14 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 17 条）由 AI 与人类共同排查完成
 
 这意味着：
 
@@ -802,5 +869,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>hterminal 0.0.0.0 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>hterminal 0.0.0.1 · 桌面就是终端 · 一切皆文件</sub>
 </p>
