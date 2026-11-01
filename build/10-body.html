@@ -1,0 +1,170 @@
+<body>
+<!--
+  hterminal — DOM 骨架片段（由 build.sh 拼进 index.html）
+  Copyright (c) 2026 hterminal contributors
+  SPDX-License-Identifier: Apache-2.0 OR MIT  （双许可，任选其一）
+  本文件由 AI 智能体（WorkBuddy）生成并维护。
+-->
+<div id="screen">
+  <!-- 底层终端：永远存在的“桌面” -->
+  <div id="term-view"><div id="term" aria-label="hterminal"></div></div>
+
+  <!-- 浮动窗口层 -->
+  <div id="window-layer"></div>
+  <div class="win-snap" id="winSnap"></div>
+
+  <!-- 顶部悬浮控制 -->
+  <div id="hud">
+    <div class="hud-brand"><span class="hud-dot"></span><b>hterm</b><span id="hudWhere">.home</span></div>
+    <div class="hud-actions">
+      <button data-act="term" title="新终端窗口 (Ctrl+Shift+T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5"/><path d="M12 17h8"/></svg></button>
+      <button data-act="browser" title="浏览器窗口"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.6 3.6 5.4 3.6 8S14.5 17.4 12 20c-2.5-2.6-3.6-5.4-3.6-8S9.5 6.6 12 4z"/></svg></button>
+      <button data-act="files" title="文件管理器"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg></button>
+      <button data-act="agent" title="智能体 (Ctrl+Shift+A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg></button>
+      <span class="sep"></span>
+      <button data-act="more" title="更多 / 设置 (Ctrl+,)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+    </div>
+  </div>
+
+  <!-- 底部任务栏 -->
+  <div id="dock" hidden></div>
+
+  <!-- 启动屏 -->
+  <div id="boot">
+    <div class="boot-inner">
+      <div class="boot-logo">  _   _ _____
+ | | | |_   _|__ _ _ _ __ _ _ __
+ | |_| | | |/ -_) '_| '  \| '  \
+  \__,_| |_|\___|_| |_|_|_|_|_|_|
+        js in the browser · everything is a file</div>
+      <div class="boot-title">hterminal</div>
+      <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
+      <div class="boot-bar"><i id="bootBar"></i></div>
+      <div class="boot-log" id="bootLog">init</div>
+      <div class="boot-err" id="bootErr" hidden></div>
+    </div>
+  </div>
+</div>
+
+<!-- 更多 / 设置抽屉 -->
+<div id="drawer-overlay"></div>
+<aside id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h2>更多</h2>
+    <button id="drawerClose" title="关闭">✕</button>
+  </div>
+  <div class="drawer-body">
+    <section class="dsec">
+      <h3>状态</h3>
+      <div class="drow"><span>版本</span><b id="stVersion">—</b></div>
+      <div class="drow"><span>会话</span><b id="stSession">—</b></div>
+      <div class="drow"><span>存储</span><b id="stUsage">—</b></div>
+      <div class="drow"><span>后端</span><b id="stBackend">未连接</b></div>
+    </section>
+
+    <section class="dsec">
+      <h3>外观</h3>
+      <div class="drow"><span>主题</span>
+        <select id="setTheme"><option value="dark">深色</option><option value="light">浅色</option></select>
+      </div>
+      <div class="drow"><span>字号</span><input id="setFont" type="range" min="9" max="26" step="1"><b id="setFontVal">14</b></div>
+      <div class="drow"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
+      <div class="drow"><span>光标闪烁</span>
+        <select id="setCursor"><option value="1">开</option><option value="0">关</option></select>
+      </div>
+      <div class="drow"><span>背景网格</span>
+        <select id="setGrid"><option value="1">开</option><option value="0">关</option></select>
+      </div>
+    </section>
+
+    <section class="dsec">
+      <h3>终端</h3>
+      <div class="drow"><span>提示符</span><input id="setPrompt" type="text" maxlength="16"></div>
+      <div class="drow"><span>历史条数</span><b id="stHist">—</b></div>
+      <div class="dgrid">
+        <button class="dbtn" id="btnClearHist">清空历史</button>
+        <button class="dbtn" id="btnRestartTerm">重启底层终端</button>
+      </div>
+      <div class="dnote">Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出终端。上下方向键翻历史，Tab 补全路径。</div>
+    </section>
+
+    <section class="dsec">
+      <h3>文件系统</h3>
+      <div class="drow"><span>文件数</span><b id="stFiles">—</b></div>
+      <div class="dgrid">
+        <button class="dbtn" id="btnOpenFiles">打开文件管理器</button>
+        <button class="dbtn" id="btnExportFs">导出为 JSON</button>
+        <button class="dbtn" id="btnImportFs">从 JSON 导入</button>
+        <button class="dbtn" id="btnSaveLs">导出 localStorage</button>
+      </div>
+      <div class="dnote">根目录为 <code>.</code>，路径用 <code>.</code> 分隔。所有内容（包括包、会话、配置）都放在根下的点目录里。</div>
+    </section>
+
+    <section class="dsec">
+      <h3>软件包</h3>
+      <div class="drow"><span>CDN</span>
+        <select id="setCdn">
+          <option value="esm.sh">esm.sh</option>
+          <option value="jsdelivr">jsDelivr</option>
+          <option value="unpkg">unpkg</option>
+        </select>
+      </div>
+      <div class="drow"><input id="pkgInput" class="field" type="text" placeholder="包名，如 lodash@4" style="max-width:none"></div>
+      <div class="dgrid"><button class="dbtn primary" id="btnPkgInstall">安装 / 加载</button></div>
+      <div class="dlist" id="pkgList"></div>
+      <div class="dnote">包从 CDN 以 ESM 形式加载，索引存 localStorage，下次打开自动加载。装包需要联网。</div>
+    </section>
+
+    <section class="dsec">
+      <h3>智能体</h3>
+      <div class="drow"><span>后端地址</span><input id="setAgentUrl" type="text" placeholder="http://127.0.0.1:8787"></div>
+      <div class="drow"><span>提供方</span>
+        <select id="setAgentProvider">
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="responses">Responses</option>
+          <option value="custom">自定义 / 兼容</option>
+        </select>
+      </div>
+      <div class="drow"><span>模型</span><input id="setAgentModel" type="text" placeholder="gpt-4o-mini"></div>
+      <div class="drow"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="60" step="1" style="width:70px"></div>
+      <div class="dgrid">
+        <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
+        <button class="dbtn" id="btnAgentExport">导出会话 JSONL</button>
+        <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
+        <button class="dbtn danger" id="btnAgentClear">清空会话</button>
+      </div>
+      <div class="dnote">密钥只放后端环境变量，前端永远接触不到。后端仅监听本机，只做格式转换与转发，不保存任何对话。</div>
+    </section>
+
+    <section class="dsec">
+      <h3>快捷键</h3>
+      <div class="drow"><span>新终端窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">T</span></b></div>
+      <div class="drow"><span>浏览器窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">B</span></b></div>
+      <div class="drow"><span>智能体</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">A</span></b></div>
+      <div class="drow"><span>文件管理器</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">F</span></b></div>
+      <div class="drow"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span></b></div>
+      <div class="drow"><span>关闭当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">W</span></b></div>
+      <div class="drow"><span>最大化当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">M</span></b></div>
+      <div class="dnote">Ctrl / Alt 组合被尽量接管（F 键与 Win 键除外）。终端内的 Ctrl+C / Ctrl+D 等仍按终端语义工作。</div>
+    </section>
+
+    <section class="dsec">
+      <h3>数据</h3>
+      <div class="dgrid">
+        <button class="dbtn danger" id="btnNuke">清除本页全部数据</button>
+        <button class="dbtn" id="btnAbout">关于 / 许可证</button>
+      </div>
+      <div class="dnote">会清空 IndexedDB、localStorage 与缓存，然后重新加载页面。不可撤销。</div>
+    </section>
+  </div>
+  <div class="drawer-foot">
+    Apache-2.0 OR MIT 双许可 · 本项目由 AI 智能体生成并维护<br>
+    xterm.js (MIT) · Pyodide (MPL-2.0) · 经 CDN 引用
+  </div>
+</aside>
+
+<div id="modal-root"></div>
+<div id="toast"></div>
+<input type="file" id="hiddenFile" style="display:none">
+<input type="file" id="hiddenImport" accept=".json,.jsonl,application/json" style="display:none" multiple>

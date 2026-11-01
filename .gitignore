@@ -1,0 +1,68 @@
+# ---- 构建 / 运行时产物 ----
+# index.html 是构建产物，但本项目把它作为「可直接分发」的成品一并提交，
+# 因此不忽略。若你只想保留源码，可取消下一行注释。
+# /index.html
+
+# ---- 临时文件 ----
+/tmp/
+/.tmp/
+*.log
+*.bak
+*.orig
+*.rej
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.npm/
+
+# ---- Go ----
+/modelserver
+*.exe
+*.test
+*.out
+
+# ---- 编辑器 / IDE ----
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+
+# ---- 测试 / 截图 ----
+/test-results/
+/playwright-report/
+/screenshots/
+*.png.tmp
+
+# ---- 本地密钥 / 配置（绝不入库）----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*secret*
+*credential*
+
+# ---- 其它 ----
+.workbuddy/
+.codebuddy/
