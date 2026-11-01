@@ -137,36 +137,14 @@ code{font-family:var(--mono);font-size:.94em;color:var(--amber)}
   user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
   touch-action:none;
 }
-.tb-left{
-  display:flex; align-items:center; gap:9px; flex:0 0 auto;
-  padding:0 12px 0 14px; min-width:0; max-width:52vw;
-}
-.tb-brand{
-  display:flex; align-items:center; gap:7px; flex:0 0 auto;
-  font-family:var(--mono); font-size:12.5px; letter-spacing:.02em;
-  color:var(--fg); text-decoration:none;
-}
-.tb-brand b{font-weight:600;color:var(--fg);letter-spacing:-.01em}
-.tb-ver{
-  font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--fg-mute);
-  border:1px solid var(--border); border-radius:5px; padding:1px 5px; margin-left:2px;
-  font-variant-numeric:tabular-nums;
-}
-.tb-where{
-  font-family:var(--mono); font-size:11px; color:var(--fg-dim);
-  border:1px solid var(--border); border-radius:999px; padding:2px 9px;
-  max-width:26vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  background:rgba(255,255,255,.02);
-}
-body.light .tb-where{background:rgba(0,0,0,.02)}
-
+/* 顶栏只保留按键：左侧不再有品牌 / 版本 / 路径。版本号只在「更多」抽屉里。 */
 /* 中间：符号控制键（修饰键 / Esc / Tab / 方向键） */
 .tb-mid{
   display:flex; align-items:stretch; flex:1 1 auto; min-width:0;
   /* 宽屏居中成一条紧凑的控制条；不铺满整条栏，否则 5 个键会被拉到 170px 一个。
    * 窄屏再切成 flex:1 铺满（见 560px 媒体查询）。 */
   justify-content:space-evenly;
-  padding-left:2px;
+  padding-left:0;
   /* 不能用 auto/scroll：摇杆的四向符号故意画在圆盘之外，滚动容器会把它们裁掉。 */
   overflow:visible;
 }
@@ -310,6 +288,44 @@ body.nogrid .desk::before{display:none}
 #term .xterm-viewport{touch-action:pan-y;overscroll-behavior:none}
 #term .xterm-screen,#term .xterm-helper-textarea{pointer-events:none}
 
+/* ---------------------------------------------------------------------
+ * 自定义光标（叠加层）
+ * xterm 自带的光标设为透明，这里用 absolutely 定位的 div 画：
+ *   聚焦 = 竖线；失焦 = 窄椭圆描边；备用屏幕 = 虚线；空闲 = 呼吸
+ * 位置由 rAF 阻尼缓动驱动（不对 left/top 用 transition），所以移动是「跟手但略滞后」的。
+ * ------------------------------------------------------------------- */
+.ht-cursor{
+  position:absolute; left:0; top:0; width:2px;
+  background:linear-gradient(to bottom,var(--accent) 0%,var(--accent-2,#5eead4) 55%,#34d399 100%);
+  border-radius:1px; pointer-events:none; z-index:6;
+  transform-origin:center center;
+  transition:background .18s var(--ease),border-color .18s var(--ease),
+             opacity .18s var(--ease),width .14s var(--ease);
+  will-change:left,top;
+}
+/* 备用屏幕 / 选择中：虚线 */
+.ht-cursor--dashed{
+  background:repeating-linear-gradient(to bottom,#5eead4 0 3px,transparent 3px 6px);
+  border-radius:0;
+}
+/* 失焦：窄椭圆描边（比竖线略胖），提示「这里不接收键盘」 */
+.ht-cursor--hollow{
+  width:7px; background:transparent;
+  border:2px solid var(--accent-dim,#2dd4bf); border-radius:50%;
+}
+.ht-cursor--hollow.ht-cursor--dashed{border-style:dotted}
+/* 呼吸：只在「聚焦 + 空闲 ≥ 1s + 没在滚动」时加这个类 */
+.ht-cursor--breathing{animation:htBreathe 1.8s cubic-bezier(.45,0,.55,1) infinite}
+@keyframes htBreathe{
+  0%,100%{transform:scaleY(.34)}
+  50%{transform:scaleY(1)}
+}
+body.light .ht-cursor{background:linear-gradient(to bottom,#0d9488 0%,#0f766e 55%,#15803d 100%)}
+body.light .ht-cursor--dashed{background:repeating-linear-gradient(to bottom,#0d9488 0 3px,transparent 3px 6px)}
+@media (prefers-reduced-motion:reduce){
+  .ht-cursor--breathing{animation:none}
+}
+
 /* =====================================================================
  * 窗口
  * ===================================================================== */
@@ -332,6 +348,46 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
 }
 .win.dragging,.win.resizing{transition:none!important;user-select:none}
 .win.min{display:none}
+
+/* ---------------------------------------------------------------- 窗口动效
+ * 四种动作对应四种物理直觉：
+ *   开窗   —— 从一个"点"扩散成整块（scale .04 → 1，transform-origin 指向触发点）
+ *   关窗   —— 溶解：模糊 + 轻微放大 + 淡出，像化在水里，而不是简单淡出
+ *   最小化 —— 向 Dock 收拢（收缩 + 位移到图标位置 + 虚化）
+ *   最大化 —— 几何插值（left/top/width/height 过渡），不是瞬切
+ * 全部用 transform/filter/opacity，不触发布局；prefers-reduced-motion 时全部关掉。
+ */
+.win{transform-origin:50% 50%; will-change:transform,opacity}
+.win.anim-in{animation:htWinIn .3s cubic-bezier(.18,.9,.26,1) both}
+@keyframes htWinIn{
+  from{opacity:0;transform:scale(.04);filter:blur(3px)}
+  55% {opacity:1}
+  to  {opacity:1;transform:scale(1);filter:blur(0)}
+}
+.win.anim-out{animation:htWinOut .3s cubic-bezier(.4,0,.7,.3) both;pointer-events:none}
+@keyframes htWinOut{
+  0%  {opacity:1;transform:scale(1);filter:blur(0)}
+  45% {opacity:.7;transform:scale(1.018);filter:blur(3px)}
+  100%{opacity:0;transform:scale(.93);filter:blur(16px)}
+}
+.win.anim-min{animation:htWinMin .26s cubic-bezier(.5,0,.75,0) both;pointer-events:none}
+@keyframes htWinMin{
+  from{opacity:1;transform:none;filter:blur(0)}
+  to  {opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06);filter:blur(4px)}
+}
+.win.anim-restore{animation:htWinRestore .3s cubic-bezier(.2,.9,.25,1) both}
+@keyframes htWinRestore{
+  from{opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06);filter:blur(4px)}
+  to  {opacity:1;transform:none;filter:blur(0)}
+}
+/* 最大化/还原走几何过渡：只在加了 .tween 的那一瞬生效，
+ * 拖拽/缩放时绝不能有 transition，否则窗口会滞后鼠标。 */
+.win.tween{transition:left .24s cubic-bezier(.22,.8,.28,1),top .24s cubic-bezier(.22,.8,.28,1),
+  width .24s cubic-bezier(.22,.8,.28,1),height .24s cubic-bezier(.22,.8,.28,1)}
+@media (prefers-reduced-motion: reduce){
+  .win.anim-in,.win.anim-out,.win.anim-min,.win.anim-restore{animation:none!important}
+  .win.tween{transition:none!important}
+}
 .win.max{border-radius:0}
 .win-bar{
   height:var(--bar); flex:0 0 var(--bar); display:flex; align-items:center; gap:8px;
@@ -528,7 +584,10 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
 .drawer__item button{width:20px;height:20px;border-radius:5px;color:var(--fg-mute);font-size:11px}
 .drawer__item button:hover{color:var(--red);background:rgba(248,113,113,.1)}
 .drawer__foot{
-  flex:0 0 auto; padding:12px 16px 14px; border-top:1px solid var(--border);
+  /* 跟着内容一起滚，不做常驻底栏：它是声明，不是操作区 */
+  padding:18px 16px calc(20px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--border);
+  margin-top:14px;
   font-size:10.5px; line-height:1.7; color:var(--fg-faint); text-align:center;
 }
 .drawer__foot a{color:var(--accent-dim);text-decoration:none}
@@ -704,6 +763,42 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
 .ag-input textarea:focus{border-color:var(--accent-dim)}
 .ag-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
 .ag-actions .grow{flex:1}
+/* 附件条：图片给缩略图，文本给扩展名色块 */
+.ag-att{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+.ag-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  padding:3px 5px 3px 3px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg-1);font-size:10px;color:var(--fg-dim)}
+.ag-chip img{width:26px;height:26px;object-fit:cover;border-radius:5px;display:block}
+.ag-chip-i{display:flex;align-items:center;justify-content:center;width:26px;height:26px;
+  border-radius:5px;background:var(--bg-2);color:var(--accent);font-size:8.5px;
+  font-family:var(--mono);text-transform:uppercase}
+.ag-chip b{font-weight:400;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-chip button{border:0;background:none;color:var(--fg-mute);font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
+.ag-chip button:hover{color:var(--red)}
+.ag-input.drop{background:rgba(94,234,212,.06);outline:1px dashed var(--accent-dim);outline-offset:-4px}
+
+/* 智能体消息里的 markdown：只覆盖必要部分，别把气泡布局弄乱 */
+.msg.assistant{white-space:normal}
+.msg.assistant p{margin:0 0 .55em}
+.msg.assistant p:last-child{margin-bottom:0}
+.msg.assistant h1,.msg.assistant h2,.msg.assistant h3,.msg.assistant h4{
+  font-size:12.5px;margin:.7em 0 .4em;color:var(--fg);font-weight:600;line-height:1.4}
+.msg.assistant h1{font-size:13.5px}
+.msg.assistant ul,.msg.assistant ol{margin:.3em 0 .55em;padding-left:1.35em}
+.msg.assistant li{margin:.15em 0}
+.msg.assistant code{font-family:var(--mono);font-size:10.8px;background:var(--bg-0);
+  border:1px solid var(--line-soft);border-radius:4px;padding:.5px 4px;color:var(--accent)}
+.msg.assistant pre{background:var(--bg-0);border:1px solid var(--line-soft);border-radius:7px;
+  padding:8px 9px;overflow-x:auto;margin:.5em 0}
+.msg.assistant pre code{background:none;border:0;padding:0;color:var(--fg-dim);font-size:10.6px;line-height:1.55;display:block}
+.msg.assistant blockquote{margin:.5em 0;padding:.15em 0 .15em .7em;border-left:2px solid var(--accent-dim);color:var(--fg-mute)}
+.msg.assistant table{border-collapse:collapse;margin:.5em 0;font-size:10.8px;display:block;overflow-x:auto}
+.msg.assistant th,.msg.assistant td{border:1px solid var(--line-soft);padding:3px 7px;text-align:left}
+.msg.assistant th{background:var(--bg-1);color:var(--fg);font-weight:500}
+.msg.assistant a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.msg.assistant hr{border:0;border-top:1px solid var(--line-soft);margin:.7em 0}
+.msg.assistant img{max-width:100%;border-radius:6px}
+.msg.user{white-space:pre-wrap}
 .ag-hint{font-size:9.5px;color:var(--fg-mute);font-family:var(--mono)}
 
 /* 编辑器 */
@@ -721,16 +816,8 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 /* =====================================================================
  * 响应式
  * ===================================================================== */
-@media (max-width:860px){
-  .tb-where{max-width:18vw}
-  .tb-brand b{display:none}
-}
 @media (max-width:560px){
   :root{--cell-pad:10px;--top:46px}
-  /* 窄屏没有品牌的位置：整块隐藏，让 ⌃ 直接从最左边开始（参考项目同样没有品牌块） */
-  .tb-left{display:none}
-  .tb-ver{display:none}
-  .tb-where{display:none}
   .tb-right .k{width:38px}
   .tb-mid .k{flex:1 1 0;min-width:0;max-width:44px;padding:0}
   .sep{margin:0 2px}

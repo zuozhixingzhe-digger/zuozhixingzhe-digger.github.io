@@ -137,36 +137,14 @@ code{font-family:var(--mono);font-size:.94em;color:var(--amber)}
   user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
   touch-action:none;
 }
-.tb-left{
-  display:flex; align-items:center; gap:9px; flex:0 0 auto;
-  padding:0 12px 0 14px; min-width:0; max-width:52vw;
-}
-.tb-brand{
-  display:flex; align-items:center; gap:7px; flex:0 0 auto;
-  font-family:var(--mono); font-size:12.5px; letter-spacing:.02em;
-  color:var(--fg); text-decoration:none;
-}
-.tb-brand b{font-weight:600;color:var(--fg);letter-spacing:-.01em}
-.tb-ver{
-  font-family:var(--mono); font-size:9.5px; letter-spacing:.04em; color:var(--fg-mute);
-  border:1px solid var(--border); border-radius:5px; padding:1px 5px; margin-left:2px;
-  font-variant-numeric:tabular-nums;
-}
-.tb-where{
-  font-family:var(--mono); font-size:11px; color:var(--fg-dim);
-  border:1px solid var(--border); border-radius:999px; padding:2px 9px;
-  max-width:26vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  background:rgba(255,255,255,.02);
-}
-body.light .tb-where{background:rgba(0,0,0,.02)}
-
+/* 顶栏只保留按键：左侧不再有品牌 / 版本 / 路径。版本号只在「更多」抽屉里。 */
 /* 中间：符号控制键（修饰键 / Esc / Tab / 方向键） */
 .tb-mid{
   display:flex; align-items:stretch; flex:1 1 auto; min-width:0;
   /* 宽屏居中成一条紧凑的控制条；不铺满整条栏，否则 5 个键会被拉到 170px 一个。
    * 窄屏再切成 flex:1 铺满（见 560px 媒体查询）。 */
   justify-content:space-evenly;
-  padding-left:2px;
+  padding-left:0;
   /* 不能用 auto/scroll：摇杆的四向符号故意画在圆盘之外，滚动容器会把它们裁掉。 */
   overflow:visible;
 }
@@ -310,6 +288,44 @@ body.nogrid .desk::before{display:none}
 #term .xterm-viewport{touch-action:pan-y;overscroll-behavior:none}
 #term .xterm-screen,#term .xterm-helper-textarea{pointer-events:none}
 
+/* ---------------------------------------------------------------------
+ * 自定义光标（叠加层）
+ * xterm 自带的光标设为透明，这里用 absolutely 定位的 div 画：
+ *   聚焦 = 竖线；失焦 = 窄椭圆描边；备用屏幕 = 虚线；空闲 = 呼吸
+ * 位置由 rAF 阻尼缓动驱动（不对 left/top 用 transition），所以移动是「跟手但略滞后」的。
+ * ------------------------------------------------------------------- */
+.ht-cursor{
+  position:absolute; left:0; top:0; width:2px;
+  background:linear-gradient(to bottom,var(--accent) 0%,var(--accent-2,#5eead4) 55%,#34d399 100%);
+  border-radius:1px; pointer-events:none; z-index:6;
+  transform-origin:center center;
+  transition:background .18s var(--ease),border-color .18s var(--ease),
+             opacity .18s var(--ease),width .14s var(--ease);
+  will-change:left,top;
+}
+/* 备用屏幕 / 选择中：虚线 */
+.ht-cursor--dashed{
+  background:repeating-linear-gradient(to bottom,#5eead4 0 3px,transparent 3px 6px);
+  border-radius:0;
+}
+/* 失焦：窄椭圆描边（比竖线略胖），提示「这里不接收键盘」 */
+.ht-cursor--hollow{
+  width:7px; background:transparent;
+  border:2px solid var(--accent-dim,#2dd4bf); border-radius:50%;
+}
+.ht-cursor--hollow.ht-cursor--dashed{border-style:dotted}
+/* 呼吸：只在「聚焦 + 空闲 ≥ 1s + 没在滚动」时加这个类 */
+.ht-cursor--breathing{animation:htBreathe 1.8s cubic-bezier(.45,0,.55,1) infinite}
+@keyframes htBreathe{
+  0%,100%{transform:scaleY(.34)}
+  50%{transform:scaleY(1)}
+}
+body.light .ht-cursor{background:linear-gradient(to bottom,#0d9488 0%,#0f766e 55%,#15803d 100%)}
+body.light .ht-cursor--dashed{background:repeating-linear-gradient(to bottom,#0d9488 0 3px,transparent 3px 6px)}
+@media (prefers-reduced-motion:reduce){
+  .ht-cursor--breathing{animation:none}
+}
+
 /* =====================================================================
  * 窗口
  * ===================================================================== */
@@ -332,6 +348,46 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
 }
 .win.dragging,.win.resizing{transition:none!important;user-select:none}
 .win.min{display:none}
+
+/* ---------------------------------------------------------------- 窗口动效
+ * 四种动作对应四种物理直觉：
+ *   开窗   —— 从一个"点"扩散成整块（scale .04 → 1，transform-origin 指向触发点）
+ *   关窗   —— 溶解：模糊 + 轻微放大 + 淡出，像化在水里，而不是简单淡出
+ *   最小化 —— 向 Dock 收拢（收缩 + 位移到图标位置 + 虚化）
+ *   最大化 —— 几何插值（left/top/width/height 过渡），不是瞬切
+ * 全部用 transform/filter/opacity，不触发布局；prefers-reduced-motion 时全部关掉。
+ */
+.win{transform-origin:50% 50%; will-change:transform,opacity}
+.win.anim-in{animation:htWinIn .3s cubic-bezier(.18,.9,.26,1) both}
+@keyframes htWinIn{
+  from{opacity:0;transform:scale(.04);filter:blur(3px)}
+  55% {opacity:1}
+  to  {opacity:1;transform:scale(1);filter:blur(0)}
+}
+.win.anim-out{animation:htWinOut .3s cubic-bezier(.4,0,.7,.3) both;pointer-events:none}
+@keyframes htWinOut{
+  0%  {opacity:1;transform:scale(1);filter:blur(0)}
+  45% {opacity:.7;transform:scale(1.018);filter:blur(3px)}
+  100%{opacity:0;transform:scale(.93);filter:blur(16px)}
+}
+.win.anim-min{animation:htWinMin .26s cubic-bezier(.5,0,.75,0) both;pointer-events:none}
+@keyframes htWinMin{
+  from{opacity:1;transform:none;filter:blur(0)}
+  to  {opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06);filter:blur(4px)}
+}
+.win.anim-restore{animation:htWinRestore .3s cubic-bezier(.2,.9,.25,1) both}
+@keyframes htWinRestore{
+  from{opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06);filter:blur(4px)}
+  to  {opacity:1;transform:none;filter:blur(0)}
+}
+/* 最大化/还原走几何过渡：只在加了 .tween 的那一瞬生效，
+ * 拖拽/缩放时绝不能有 transition，否则窗口会滞后鼠标。 */
+.win.tween{transition:left .24s cubic-bezier(.22,.8,.28,1),top .24s cubic-bezier(.22,.8,.28,1),
+  width .24s cubic-bezier(.22,.8,.28,1),height .24s cubic-bezier(.22,.8,.28,1)}
+@media (prefers-reduced-motion: reduce){
+  .win.anim-in,.win.anim-out,.win.anim-min,.win.anim-restore{animation:none!important}
+  .win.tween{transition:none!important}
+}
 .win.max{border-radius:0}
 .win-bar{
   height:var(--bar); flex:0 0 var(--bar); display:flex; align-items:center; gap:8px;
@@ -528,7 +584,10 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
 .drawer__item button{width:20px;height:20px;border-radius:5px;color:var(--fg-mute);font-size:11px}
 .drawer__item button:hover{color:var(--red);background:rgba(248,113,113,.1)}
 .drawer__foot{
-  flex:0 0 auto; padding:12px 16px 14px; border-top:1px solid var(--border);
+  /* 跟着内容一起滚，不做常驻底栏：它是声明，不是操作区 */
+  padding:18px 16px calc(20px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--border);
+  margin-top:14px;
   font-size:10.5px; line-height:1.7; color:var(--fg-faint); text-align:center;
 }
 .drawer__foot a{color:var(--accent-dim);text-decoration:none}
@@ -704,6 +763,42 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
 .ag-input textarea:focus{border-color:var(--accent-dim)}
 .ag-actions{display:flex;align-items:center;gap:6px;margin-top:6px}
 .ag-actions .grow{flex:1}
+/* 附件条：图片给缩略图，文本给扩展名色块 */
+.ag-att{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+.ag-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  padding:3px 5px 3px 3px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg-1);font-size:10px;color:var(--fg-dim)}
+.ag-chip img{width:26px;height:26px;object-fit:cover;border-radius:5px;display:block}
+.ag-chip-i{display:flex;align-items:center;justify-content:center;width:26px;height:26px;
+  border-radius:5px;background:var(--bg-2);color:var(--accent);font-size:8.5px;
+  font-family:var(--mono);text-transform:uppercase}
+.ag-chip b{font-weight:400;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ag-chip button{border:0;background:none;color:var(--fg-mute);font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
+.ag-chip button:hover{color:var(--red)}
+.ag-input.drop{background:rgba(94,234,212,.06);outline:1px dashed var(--accent-dim);outline-offset:-4px}
+
+/* 智能体消息里的 markdown：只覆盖必要部分，别把气泡布局弄乱 */
+.msg.assistant{white-space:normal}
+.msg.assistant p{margin:0 0 .55em}
+.msg.assistant p:last-child{margin-bottom:0}
+.msg.assistant h1,.msg.assistant h2,.msg.assistant h3,.msg.assistant h4{
+  font-size:12.5px;margin:.7em 0 .4em;color:var(--fg);font-weight:600;line-height:1.4}
+.msg.assistant h1{font-size:13.5px}
+.msg.assistant ul,.msg.assistant ol{margin:.3em 0 .55em;padding-left:1.35em}
+.msg.assistant li{margin:.15em 0}
+.msg.assistant code{font-family:var(--mono);font-size:10.8px;background:var(--bg-0);
+  border:1px solid var(--line-soft);border-radius:4px;padding:.5px 4px;color:var(--accent)}
+.msg.assistant pre{background:var(--bg-0);border:1px solid var(--line-soft);border-radius:7px;
+  padding:8px 9px;overflow-x:auto;margin:.5em 0}
+.msg.assistant pre code{background:none;border:0;padding:0;color:var(--fg-dim);font-size:10.6px;line-height:1.55;display:block}
+.msg.assistant blockquote{margin:.5em 0;padding:.15em 0 .15em .7em;border-left:2px solid var(--accent-dim);color:var(--fg-mute)}
+.msg.assistant table{border-collapse:collapse;margin:.5em 0;font-size:10.8px;display:block;overflow-x:auto}
+.msg.assistant th,.msg.assistant td{border:1px solid var(--line-soft);padding:3px 7px;text-align:left}
+.msg.assistant th{background:var(--bg-1);color:var(--fg);font-weight:500}
+.msg.assistant a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.msg.assistant hr{border:0;border-top:1px solid var(--line-soft);margin:.7em 0}
+.msg.assistant img{max-width:100%;border-radius:6px}
+.msg.user{white-space:pre-wrap}
 .ag-hint{font-size:9.5px;color:var(--fg-mute);font-family:var(--mono)}
 
 /* 编辑器 */
@@ -721,16 +816,8 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 /* =====================================================================
  * 响应式
  * ===================================================================== */
-@media (max-width:860px){
-  .tb-where{max-width:18vw}
-  .tb-brand b{display:none}
-}
 @media (max-width:560px){
   :root{--cell-pad:10px;--top:46px}
-  /* 窄屏没有品牌的位置：整块隐藏，让 ⌃ 直接从最左边开始（参考项目同样没有品牌块） */
-  .tb-left{display:none}
-  .tb-ver{display:none}
-  .tb-where{display:none}
   .tb-right .k{width:38px}
   .tb-mid .k{flex:1 1 0;min-width:0;max-width:44px;padding:0}
   .sep{margin:0 2px}
@@ -757,16 +844,8 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 <noscript><div class="noscript">hterminal 需要 JavaScript：请启用后重新打开本页。</div></noscript>
 
 <div class="app" id="app">
-  <!-- 顶部控制 / 状态栏：左边品牌与当前目录，中间符号控制键，右边窗口与「更多」 -->
+  <!-- 顶部控制栏：只有按键。品牌 / 版本 / 路径都不占位置，顶栏从 ⌃ 开始 -->
   <header class="topbar" id="topbar" data-state="ok">
-    <div class="tb-left">
-      <a class="tb-brand" id="tbBrand" href="#" title="关于 hterminal">
-        <b>hterminal</b>
-        <span class="tb-ver" id="tbVer">0.0.0.1</span>
-      </a>
-      <span class="tb-where" id="tbWhere" title="当前目录">.home</span>
-    </div>
-
     <div class="tb-mid" id="ctrlRow" role="toolbar" aria-label="终端控制键">
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
@@ -813,7 +892,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">0.0.0.1</span></div>
+      <div class="boot-title">hterminal <span id="bootVer">0.0.0.2</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -840,7 +919,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.1</span></div>
+      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.2</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -858,33 +937,24 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
     <section class="drawer__section">
       <div class="drawer__title">外观</div>
       <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
-      <div class="drawer__row"><span>字号</span><input id="setFont" type="range" min="9" max="26" step="1"><b id="setFontVal">14</b></div>
+      <div class="drawer__row"><span>终端字号</span><input id="setFont" type="range" min="9" max="26" step="1" aria-label="终端字号"><b id="setFontVal">14</b></div>
+      <div class="drawer__row"><span>显示行数</span><input id="setRows" type="range" min="0" max="80" step="1" aria-label="显示行数"><b id="setRowsVal">自动</b></div>
       <div class="drawer__row"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
-      <div class="drawer__row"><span>光标形态</span>
-        <div class="seg" id="setCursorStyle" role="group" aria-label="光标形态">
-          <button type="button" data-cursor="bar" aria-pressed="true" title="竖线（bar）">▏</button>
-          <button type="button" data-cursor="block" aria-pressed="false" title="方块（block）">▌</button>
-          <button type="button" data-cursor="underline" aria-pressed="false" title="下划线（underline）">▁</button>
-        </div>
+      <div class="drawer__row"><span>按键振动</span>
+        <label class="sw" title="按键 / 响铃时短振动"><input type="checkbox" id="setHaptic"><i></i></label>
       </div>
-      <div class="drawer__row"><span>光标闪烁</span>
-        <label class="sw" title="闪烁 / 不闪烁"><input type="checkbox" id="setCursorBlink"><i></i></label>
-      </div>
-      <div class="drawer__row"><span>背景网格</span>
-        <label class="sw" title="显示 / 隐藏桌面网格"><input type="checkbox" id="setGrid"><i></i></label>
-      </div>
-      <div class="drawer__note">主题跟随系统：系统切换深/浅色时自动跟随，不提供手动开关。</div>
+      <div class="drawer__note">主题跟随系统，系统切换深/浅色时自动跟随。「显示行数」固定终端高度（0 = 自动铺满），与参考项目一致。</div>
     </section>
 
     <section class="drawer__section">
       <div class="drawer__title">终端</div>
-      <div class="drawer__row"><span>提示符</span><input id="setPrompt" type="text" maxlength="16"></div>
+      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">.home&gt; </b></div>
       <div class="drawer__row"><span>历史条数</span><b id="stHist">—</b></div>
       <div class="drawer__grid">
         <button class="dbtn" id="btnClearHist">清空历史</button>
         <button class="dbtn" id="btnRestartTerm">重启底层终端</button>
       </div>
-      <div class="drawer__note">Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出终端。上下方向键翻历史，Tab 补全路径；顶栏的 ⌃⌥⇧ 可短按锁定、长按当组合键。</div>
+      <div class="drawer__note">提示符固定为「当前路径&gt; 」，路径里的 <code>@</code> 表示当前目录。Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出；F5 刷新、F11 全屏、F12 开发者工具都交给浏览器。</div>
     </section>
 
     <section class="drawer__section">
@@ -920,12 +990,12 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
         <label class="sw" title="浏览器直接请求模型服务，跳过本地后端"><input type="checkbox" id="setAgentDirect"><i></i></label>
       </div>
       <div class="drawer__note" data-when="direct" hidden>
-        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连模式下 API Key 以明文存在本机
-        localStorage 和 <code>.config.settings</code> 里，任何能打开这个页面、或用过这台设备的人都能读走；
-        请求也直接从你的浏览器发出。请只用临时/低额度密钥测试。在意安全就把开关关掉，用下面后端模式——密钥只留在服务端。
+        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连时请求从你自己的浏览器直接发出，密钥会出现在网络面板与任何同页脚本里。
+        <b>好处是本项目不把它写进磁盘</b>——不进 localStorage、不进 <code>.config.settings</code>、不进 IndexedDB，
+        刷新或关页即消失。仍然建议只用临时 / 低额度密钥；在意安全就把开关关掉，改用后端模式：密钥只在服务端环境变量里。
       </div>
       <div class="drawer__row" data-when="direct" hidden><span>API 地址</span><input id="setAgentDirectUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com"></div>
-      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…（仅本次会话）"></div>
       <div class="drawer__row" data-when="direct" hidden><span>深度思考</span>
         <label class="sw" title="开启后先输出推理过程，更慢也更费 token"><input type="checkbox" id="setAgentThinking"><i></i></label>
       </div>
@@ -939,14 +1009,15 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
         </select>
       </div>
       <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" spellcheck="false" placeholder="deepseek-flash"></div>
-      <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="60" step="1"></div>
+      <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="120" step="1"></div>
       <div class="drawer__grid">
         <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
         <button class="dbtn" id="btnAgentExport">导出会话 JSONL</button>
         <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
         <button class="dbtn danger" id="btnAgentClear">清空会话</button>
       </div>
-      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
+      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。<b>直连的 API Key 只存在内存里</b>：不写 localStorage、不写 <code>.config.settings</code>，刷新即消失。<br>
+      后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
     </section>
 
     <section class="drawer__section">
@@ -959,7 +1030,10 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
       <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span></b></div>
       <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">W</span></b></div>
       <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">M</span></b></div>
-      <div class="drawer__note">Ctrl / Alt 组合被尽量接管（F 键与 Win 键除外）。终端内的 Ctrl+C / Ctrl+D 等仍按终端语义工作。</div>
+      <div class="drawer__row"><span>刷新（重载）</span><b><span class="kbd">F5</span></b></div>
+      <div class="drawer__row"><span>全屏 / 退出</span><b><span class="kbd">F11</span></b></div>
+      <div class="drawer__row"><span>开发者工具</span><b><span class="kbd">F12</span></b></div>
+      <div class="drawer__note"><b>F5 / F12 原样交给浏览器</b>（刷新、开发者工具），不拦也不转发给终端；<b>F11 由软件接管</b>，与顶栏 ⛶ 完全同一套行为和样式。其余 Ctrl / Alt 组合尽量接管。终端内的 Ctrl+C / Ctrl+D 仍按终端语义工作。</div>
     </section>
 
     <section class="drawer__section">
@@ -968,14 +1042,19 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
         <button class="dbtn danger" id="btnNuke">清除本页全部数据</button>
         <button class="dbtn" id="btnAbout">关于 / 许可证</button>
       </div>
-      <div class="drawer__note">会清空 IndexedDB、localStorage 与缓存，然后重新加载页面。不可撤销。</div>
+      <div class="drawer__row"><span>依赖缓存</span><b id="stDeps">—</b></div>
+      <div class="drawer__grid">
+        <button class="dbtn" id="btnClearDeps">只清依赖缓存</button>
+      </div>
+      <div class="drawer__note">「清除本页全部数据」会逐个删掉<b>所有</b> IndexedDB 库、清空 localStorage / sessionStorage、删掉全部 Cache Storage，注销 Service Worker，最后强制重载页面——什么都不留。依赖缓存只占几 MB，单独清掉不影响你的文件与会话。</div>
     </section>
-  </div>
 
-  <footer class="drawer__foot">
-    Apache-2.0 OR MIT 双许可 · 本项目由 AI 智能体生成并维护<br>
-    xterm.js (MIT) · Pyodide (MPL-2.0) · 经 CDN 引用
-  </footer>
+    <footer class="drawer__foot">
+      Apache-2.0 OR MIT 双许可 · 本项目由 AI 智能体生成并维护<br>
+      xterm.js (MIT) · @xterm/addon-fit (MIT) · @xterm/addon-unicode11 (MIT)<br>
+      Pyodide (MPL-2.0) · marked (MIT) · html2canvas (MIT) · 经 CDN 引用并缓存到 IndexedDB
+    </footer>
+  </div>
 </aside>
 
 <div id="modal-root"></div>
@@ -997,7 +1076,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.1';
+let HT_VERSION = '0.0.0.2';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
@@ -1191,7 +1270,7 @@ class LineEditor {
   }
   async submit() {
     const line = this.buf;
-    this.buf = ''; this.cur = 0; this.histIdx = this.history.length; this.draft = '';
+    this.buf = ''; this.cur = 0; this.draft = '';
     out('\r\n');
     if (line.trim()) {
       if (this.history[this.history.length - 1] !== line) {
@@ -1200,6 +1279,10 @@ class LineEditor {
         if (this.o.onHistory) { try { this.o.onHistory(this.history); } catch (e) {} }
       }
     }
+    /* 关键：histIdx 必须在这之后再对齐。
+     * 原来在 push 之前就把 histIdx 设成旧 length，push 之后 length 又 +1，
+     * 于是第一次按 ↑ 直接落到 length-2 —— 用户看到的就是「跳到上上条」。 */
+    this.histIdx = this.history.length;
     this.busy = true;
     try {
       await this.o.onSubmit(line);
@@ -1234,8 +1317,14 @@ class LineEditor {
     if (this.closed) return;
     this.queue = this.queue.then(() => this.submitText(text)).catch(() => {});
   }
+  /* 原始模式：把按键原样交给外部（vim/nano 这类全屏 TUI 用），不走行编辑。 */
+  setRaw(fn) {
+    this.raw = fn || null;
+    if (!fn) { this.redraw(); }
+  }
   feed(data) {
     if (this.closed) return;
+    if (this.raw) { try { this.raw(data); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); } return; }
     if (this.busy) {
       if (data.includes('\x03')) { this.interrupted = true; out('^C\r\n'); writeErr('（同步执行无法中断；若是异步任务，请等待其检查 hterm.interrupted）\r\n'); }
       return;
@@ -1443,7 +1532,10 @@ function makeShell(ctx) {
     running: true,
     history: ctx.history || [],
     last: undefined,
-    lastError: null
+    lastError: null,
+    mode: 'jshel',          // jshel | zsh（zsh 时整行交给兼容层）
+    cols: ctx.cols || 80,
+    rows: ctx.rows || 24
   };
 
   /* ---- 输出与 console ---- */
@@ -1907,14 +1999,163 @@ function makeShell(ctx) {
   return api;
 }
 
+
+/* ============================================================================
+ * Worker 侧的 DOM / window 代理
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * Worker 里天生没有 DOM：`document` 是 undefined，`window` 只是 globalThis。
+ * 以前在控制台敲 `document.title` 直接 ReferenceError，智能体也会误以为
+ * 「这个环境没有页面」。这里补一层代理，把常用的那部分接回主线程。
+ *
+ * 重要的取舍：**跨线程只能异步**。所以
+ *   - 属性读取用方法：await page.title()
+ *   - 元素操作返回句柄，句柄的方法是 async 的；不 await 也会照样发出请求
+ *   - localStorage 用「启动时拉一份快照」实现同步读，写回是异步的
+ * 想拿到 100% 原生的同步 DOM，请用智能体窗口里的 js 工具——那段代码本来就在主线程。
+ * ==========================================================================*/
+
+function makeElHandle(sel, c) {
+  const op = (name, ...args) => c('dom.op', name, [sel, ...args]);
+  const h = {
+    __sel: sel,
+    get: () => op('query'),
+    text: () => op('text'),
+    html: () => op('html'),
+    attr: (n) => op('attr', n),
+    rect: () => op('rect'),
+    css: (props) => op('computed', props),
+    exists: () => op('exists'),
+    setText: (v) => op('setText', v),
+    setValue: (v) => op('setValue', v),
+    setAttr: (n, v) => op('setAttr', n, v),
+    click: () => op('click'),
+    /* 让 el.classList.add('x') 这种最常见写法不用改 */
+    classList: {
+      add: (...cs) => { /* 逐个累加 */ let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('addClass', c2)); return p; },
+      remove: (...cs) => { let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('removeClass', c2)); return p; },
+      toggle: (c2, on) => op('toggleClass', c2, on),
+      contains: (c2) => op('hasClass', c2)
+    },
+    toString() { return '[Element ' + sel + ']'; }
+  };
+  return h;
+}
+
+function installDomProxy(call) {
+  const c = (op, ...args) => call('dom.op', op, args);
+
+  const page = {
+    /* 元信息 */
+    title: () => c('title'),
+    url: () => c('url'),
+    ready: () => c('readyState'),
+    /* 查询 */
+    q: (sel) => c('query', sel),
+    all: (sel, n) => c('all', sel, n),
+    text: (sel) => c('text', sel),
+    html: (sel) => c('html', sel),
+    attr: (sel, n) => c('attr', sel, n),
+    rect: (sel) => c('rect', sel),
+    css: (sel, props) => c('computed', sel, props),
+    exists: (sel) => c('exists', sel),
+    /* 改 */
+    click: (sel) => c('click', sel),
+    setText: (sel, v) => c('setText', sel, v),
+    setValue: (sel, v) => c('setValue', sel, v),
+    setAttr: (sel, n, v) => c('setAttr', sel, n, v),
+    /* 界面 */
+    toast: (t) => c('toast', t),
+    ask: (title, body) => c('dialog', title, body),
+    wins: () => c('wins'),
+    win: (opts) => c('openWindow', opts),
+    shot: (sel, opts) => call('shot.page', sel || null, opts || {}),
+    /* 常用组合：把一段 HTML 直接开成窗口 */
+    show: (title, html, opts) => c('openWindow', Object.assign({ type:'browser', title, html }, opts || {}))
+  };
+
+  /* document 外壳：querySelector 返回句柄；title/readyState 走 async 方法，
+   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。 */
+  const document = {
+    get title() { return page._titleCache || ''; },
+    set title(v) { page._titleCache = String(v); c('setTitle', String(v)); },
+    get readyState() { return 'interactive'; },
+    querySelector: (sel) => makeElHandle(sel, call),
+    querySelectorAll: (sel) => ({ length:null, async items() { const r = await c('all', sel); return r.items; } }),
+    getElementById: (id) => makeElHandle('#' + id, call),
+    createElement: (tag) => ({ __virtual:true, tag, textContent:'', innerHTML:'', appendChild(){ return this; } }),
+    get body() { return makeElHandle('body', call); },
+    get head() { return makeElHandle('head', call); },
+    addEventListener: () => { /* worker 里监听 DOM 事件没有意义，静默吞掉 */ },
+    removeEventListener: () => {},
+    location: {
+      get href() { return page._urlCache || ''; },
+      reload: () => call('page.reload').catch(() => {})
+    }
+  };
+
+  /* localStorage：同步读快照，异步写回。第一次访问时后台刷新一次快照。 */
+  let snap = Object.create(null);
+  let snapAt = 0;
+  const refresh = () => c('ls.all').then(o => { snap = Object.assign(Object.create(null), o || {}); snapAt = Date.now(); }).catch(() => {});
+  refresh();
+  const localStorage = {
+    getItem: (k) => (k in snap ? snap[k] : null),
+    setItem: (k, v) => { snap[k] = String(v); c('ls.set', k, String(v)).catch(() => {}); },
+    removeItem: (k) => { delete snap[k]; c('ls.set', k, '').catch(() => {}); },
+    key: (i) => Object.keys(snap)[i] || null,
+    get length() { return Object.keys(snap).length; },
+    clear: () => { for (const k of Object.keys(snap)) delete snap[k]; c('ls.clear').catch(() => {}); },
+    __refresh: refresh,
+    __snapshot: () => ({ ...snap, __at:snapAt })
+  };
+
+  const windowShim = {
+    document, localStorage, page,
+    get location() { return { href: page._urlCache || '', reload: () => call('page.reload').catch(() => {}) }; },
+    alert: (m) => c('toast', String(m)),
+    confirm: (m) => c('dialog', '请确认', String(m)),
+    prompt: (m, d) => c('dialog', String(m), String(d || '')),
+    open: (url) => c('openWindow', { type:'browser', url:String(url) }),
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    matchMedia: (q) => ({ matches:/dark/.test(String(q)) ? document.body : false, addEventListener:()=>{}, addListener:()=>{} }),
+    devicePixelRatio: 1,
+    innerWidth: 1280, innerHeight: 800,
+    navigator: { userAgent:'hterminal-worker', language:'zh-CN', vibrate:()=>{} }
+  };
+
+  return { page, document, localStorage, windowShim };
+}
+
 /* ---------------------------------------------------------------- Shell 启动 */
 async function bootShell(init) {
   const history = init.history || (await call('history.get').catch(() => [])) || [];
   historyCache = history;
   let cwd = init.cwd || '.home';
 
-  // 注入 console
-  globalThis.window = globalThis;
+  /* 先把主线程的 DOM 接过来：之后 window / document / page / localStorage 都能用 */
+  let DOMX = null;
+  try {
+    DOMX = installDomProxy(call);
+    /* 逐个挂，不要 Object.assign(globalThis, …)：Worker 里的 location 是只读的
+     * WorkerLocation，赋值会抛 TypeError，整个 try 就白做了（表现为 page 为 null）。 */
+    globalThis.document = DOMX.document;
+    globalThis.localStorage = DOMX.localStorage;
+    globalThis.page = DOMX.page;
+    globalThis.window = globalThis;
+    for (const k of ['document', 'localStorage', 'page', 'alert', 'confirm', 'prompt', 'open', 'getComputedStyle', 'matchMedia']) {
+      try { Object.defineProperty(globalThis, k, { value: DOMX.windowShim[k], writable:true, configurable:true }); } catch (e) {}
+    }
+    try { globalThis.navigator = DOMX.windowShim.navigator; } catch (e) {}
+    /* 缓存一份元信息，让 document.title / location.href 读起来像真的 */
+    call('dom.op', 'title', []).then(t => { globalThis.page._titleCache = t; }).catch(() => {});
+    call('dom.op', 'url', []).then(u => { globalThis.page._urlCache = u; }).catch(() => {});
+  } catch (e) {
+    globalThis.window = globalThis;
+    globalThis.page = null;
+  }
   globalThis.console = {
     log: (...a) => out(fmtArgs(a) + '\r\n'),
     info: (...a) => out(ANSI.blue + fmtArgs(a) + ANSI.reset + '\r\n'),
@@ -1936,12 +2177,18 @@ async function bootShell(init) {
   Object.assign(globalThis, api);
 
   const editor = new LineEditor({
-    prompt: () => (init.prompt || '> '),
+    prompt: () => (api.__state.mode === 'zsh' ? api.__state.cwd + '% ' : api.__state.cwd + '> '),
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
     onSubmit: async (line) => {
       if (!line.trim()) return;
+      const zsh = api.__state.mode === 'zsh';
+      if (zsh || COMPAT.isShellLine(line)) {
+        const r = await COMPAT.execLine(line);
+        if (r && r.exit) throw EXIT;
+        return;
+      }
       try { await api.run(line); }
       catch (e) {
         if (e === EXIT) throw e;
@@ -1950,6 +2197,125 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
+  /* ---------------------------------------------------------------- Linux 兼容层
+   * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
+   * 这样 `ls -la | grep txt > out.txt` 这类写法能直接用，并且 `zsh` 之后
+   * 整个行编辑器进入原生模式（提示符变成 `路径% `）。
+   */
+
+  /* ---------------------------------------------------------------- TUI 智能体
+   * 在终端里用智能体：不占窗口，直接打字。
+   *
+   * 故意拆成几个函数而不是塞进一个大方法：
+   *   agentTui.open()    进入（打印横幅）
+   *   agentTui.send(t)   发一条，等它跑完（可 await）
+   *   agentTui.queue(t)  排队；忙的时候自动串行，返回的 Promise 在这一条跑完时 resolve
+   *   agentTui.stop()    立刻中断当前轮，并清空队列
+   *   agentTui.close()   退出
+   * 另外给了短名字 agent(t)，等价于 send——AI 自己写起来更短。
+   */
+  const agentTui = {
+    on: false,
+    _q: [],
+    _busy: false,
+    open() {
+      if (!this.on) {
+        this.on = true;
+        out('\r\n' + ANSI.cyan + '┌─ agent（TUI）' + ANSI.reset + '\r\n');
+        out(ANSI.gray + '│  直接输入任务，Enter 发送\r\n');
+        out(ANSI.gray + '│  agentTui.stop() 中断 · agentTui.queue("…") 排队 · agentTui.close() 退出\r\n');
+        out(ANSI.cyan + '└─' + ANSI.reset + '\r\n');
+      }
+      /* 返回短字符串而不是 this：JSHeL 会把表达式值打印出来，
+       * 返回对象会刷一整屏方法签名，看着像报错。 */
+      return 'agent TUI 已就绪';
+    },
+    async _run(text) {
+      const t = String(text == null ? '' : text).trim();
+      if (!t) return '';
+      out(ANSI.gray + 'you ' + ANSI.reset + t + '\r\n');
+      out(ANSI.gray + '… 思考中' + ANSI.reset);
+      let r;
+      try {
+        r = await call('agent.turn', t);
+      } catch (e) {
+        out('\r\x1b[K' + ANSI.red + '! ' + (e && e.message || e) + ANSI.reset + '\r\n');
+        return '';
+      }
+      out('\r\x1b[K');
+      for (const m of (r && r.messages) || []) {
+        if (m.role === 'assistant' && m.content) out(String(m.content).replace(/\r?\n/g, '\r\n') + '\r\n');
+        if (m.role === 'tool') out(ANSI.gray + '  ← ' + m.name + ': ' + String(m.content || '').replace(/\r?\n/g, ' ⏎ ').slice(0, 400) + ANSI.reset + '\r\n');
+      }
+      out('\r\n');
+      return (r && r.text) || '';
+    },
+    async send(text) {
+      if (!this.on) this.open();
+      if (this._busy) return await this.queue(text);
+      return await this._run(text);
+    },
+    queue(text) {
+      if (!this.on) this.open();
+      return new Promise((resolve) => {
+        this._q.push({ text: String(text == null ? '' : text), resolve });
+        this._drain();
+      });
+    },
+    async _drain() {
+      if (this._busy) return;
+      this._busy = true;
+      while (this._q.length) {
+        const item = this._q.shift();
+        try { item.resolve(await this._run(item.text)); }
+        catch (e) { item.resolve(''); }
+      }
+      this._busy = false;
+    },
+    async stop() {
+      this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
+      try { await call('agent.stop'); } catch (e) {}
+      out(ANSI.yellow + '■ 已请求停止' + ANSI.reset + '\r\n');
+      return true;
+    },
+    status() { return call('agent.status'); },
+    close() {
+      this.on = false;
+      this._q.length = 0;
+      out(ANSI.gray + '已退出 agent（会话仍在 .agent.session）' + ANSI.reset + '\r\n');
+      return true;
+    }
+  };
+  globalThis.agentTui = agentTui;
+  globalThis.agent = (text) => agentTui.send(text);
+
+  /* ---------------------------------------------------------------- 嵌套 shell
+   * 「JSHeL 打开它自己」：新开一个终端窗口，cwd 默认继承当前目录。
+   */
+  const shell = {
+    open(cwd) { return call('shell.open', cwd || api.__state.cwd, true); },
+    here() { return api.__state.cwd; },
+    cd: (p) => api.cd(p),
+    exec: (code) => api.run(code),
+    term: api
+  };
+  globalThis.shell = shell;
+  globalThis.jshel = shell.open;
+
+  COMPAT.attach({
+    out: (t) => out(t),
+    call,
+    state: api.__state,
+    api,
+    editor,
+    version: HT_VERSION,
+    getCwd: () => api.__state.cwd,
+    setCwd: (p) => { api.__state.cwd = p; post({ t:'cwd', path:p }); },
+    get cols() { return api.__state.cols || 80; },
+    get rows() { return api.__state.rows || 24; },
+    kick: () => { editor.promptStr = editor.promptText(); }
+  });
+
   out('\x1b[?2004h');
 
   // 启动横幅必须在提示符之前
@@ -2086,8 +2452,13 @@ self.onmessage = async (ev) => {
     return;
   }
   if (m.t === 'resize') {
+    if (self.__shell) {
+      self.__shell.state.cols = m.cols || self.__shell.state.cols;
+      self.__shell.state.rows = m.rows || self.__shell.state.rows;
+    }
     const ed = self.__shell && self.__shell.editor || self.__py && self.__py.editor;
-    if (ed) { ed.promptStr = ed.promptText(); ed.redraw(); }
+    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉 */
+    if (ed && !ed.raw) { ed.promptStr = ed.promptText(); ed.redraw(); }
     return;
   }
   if (m.t === 'terminate') {
@@ -2105,6 +2476,1079 @@ self.onmessage = async (ev) => {
   }
 };
 
+
+/* ============================================================================
+ * hterminal · Linux 兼容层（迷你 shell + coreutils 子集 + vim/nano）
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ * 由 AI 智能体生成并维护。
+ *
+ * 这里没有任何 GPL/AGPL 代码：命令是按 POSIX 行为重新实现的，命名沿用
+ * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
+ * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
+ *
+ * 用法：`zsh` 进入原生模式（提示符变成 `.home% `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里直接敲 `ls -la`、`cat a.txt | grep x`。
+ * ==========================================================================*/
+
+const COMPAT = (function () {
+  const C = {};
+  let IO = null;          // { out, err, call, state, setCwd, getCwd, editor, rows, cols }
+  let ENV = Object.create(null);
+  let ALIAS = Object.create(null);
+  let LAST = 0;
+
+  const ESC = '\x1b';
+  const R = ESC + '[0m';
+  const DIM = ESC + '[2m';
+  const CYAN = ESC + '[36m';
+  const BLUE = ESC + '[34m';
+  const GREEN = ESC + '[32m';
+  const YELLOW = ESC + '[33m';
+  const RED = ESC + '[31m';
+  const MAGENTA = ESC + '[35m';
+
+  /* ---------------------------------------------------------------- 词法 */
+  /* 输出 token 流：{ t:'w', v } | { t:'op', v } | { t:'redir', op, fd } */
+  function lex(src) {
+    const t = [];
+    let i = 0, cur = '', has = false;
+    const push = () => { if (has) { t.push({ t:'w', v:cur }); cur = ''; has = false; } };
+    while (i < src.length) {
+      const c = src[i];
+      if (c === "'" ) {
+        has = true;
+        const j = src.indexOf("'", i + 1);
+        if (j < 0) { cur += src.slice(i + 1); i = src.length; break; }
+        cur += src.slice(i + 1, j);
+        i = j + 1;
+        continue;
+      }
+      if (c === '"') {
+        has = true;
+        i++;
+        while (i < src.length && src[i] !== '"') {
+          if (src[i] === '\\' && i + 1 < src.length && '"\\$`'.includes(src[i + 1])) { cur += src[i + 1]; i += 2; continue; }
+          cur += src[i++];
+        }
+        i++;
+        continue;
+      }
+      if (c === '\\' && i + 1 < src.length) { cur += src[i + 1]; has = true; i += 2; continue; }
+      if (c === ' ' || c === '\t') { push(); i++; continue; }
+      if (c === '|' || c === '&' || c === ';') {
+        push();
+        if (c === '|' && src[i + 1] === '|') { t.push({ t:'op', v:'||' }); i += 2; continue; }
+        if (c === '&' && src[i + 1] === '&') { t.push({ t:'op', v:'&&' }); i += 2; continue; }
+        if (c === '|') { t.push({ t:'op', v:'|' }); i++; continue; }
+        if (c === ';') { t.push({ t:'op', v:';' }); i++; continue; }
+        continue;
+      }
+      if (c === '>' || c === '<') {
+        // 2> 之类的 fd 前缀
+        let fd = 1;
+        const m = cur.match(/^(\d)$/);
+        if (m && !has) { fd = Number(m[1]); cur = ''; has = false; }
+        else push();
+        if (c === '>') {
+          if (src[i + 1] === '>') { t.push({ t:'redir', op:'>>', fd }); i += 2; continue; }
+          if (src[i + 1] === '&') { t.push({ t:'redir', op:'>&', fd }); i += 2; continue; }
+          t.push({ t:'redir', op:'>', fd }); i++; continue;
+        }
+        t.push({ t:'redir', op:'<', fd:0 }); i++; continue;
+      }
+      cur += c; has = true; i++;
+    }
+    push();
+    return t;
+  }
+
+  /* ---------------------------------------------------------------- 展开 */
+  function getVar(name) {
+    if (name === '?') return String(LAST);
+    if (name === 'PWD') return IO.getCwd();
+    if (name === 'HOME') return '.home';
+    if (name === 'USER') return IO.state.user || 'human';
+    if (name === 'SHELL') return IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel';
+    if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
+    return ENV[name] === undefined ? '' : ENV[name];
+  }
+  async function expandWord(w) {
+    let s = w;
+    // 命令替换 $(...)：递归跑一遍迷你 shell
+    if (s.includes('$(')) {
+      let guard = 0;
+      while (s.includes('$(') && guard++ < 8) {
+        const i = s.indexOf('$(');
+        let depth = 1, j = i + 2;
+        while (j < s.length && depth) { if (s[j] === '(') depth++; else if (s[j] === ')') depth--; j++; }
+        const inner = s.slice(i + 2, j - 1);
+        const sub = await execLine(inner, { quiet:true });
+        s = s.slice(0, i) + String(sub.out || '').replace(/\n/g, ' ').trim() + s.slice(j);
+      }
+    }
+    // 变量
+    s = s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*|\?)\}/g, (m, n) => getVar(n));
+    s = s.replace(/\$([A-Za-z_][A-Za-z0-9_]*|\?)/g, (m, n) => getVar(n));
+    s = s.replace(/^~(?=$|\/)/, '.home');
+    return s;
+  }
+
+  async function glob(pattern) {
+    if (!/[*?]/.test(pattern)) return [pattern];
+    const dir = pattern.includes('/') ? pattern.slice(0, pattern.lastIndexOf('/')) || '/' : '.';
+    const base = pattern.includes('/') ? pattern.slice(pattern.lastIndexOf('/') + 1) : pattern;
+    const dirPath = fmtPath(dir);
+    let rows = [];
+    try { rows = await IO.call('fs.list', dirPath); } catch (e) { return [pattern]; }
+    const re = new RegExp('^' + base.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$', 'i');
+    const hits = rows.filter(r => re.test(r.name)).map(r => (dir === '.' ? r.name : dir.replace(/\/$/, '') + '/' + r.name));
+    return hits.length ? hits.sort() : [pattern];
+  }
+
+  function fmtPath(p) {
+    if (!p) return '.';
+    return String(p).replace(/\/+/g, '/').replace(/(^|\/)\.(\/|$)/g, '$1');
+  }
+
+  /* ---------------------------------------------------------------- 路径 */
+  async function realPath(p) {
+    // 交给主线程的 normPath（同一套 . / ~ / @ 规则）
+    return IO.call('fs.resolve', p);
+  }
+
+  async function readText(p) {
+    const r = await IO.call('fs.read', p);
+    if (r.kind === 'dir') throw new Error(p + ': 是一个目录');
+    if (typeof r.content === 'string') return r.content;
+    return String(r.content == null ? '' : r.content);
+  }
+
+  async function listRows(p) {
+    return IO.call('fs.list', p);
+  }
+
+  /* ---------------------------------------------------------------- 命令 */
+  const CMDS = Object.create(null);
+
+  function def(name, fn, desc) { CMDS[name] = { fn, desc }; }
+
+  const outStr = (s) => (s == null ? '' : String(s));
+
+  def('echo', async (a) => {
+    let nl = true, i = 0;
+    if (a[0] === '-n') { nl = false; i = 1; }
+    let s = a.slice(i).join(' ');
+    if (/\\[nt\\"]/.test(s)) s = s.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    return { out: s + (nl ? '\n' : '') };
+  }, '输出参数');
+
+  def('printf', async (a) => {
+    const f = a[0] || '';
+    const rest = a.slice(1);
+    let k = 0;
+    const s = f.replace(/%[sdi%]/g, (m) => {
+      if (m === '%%') return '%';
+      const v = rest[k++];
+      if (m === '%d' || m === '%i') return String(parseInt(v, 10) || 0);
+      return v == null ? '' : String(v);
+    }).replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    return { out: s };
+  }, '格式化输出');
+
+  def('pwd', async () => ({ out: IO.getCwd() + '\n' }), '当前目录');
+
+  def('cd', async (a) => {
+    const t = a[0] || '.home';
+    const s = await IO.call('fs.stat', t).catch(() => null);
+    if (!s) return { code: 1, err: 'cd: 没有这个目录: ' + t + '\n' };
+    if (s.kind !== 'dir') return { code: 1, err: 'cd: 不是目录: ' + t + '\n' };
+    IO.setCwd(s.path);
+    return {};
+  }, '切换目录');
+
+  function longFmt(rows) {
+    return rows.map(r => {
+      const k = ({ dir:'d', file:'-', func:'x', app:'a', device:'v', package:'p', grant:'!', proc:'&', link:'l', object:'o', blob:'b' })[r.kind] || '?';
+      const size = String(r.size || 0).padStart(7);
+      const mt = new Date(r.mtime || Date.now()).toISOString().slice(5, 16).replace('T', ' ');
+      const color = ({ dir:CYAN, func:YELLOW, app:MAGENTA, device:BLUE, package:GREEN })[r.kind] || '';
+      return `${k}rw-r--r--  ${size}  ${mt}  ${color}${r.name}${color ? R : ''}`;
+    }).join('\n') + '\n';
+  }
+
+  def('ls', async (a) => {
+    let long = false, all = false, one = false, dirs = [];
+    for (const x of a) {
+      if (/^-[a-zA-Z]+$/.test(x)) {
+        if (x.includes('l')) long = true;
+        if (x.includes('a')) all = true;
+        if (x.includes('1')) one = true;
+      } else dirs.push(x);
+    }
+    if (!dirs.length) dirs = ['.'];
+    let res = '';
+    for (const d of dirs) {
+      const p = await realPath(d);
+      let rows;
+      try { rows = await listRows(p); } catch (e) { return { code: 1, err: 'ls: 无法访问 ' + d + ': 没有那个文件或目录\n' }; }
+      if (!all) rows = rows.filter(r => !String(r.name).startsWith('.'));
+      if (dirs.length > 1) res += (res ? '\n' : '') + d + ':\n';
+      if (long) res += longFmt(rows);
+      else if (one) res += rows.map(r => r.name).join('\n') + '\n';
+      else {
+        const cols = Math.max(20, (IO.cols || 80) - 2);
+        const width = Math.max(...rows.map(r => String(r.name).length), 1) + 2;
+        const per = Math.max(1, Math.floor(cols / width));
+        let line = '';
+        rows.forEach((r, i) => {
+          const name = String(r.name) + (r.kind === 'dir' ? '/' : '');
+          const color = ({ dir:CYAN, func:YELLOW, app:MAGENTA, device:BLUE, package:GREEN })[r.kind] || '';
+          line += color + name.padEnd(width) + (color ? R : '');
+          if ((i + 1) % per === 0) { res += line + '\n'; line = ''; }
+        });
+        if (line) res += line + '\n';
+      }
+    }
+    return { out: res || '\n' };
+  }, '列出目录');
+
+  def('ll', async (a) => CMDS.ls.fn(['-la'].concat(a)), '详细列表');
+  def('dir', async (a) => CMDS.ls.fn(a), '列出目录');
+
+  def('cat', async (a, stdin) => {
+    if (!a.length) return { out: stdin };
+    let s = '';
+    for (const f of a) {
+      const p = await realPath(f);
+      try { s += await readText(p); } catch (e) { return { code: 1, err: 'cat: ' + f + ': 没有那个文件或目录\n' }; }
+    }
+    return { out: s.endsWith('\n') ? s : s + '\n' };
+  }, '输出文件内容');
+
+  def('head', async (a, stdin) => {
+    let n = 10, files = [];
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === '-n') { n = parseInt(a[++i], 10) || 10; continue; }
+      if (/^-\d+$/.test(a[i])) { n = parseInt(a[i].slice(1), 10); continue; }
+      files.push(a[i]);
+    }
+    const s = files.length ? await readText(await realPath(files[0])) : stdin;
+    return { out: s.split('\n').slice(0, n).join('\n') + '\n' };
+  }, '前 N 行');
+
+  def('tail', async (a, stdin) => {
+    let n = 10, files = [];
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === '-n') { n = parseInt(a[++i], 10) || 10; continue; }
+      if (/^-\d+$/.test(a[i])) { n = parseInt(a[i].slice(1), 10); continue; }
+      files.push(a[i]);
+    }
+    const s = files.length ? await readText(await realPath(files[0])) : stdin;
+    const lines = s.replace(/\n$/, '').split('\n');
+    return { out: lines.slice(Math.max(0, lines.length - n)).join('\n') + '\n' };
+  }, '后 N 行');
+
+  def('wc', async (a, stdin) => {
+    let mode = 'lwc';
+    const files = [];
+    for (const x of a) { if (/^-[lwc]+$/.test(x)) mode = x.slice(1); else files.push(x); }
+    const s = files.length ? await readText(await realPath(files[0])) : stdin;
+    const lines = s ? s.replace(/\n$/, '').split('\n') : [];
+    const parts = [];
+    if (mode.includes('l')) parts.push(lines.length);
+    if (mode.includes('w')) parts.push((s.match(/\S+/g) || []).length);
+    if (mode.includes('c')) parts.push(s.length);
+    return { out: parts.join(' ').padStart(8) + (files.length ? ' ' + files[0] : '') + '\n' };
+  }, '统计行/词/字节');
+
+  def('grep', async (a, stdin) => {
+    let inv = false, ignore = false, num = false, fixed = false, pat = null;
+    const files = [];
+    for (const x of a) {
+      if (/^-[a-zA-Z]+$/.test(x)) { if (x.includes('v')) inv = true; if (x.includes('i')) ignore = true; if (x.includes('n')) num = true; if (x.includes('F')) fixed = true; continue; }
+      if (pat === null) pat = x; else files.push(x);
+    }
+    if (pat === null) return { code: 2, err: 'grep: 缺少模式\n' };
+    const re = fixed ? null : new RegExp(pat, ignore ? 'i' : '');
+    let text = stdin;
+    if (files.length) {
+      text = '';
+      for (const f of files) text += await readText(await realPath(f)).catch(() => '');
+    }
+    const lines = text.replace(/\n$/, '').split('\n');
+    const hits = [];
+    lines.forEach((l, i) => {
+      const ok = re ? re.test(l) : l.includes(pat);
+      if (ok !== inv) hits.push((num ? String(i + 1).padStart(4) + ':' : '') + l);
+    });
+    return { code: hits.length ? 0 : 1, out: hits.length ? hits.join('\n') + '\n' : '' };
+  }, '按模式筛选行');
+
+  def('sort', async (a, stdin) => {
+    let rev = false, num = false, uniq = false;
+    for (const x of a) { if (x === '-r') rev = true; if (x === '-n') num = true; if (x === '-u') uniq = true; }
+    let lines = stdin.replace(/\n$/, '').split('\n');
+    lines.sort((p, q) => num ? (parseFloat(p) || 0) - (parseFloat(q) || 0) : p.localeCompare(q));
+    if (rev) lines.reverse();
+    if (uniq) lines = lines.filter((v, i) => v !== lines[i - 1]);
+    return { out: lines.join('\n') + '\n' };
+  }, '排序');
+
+  def('uniq', async (a, stdin) => {
+    const lines = stdin.replace(/\n$/, '').split('\n');
+    const res = lines.filter((v, i) => v !== lines[i - 1]);
+    return { out: res.join('\n') + '\n' };
+  }, '去重（相邻）');
+
+  def('cut', async (a, stdin) => {
+    let d = '\t', f = 1;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === '-d') d = a[++i];
+      else if (a[i].startsWith('-d')) d = a[i].slice(2);
+      else if (a[i] === '-f') f = parseInt(a[++i], 10) || 1;
+      else if (a[i].startsWith('-f')) f = parseInt(a[i].slice(2), 10) || 1;
+    }
+    return { out: stdin.replace(/\n$/, '').split('\n').map(l => l.split(d)[f - 1] || '').join('\n') + '\n' };
+  }, '按分隔符取列');
+
+  def('tr', async (a, stdin) => {
+    const [from, to] = a;
+    if (!from) return { out: stdin };
+    let s = stdin;
+    if (a.includes('-d')) return { out: [...s].filter(ch => !from.includes(ch)).join('') };
+    const map = {};
+    for (let i = 0; i < from.length; i++) map[from[i]] = to ? to[i % to.length] : from[i];
+    return { out: [...s].map(ch => map[ch] || ch).join('') };
+  }, '字符替换/删除');
+
+  def('sed', async (a, stdin) => {
+    let s = stdin;
+    const exprs = a.filter(x => !x.startsWith('-'));
+    const inPlace = a.includes('-i');
+    const file = a.find(x => !x.startsWith('-') && !x.startsWith('s'));
+    for (const e of exprs) {
+      const m = e.match(/^s(.).*?\1(.*?)\1([gim]*)$/);
+      if (!m) continue;
+      const [, , pat, rep] = m;
+      const re = new RegExp(pat, m[3].includes('g') ? 'gi' : 'i');
+      s = s.replace(re, rep.replace(/&/g, '$&'));
+    }
+    if (inPlace && file) {
+      const p = await realPath(file);
+      await IO.call('fs.write', p, s, { mime:'text/plain' });
+      return {};
+    }
+    return { out: s };
+  }, '流编辑（替换）');
+
+  def('awk', async (a, stdin) => {
+    // 只支持 `{print $1,$2}` 这种最常见的用法
+    const prog = a[0] || '';
+    const m = prog.match(/^\{(.*)\}$/);
+    if (!m) return { out: stdin };
+    const body = m[1];
+    const lines = stdin.replace(/\n$/, '').split('\n');
+    const res = lines.map(line => {
+      const f = line.trim().split(/\s+/);
+      return body.replace(/\$(\d+)/g, (x, n) => n === '0' ? line : (f[Number(n) - 1] || ''));
+    });
+    return { out: res.join('\n') + '\n' };
+  }, '按列处理（子集）');
+
+  def('find', async (a) => {
+    let root = '.', name = null, type = null;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === '-name') name = a[++i];
+      else if (a[i] === '-type') type = a[++i];
+      else if (!a[i].startsWith('-')) root = a[i];
+    }
+    const start = await realPath(root);
+    const hits = [];
+    const walk = async (path) => {
+      let rows = [];
+      try { rows = await listRows(path); } catch (e) { return; }
+      for (const r of rows) {
+        const okName = !name || new RegExp('^' + name.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i').test(r.name);
+        const okType = !type || (type === 'd' ? r.kind === 'dir' : r.kind !== 'dir');
+        if (okName && okType) hits.push(r.path);
+        if (r.kind === 'dir') await walk(r.path);
+      }
+    };
+    await walk(start);
+    if (!hits.length) return { code: 1, out: '' };
+    return { out: hits.join('\n') + '\n' };
+  }, '查找文件');
+
+  def('tree', async (a) => {
+    const root = await realPath(a.find(x => !x.startsWith('-')) || '.');
+    let s = CYAN + root + R + '\n';
+    const walk = async (path, prefix, depth) => {
+      if (depth < 0) return;
+      let rows = [];
+      try { rows = await listRows(path); } catch (e) { return; }
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i], last = i === rows.length - 1;
+        const color = r.kind === 'dir' ? CYAN : '';
+        s += prefix + (last ? '└── ' : '├── ') + color + r.name + (r.kind === 'dir' ? '/' : '') + (color ? R : '') + '\n';
+        if (r.kind === 'dir') await walk(r.path, prefix + (last ? '    ' : '│   '), depth - 1);
+      }
+    };
+    await walk(root, '', 3);
+    return { out: s };
+  }, '树状显示');
+
+  def('mkdir', async (a) => {
+    let err = '';
+    for (const f of a.filter(x => !x.startsWith('-'))) {
+      try { await IO.call('fs.mkdir', await realPath(f)); }
+      catch (e) { err += 'mkdir: ' + f + ': ' + (e.message || e) + '\n'; }
+    }
+    return { code: err ? 1 : 0, err };
+  }, '建目录');
+
+  def('touch', async (a) => {
+    for (const f of a) {
+      const p = await realPath(f);
+      const st = await IO.call('fs.stat', p).catch(() => null);
+      if (!st) await IO.call('fs.write', p, '', { mime:'text/plain' });
+    }
+    return {};
+  }, '建空文件');
+
+  def('rm', async (a) => {
+    let r = false, err = '';
+    for (const x of a) {
+      if (/^-[a-zA-Z]+$/.test(x)) { if (x.includes('r') || x.includes('R')) r = true; continue; }
+      const p = await realPath(x);
+      try { await IO.call('fs.remove', p, r); } catch (e) { err += 'rm: ' + x + ': ' + (e.message || e) + '\n'; }
+    }
+    return { code: err ? 1 : 0, err };
+  }, '删除');
+
+  def('rmdir', async (a) => CMDS.rm.fn(['-r'].concat(a)), '删空目录');
+  def('unlink', async (a) => CMDS.rm.fn(a), '删除文件');
+
+  def('cp', async (a) => {
+    let r = false; const files = [];
+    for (const x of a) { if (/^-[a-zA-Z]+$/.test(x)) { if (x.includes('r') || x.includes('R')) r = true; continue; } files.push(x); }
+    if (files.length < 2) return { code: 1, err: 'cp: 需要源和目标\n' };
+    const dst = files.pop();
+    const dstat = await IO.call('fs.stat', await realPath(dst)).catch(() => null);
+    let err = '';
+    for (const f of files) {
+      const target = dstat && dstat.kind === 'dir'
+        ? await realPath(dst + '/' + f.split('/').pop())
+        : await realPath(dst);
+      try { await IO.call('fs.copy', await realPath(f), target); }
+      catch (e) { err += 'cp: ' + f + ': ' + (e.message || e) + '\n'; }
+    }
+    return { code: err ? 1 : 0, err };
+  }, '复制');
+
+  def('mv', async (a) => {
+    if (a.length < 2) return { code: 1, err: 'mv: 需要源和目标\n' };
+    const dst = a[a.length - 1];
+    const dstat = await IO.call('fs.stat', await realPath(dst)).catch(() => null);
+    let err = '';
+    for (const f of a.slice(0, -1)) {
+      const target = dstat && dstat.kind === 'dir'
+        ? await realPath(dst + '/' + f.split('/').pop())
+        : await realPath(dst);
+      try { await IO.call('fs.move', await realPath(f), target); }
+      catch (e) { err += 'mv: ' + f + ': ' + (e.message || e) + '\n'; }
+    }
+    return { code: err ? 1 : 0, err };
+  }, '移动/改名');
+
+  def('ln', async (a) => CMDS.cp.fn(a), '复制（本文件系统无硬链接）');
+
+  def('basename', async (a) => ({ out: String(a[0] || '').split('/').pop() + '\n' }), '取文件名');
+  def('dirname', async (a) => {
+    const p = String(a[0] || '');
+    const i = p.lastIndexOf('/');
+    return { out: (i <= 0 ? (i === 0 ? '/' : '.') : p.slice(0, i)) + '\n' };
+  }, '取目录名');
+
+  def('which', async (a) => {
+    const r = a.map(n => CMDS[n] ? n + ': shell 内建命令' : null).filter(Boolean);
+    return { code: r.length ? 0 : 1, out: r.join('\n') + (r.length ? '\n' : ''), err: r.length ? '' : 'which: 没有 ' + a.join(' ') + '\n' };
+  }, '命令位置');
+
+  def('type', async (a) => CMDS.which.fn(a), '命令类型');
+
+  def('true', async () => ({ code: 0 }), '');
+  def('false', async () => ({ code: 1 }), '');
+  def(':', async () => ({ code: 0 }), '');
+
+  def('seq', async (a) => {
+    const n = a.map(Number);
+    let from = 1, to = 0, step = 1;
+    if (n.length === 1) to = n[0];
+    else if (n.length === 2) { from = n[0]; to = n[1]; }
+    else { from = n[0]; step = n[1]; to = n[2]; }
+    const res = [];
+    for (let i = from; step > 0 ? i <= to : i >= to; i += step) res.push(i);
+    return { out: res.join('\n') + '\n' };
+  }, '数列');
+
+  def('yes', async (a) => ({ out: (a[0] || 'y') + '\n', code: 0 }), '');
+
+  def('date', async (a) => {
+    if (a[0] === '+%s') return { out: String(Math.floor(Date.now() / 1000)) + '\n' };
+    return { out: new Date().toString() + '\n' };
+  }, '日期');
+
+  def('whoami', async () => ({ out: (IO.state.user || 'human') + '\n' }), '当前用户');
+  def('hostname', async () => ({ out: 'browser\n' }), '主机名');
+
+  def('uname', async (a) => {
+    if (a.includes('-a')) return { out: 'hterminal ' + IO.version + ' browser jshel xterm\n' };
+    return { out: 'hterminal\n' };
+  }, '系统信息');
+
+  def('env', async () => {
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel', TERM:'xterm-256color' };
+    Object.assign(o, ENV);
+    return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
+  }, '环境变量');
+
+  def('export', async (a) => {
+    for (const kv of a) {
+      const i = kv.indexOf('=');
+      if (i > 0) ENV[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+    return {};
+  }, '设置环境变量');
+
+  def('unset', async (a) => { for (const k of a) delete ENV[k]; return {}; }, '删除变量');
+
+  def('alias', async (a) => {
+    if (!a.length) return { out: Object.entries(ALIAS).map(([k, v]) => `alias ${k}='${v}'`).join('\n') + '\n' };
+    const s = a.join(' ');
+    const i = s.indexOf('=');
+    if (i > 0) ALIAS[s.slice(0, i)] = s.slice(i + 1).replace(/^['"]|['"]$/g, '');
+    return {};
+  }, '别名');
+
+  def('history', async () => {
+    const h = (IO.state.history || []).slice(-40);
+    return { out: h.map((v, i) => String(i + 1).padStart(4) + '  ' + v).join('\n') + '\n' };
+  }, '历史');
+
+  def('clear', async () => ({ clear: true }), '清屏');
+
+  def('du', async (a) => {
+    const p = await realPath(a[0] || '.');
+    let total = 0, count = 0;
+    const walk = async (path) => {
+      let rows = [];
+      try { rows = await listRows(path); } catch (e) { return; }
+      for (const r of rows) { count++; total += r.size || 0; if (r.kind === 'dir') await walk(r.path); }
+    };
+    await walk(p);
+    return { out: `${total}\t${count} 项\t${p}\n` };
+  }, '占用空间');
+
+  def('df', async () => {
+    const u = await IO.call('fs.usage');
+    return { out: 'Filesystem      Size    Used   Avail  Use%  Mounted\n' +
+      'idb://hterm     ' + u.quota + '  ' + u.usage + '  ' + (u.quota - u.usage) + '   ' +
+      (u.quota ? Math.round(u.usage / u.quota * 100) : 0) + '%  .\n' };
+  }, '磁盘占用');
+
+  def('ps', async () => {
+    const rows = await IO.call('proc.list');
+    return { out: '  PID  ROLE      STATE     CWD\n' + rows.map(r => String(r.pid).padStart(5) + '  ' + String(r.role).padEnd(8) + '  ' + String(r.state).padEnd(8) + '  ' + (r.cwd || '')).join('\n') + '\n' };
+  }, '进程');
+
+  def('kill', async (a) => {
+    for (const p of a) { const ok = await IO.call('proc.kill', Number(p)); if (!ok) return { code: 1, err: 'kill: 没有这个进程 ' + p + '\n' }; }
+    return {};
+  }, '结束进程');
+
+  def('man', async (a) => {
+    const n = a[0];
+    if (!n) return { code: 1, err: 'man: 要看哪个命令？例如 man ls\n' };
+    const c = CMDS[n];
+    if (!c) return { code: 1, err: 'man: 没有 ' + n + ' 的手册\n' };
+    return { out: `${YELLOW}${n}${R}\n\n  ${c.desc || '（无说明）'}\n\n  ${DIM}这是 hterminal 内置的同名精简实现，不是 GNU coreutils 原版。${R}\n` };
+  }, '内置手册');
+
+  def('less', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
+  def('more', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
+
+  def('diff', async (a) => {
+    if (a.length < 2) return { code: 1, err: 'diff: 需要两个文件\n' };
+    const p = await readText(await realPath(a[0])).catch(() => '');
+    const q = await readText(await realPath(a[1])).catch(() => '');
+    const A = p.split('\n'), B = q.split('\n');
+    let s = '';
+    const n = Math.max(A.length, B.length);
+    for (let i = 0; i < n; i++) {
+      if (A[i] === B[i]) continue;
+      if (A[i] !== undefined) s += RED + '< ' + A[i] + R + '\n';
+      if (B[i] !== undefined) s += GREEN + '> ' + B[i] + R + '\n';
+    }
+    return { code: s ? 1 : 0, out: s };
+  }, '比较文件');
+
+  def('source', async (a) => {
+    const s = await readText(await realPath(a[0]));
+    const r = await execLine(s, { quiet:false });
+    return r;
+  }, '执行脚本');
+
+  def('help', async () => {
+    const names = Object.keys(CMDS).sort();
+    const lines = [];
+    for (let i = 0; i < names.length; i += 6) lines.push('  ' + names.slice(i, i + 6).map(n => n.padEnd(10)).join(''));
+    return { out: `\n${CYAN}hterminal 兼容层${R} — 这些命令可以在 JSHeL 里直接用，也可以 zsh 进入原生模式\n\n${lines.join('\n')}\n\n${DIM}管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd)、alias 均可用。${R}\n` };
+  }, '命令列表');
+
+  /* ---------------------------------------------------------------- 编辑器 */
+  function makeEditor(filePath, mode) {
+    const isVim = mode === 'vim' || mode === 'vi';
+    const st = {
+      lines: [''], row: 0, col: 0, top: 0, left: 0,
+      dirty: false, mode: isVim ? 'normal' : 'edit',
+      msg: '', cmd: '', quit: false, path: filePath, pend: null,
+      clipboard: '', undo: [], search: ''
+    };
+    const W = () => Math.max(20, (IO.cols || 80));
+    const H = () => Math.max(4, (IO.rows || 24) - 2);
+
+    function render() {
+      const w = W(), h = H();
+      let s = ESC + '[?25l' + ESC + '[H';
+      // 顶部留一行给状态
+      s += ESC + '[2m' + (' ' + (st.path || '[No Name]') + (st.dirty ? ' [+]' : '') + '   ' + (isVim ? st.mode.toUpperCase() : 'NANO')).padEnd(w - 1) + ESC + '[0m' + '\r\n';
+      for (let i = 0; i < h; i++) {
+        const ln = st.top + i;
+        const text = st.lines[ln] === undefined ? (ln === st.lines.length ? '~' : '') : st.lines[ln];
+        const vis = text.slice(st.left, st.left + w - 1);
+        s += vis + ESC + '[K';
+        if (i < h - 1) s += '\r\n';
+      }
+      // 状态栏
+      s += '\r\n' + ESC + '[7m' + (st.msg || (isVim ? '  -- ' + (st.mode === 'insert' ? '插入' : '普通') + ' --' : '  ^O 保存  ^X 退出')) .slice(0, w - 1).padEnd(w - 1) + ESC + '[0m';
+      // 光标
+      const cy = st.row - st.top, cx = Math.min(st.col - st.left, w - 1);
+      s += ESC + `[${cy + 2};${cx + 1}H` + ESC + '[?25h';
+      IO.out(s);
+    }
+
+    function clamp() {
+      st.row = Math.max(0, Math.min(st.lines.length - 1, st.row));
+      st.col = Math.max(0, Math.min(st.lines[st.row].length, st.col));
+      const h = H();
+      if (st.row < st.top) st.top = st.row;
+      if (st.row >= st.top + h) st.top = st.row - h + 1;
+      if (st.col < st.left) st.left = st.col;
+      if (st.col > st.left + W() - 2) st.left = st.col - W() + 2;
+    }
+
+    function insert(text) {
+      st.undo.push({ lines: st.lines.slice(), row: st.row, col: st.col });
+      if (st.undo.length > 80) st.undo.shift();
+      const line = st.lines[st.row];
+      st.lines[st.row] = line.slice(0, st.col) + text + line.slice(st.col);
+      st.col += text.length;
+      st.dirty = true;
+    }
+
+    async function save() {
+      const p = await realPath(st.path);
+      await IO.call('fs.write', p, st.lines.join('\n'), { mime:'text/plain' });
+      st.dirty = false;
+      st.msg = '"' + st.path + '" 已写入 ' + st.lines.join('\n').length + ' 字节';
+    }
+
+    async function handle(data) {
+      let i = 0;
+      while (i < data.length) {
+        const seq = data.slice(i, i + 6);
+        let key = null, step = 1;
+        if (seq.startsWith('\x1b[A') || seq.startsWith('\x1bOA')) { key = 'UP'; step = 3; }
+        else if (seq.startsWith('\x1b[B') || seq.startsWith('\x1bOB')) { key = 'DOWN'; step = 3; }
+        else if (seq.startsWith('\x1b[C') || seq.startsWith('\x1bOC')) { key = 'RIGHT'; step = 3; }
+        else if (seq.startsWith('\x1b[D') || seq.startsWith('\x1bOD')) { key = 'LEFT'; step = 3; }
+        else if (seq.startsWith('\x1b[H') || seq.startsWith('\x1bOH')) { key = 'HOME'; step = 3; }
+        else if (seq.startsWith('\x1b[F') || seq.startsWith('\x1bOF')) { key = 'END'; step = 3; }
+        else if (seq.startsWith('\x1b[3~')) { key = 'DEL'; step = 4; }
+        else if (seq.startsWith('\x1b[5~')) { key = 'PGUP'; step = 4; }
+        else if (seq.startsWith('\x1b[6~')) { key = 'PGDN'; step = 4; }
+        else if (seq.startsWith('\x1b[200~')) {
+          const end = data.indexOf('\x1b[201~', i);
+          const txt = end > 0 ? data.slice(i + 6, end) : data.slice(i + 6);
+          txt.split('\n').forEach((t, k) => { if (k) { st.lines.splice(st.row + 1, 0, ''); st.row++; st.col = 0; } insert(t); });
+          i = end > 0 ? end + 6 : data.length;
+          render(); continue;
+        }
+        else if (data[i] === '\x1b') { key = 'ESC'; step = 1; }
+        else if (data[i] === '\r' || data[i] === '\n') { key = 'ENTER'; step = 1; }
+        else if (data[i] === '\x7f' || data[i] === '\b') { key = 'BS'; step = 1; }
+        else if (data.charCodeAt(i) === 9) { key = 'TAB'; step = 1; }
+        else if (data.charCodeAt(i) < 0x20) { key = 'C-' + String.fromCharCode(data.charCodeAt(i) + 64); step = 1; }
+        else {
+          const cp = data.codePointAt(i);
+          key = 'CHAR:' + String.fromCodePoint(cp);
+          step = cp > 0xffff ? 2 : 1;
+        }
+        i += step;
+        const done = await onKey(key);
+        if (done) return;
+        clamp(); render();
+      }
+    }
+
+    async function onKey(key) {
+      st.msg = '';
+      if (st.mode === 'command') {
+        if (key === 'ESC') { st.mode = 'normal'; st.cmd = ''; return false; }
+        if (key === 'ENTER') {
+          const c = st.cmd; st.cmd = ''; st.mode = 'normal';
+          if (/^wq?$/.test(c)) { await save(); if (c !== 'w') return quitNow(); }
+          else if (c === 'q') { if (st.dirty) st.msg = '有未保存的修改，用 :q! 强制退出'; else return quitNow(); }
+          else if (c === 'q!') return quitNow();
+          else if (/^\d+$/.test(c)) { st.row = Math.max(0, Math.min(st.lines.length - 1, Number(c) - 1)); st.col = 0; }
+          else st.msg = '未知命令 :' + c;
+          return false;
+        }
+        if (key === 'BS') { st.cmd = st.cmd.slice(0, -1); return false; }
+        if (key.startsWith('CHAR:')) { st.cmd += key.slice(5); return false; }
+        return false;
+      }
+
+      if (!isVim && key === 'C-O') { await save(); return false; }
+      if (!isVim && key === 'C-X') { if (st.dirty && !st.forceQuit) { st.msg = '未保存！再按一次 ^X 放弃修改'; st.forceQuit = true; return false; } return quitNow(); }
+      if (!isVim && key === 'C-K') { st.clipboard = st.lines.splice(st.row, 1)[0] || ''; if (!st.lines.length) st.lines = ['']; clamp(); st.dirty = true; return false; }
+      if (!isVim && key === 'C-U') { st.lines.splice(st.row, 0, st.clipboard); st.dirty = true; return false; }
+
+      const editing = !isVim || st.mode === 'insert';
+
+      if (key === 'ESC') { if (isVim) { st.mode = 'normal'; st.col = Math.max(0, st.col - 1); } return false; }
+      if (key === 'UP') { st.row--; return false; }
+      if (key === 'DOWN') { st.row++; return false; }
+      if (key === 'LEFT') { st.col--; return false; }
+      if (key === 'RIGHT') { st.col++; return false; }
+      if (key === 'PGUP') { st.row -= H(); return false; }
+      if (key === 'PGDN') { st.row += H(); return false; }
+      if (key === 'HOME') { st.col = 0; return false; }
+      if (key === 'END') { st.col = st.lines[st.row].length; return false; }
+
+      if (key === 'ENTER') {
+        const line = st.lines[st.row];
+        st.lines[st.row] = line.slice(0, st.col);
+        st.lines.splice(st.row + 1, 0, line.slice(st.col));
+        st.row++; st.col = 0; st.dirty = true;
+        return false;
+      }
+      if (key === 'BS') {
+        if (st.col > 0) {
+          const l = st.lines[st.row];
+          st.lines[st.row] = l.slice(0, st.col - 1) + l.slice(st.col);
+          st.col--; st.dirty = true;
+        } else if (st.row > 0) {
+          const prev = st.lines[st.row - 1];
+          st.col = prev.length;
+          st.lines[st.row - 1] = prev + st.lines[st.row];
+          st.lines.splice(st.row, 1);
+          st.row--; st.dirty = true;
+        }
+        return false;
+      }
+      if (key === 'DEL') {
+        const l = st.lines[st.row];
+        if (st.col < l.length) { st.lines[st.row] = l.slice(0, st.col) + l.slice(st.col + 1); st.dirty = true; }
+        else if (st.row < st.lines.length - 1) { st.lines[st.row] = l + st.lines[st.row + 1]; st.lines.splice(st.row + 1, 1); st.dirty = true; }
+        return false;
+      }
+      if (key === 'TAB') { insert('  '); return false; }
+
+      if (key.startsWith('C-')) {
+        const k = key.slice(2);
+        if (k === 'S') { await save(); return false; }
+        if (k === 'Q') return quitNow();
+        if (k === 'G') { st.msg = '行 ' + (st.row + 1) + '/' + st.lines.length + ' · 列 ' + (st.col + 1) + (st.path ? ' · ' + st.path : ''); return false; }
+        return false;
+      }
+      if (!key.startsWith('CHAR:')) return false;
+      const ch = key.slice(5);
+
+      if (editing) { insert(ch); return false; }
+
+      /* vim 普通模式 */
+      if (st.pend === 'd') {
+        st.pend = null;
+        if (ch === 'd') {
+          st.undo.push({ lines: st.lines.slice(), row: st.row, col: st.col });
+          st.clipboard = st.lines[st.row];
+          if (st.lines.length > 1) st.lines.splice(st.row, 1); else st.lines[0] = '';
+          clamp(); st.dirty = true;
+        }
+        return false;
+      }
+      if (st.pend === 'g') { st.pend = null; if (ch === 'g') { st.row = 0; st.col = 0; } return false; }
+      if (ch === 'i') { st.mode = 'insert'; return false; }
+      if (ch === 'a') { st.col = Math.min(st.lines[st.row].length, st.col + 1); st.mode = 'insert'; return false; }
+      if (ch === 'A') { st.col = st.lines[st.row].length; st.mode = 'insert'; return false; }
+      if (ch === 'I') { st.col = 0; st.mode = 'insert'; return false; }
+      if (ch === 'o') { st.lines.splice(st.row + 1, 0, ''); st.row++; st.col = 0; st.mode = 'insert'; st.dirty = true; return false; }
+      if (ch === 'O') { st.lines.splice(st.row, 0, ''); st.col = 0; st.mode = 'insert'; st.dirty = true; return false; }
+      if (ch === 'h') { st.col--; return false; }
+      if (ch === 'l') { st.col++; return false; }
+      if (ch === 'j') { st.row++; return false; }
+      if (ch === 'k') { st.row--; return false; }
+      if (ch === '0') { st.col = 0; return false; }
+      if (ch === '$') { st.col = st.lines[st.row].length; return false; }
+      if (ch === 'x') { st.lines[st.row] = st.lines[st.row].slice(0, st.col) + st.lines[st.row].slice(st.col + 1); st.dirty = true; return false; }
+      if (ch === 'd') { st.pend = 'd'; return false; }
+      if (ch === 'g') { st.pend = 'g'; return false; }
+      if (ch === 'G') { st.row = st.lines.length - 1; st.col = 0; return false; }
+      if (ch === 'y' && st.pend === null) { st.clipboard = st.lines[st.row]; st.msg = '已复制 1 行'; return false; }
+      if (ch === 'p') {
+        if (st.clipboard) { st.lines.splice(st.row + 1, 0, st.clipboard); st.row++; st.dirty = true; }
+        return false;
+      }
+      if (ch === 'u') {
+        const u = st.undo.pop();
+        if (u) { st.lines = u.lines; st.row = u.row; st.col = u.col; st.dirty = true; }
+        return false;
+      }
+      if (ch === ':') { st.mode = 'command'; st.cmd = ''; return false; }
+      if (ch === '/') { st.msg = '搜索请用 :行号'; return false; }
+      return false;
+    }
+
+    function quitNow() {
+      st.quit = true;
+      IO.out(ESC + '[?25h' + ESC + '[?1049l');
+      if (IO.editor) IO.editor.setRaw(null);
+      return true;
+    }
+
+    return {
+      async start() {
+        const p = await realPath(filePath).catch(() => filePath);
+        try {
+          const txt = await readText(p);
+          st.lines = txt.replace(/\n$/, '').split('\n');
+          if (!st.lines.length) st.lines = [''];
+          st.path = filePath;
+        } catch (e) { st.lines = ['']; }
+        IO.out(ESC + '[?1049h' + ESC + '[2J');
+        if (IO.editor) IO.editor.setRaw((d) => { handle(d); });
+        clamp(); render();
+      }
+    };
+  }
+
+  def('vim', async (a) => {
+    const file = a.find(x => !x.startsWith('-')) || '';
+    await makeEditor(file, 'vim').start();
+    return { hold: true };
+  }, '编辑器（vi 兼容子集）');
+
+  def('vi', async (a) => CMDS.vim.fn(a), '编辑器');
+  def('nano', async (a) => {
+    const file = a.find(x => !x.startsWith('-')) || '';
+    await makeEditor(file, 'nano').start();
+    return { hold: true };
+  }, '编辑器（易用模式）');
+
+  def('zsh', async () => {
+    IO.state.mode = 'zsh';
+    IO.kick();
+    return { out: DIM + '已进入 zsh 兼容模式：支持管道、重定向、通配符、变量、alias。exit 回到 JSHeL。' + R + '\n' };
+  }, '进入 zsh 兼容模式');
+  def('bash', async () => CMDS.zsh.fn(), '同 zsh');
+  def('sh', async () => CMDS.zsh.fn(), '同 zsh');
+
+  def('exit', async () => {
+    if (IO.state.mode === 'zsh') { IO.state.mode = 'jshel'; IO.kick(); return { out: DIM + '已退出 zsh，回到 JSHeL。' + R + '\n' }; }
+    return { exit: true };
+  }, '退出当前 shell');
+
+  def('logout', async () => CMDS.exit.fn(), '退出');
+  def('su', async () => ({ err: 'su: 单用户环境\n', code: 1 }), '');
+  def('sudo', async (a) => {
+    if (!a.length) return { code: 1, err: 'sudo: 需要命令\n' };
+    return execCommandTokens(lex(a.join(' ')), '', { sudo:true });
+  }, '以当前用户执行（本环境无权限模型）');
+
+  def('apt', async () => ({ err: 'apt: 本终端用 npm 生态，请用 `install <包名>` 或 install_pkg\n', code: 1 }), '');
+  def('npm', async (a) => {
+    if (a[0] === 'install' || a[0] === 'i') return { out: '用 hterm.pkg.install("' + (a[1] || '') + '")\n' };
+    return { err: 'npm: 只支持 install <pkg>（走 CDN）\n', code: 1 };
+  }, '');
+  def('pip', async () => ({ err: 'pip: 请在 python() 里用 pyodide 的 micropip\n', code: 1 }), '');
+  def('ping', async () => ({ err: 'ping: 浏览器不允许 ICMP\n', code: 1 }), '');
+  def('curl', async (a) => {
+    const url = a.find(x => !x.startsWith('-'));
+    if (!url) return { code: 1, err: 'curl: 需要 URL\n' };
+    try {
+      const r = await IO.call('agent.fetch', url);
+      return { out: r.text || '' };
+    } catch (e) { return { code: 1, err: 'curl: ' + (e.message || e) + '\n' }; }
+  }, '取 URL 内容');
+  def('wget', async (a) => {
+    const r = await CMDS.curl.fn(a);
+    if (r.err) return r;
+    const url = a.find(x => !x.startsWith('-'));
+    const name = url.split('/').pop() || 'index.html';
+    await IO.call('fs.write', await realPath(name), r.out, { mime:'text/plain' });
+    return { out: '已保存 ' + name + '\n' };
+  }, '下载文件');
+
+  /* ---------------------------------------------------------------- 执行 */
+  function splitLists(tokens) {
+    // 按 ; && || 切成若干段
+    const lists = [];
+    let cur = [];
+    for (const t of tokens) {
+      if (t.t === 'op' && (t.v === ';' || t.v === '&&' || t.v === '||')) {
+        lists.push({ cmd: cur, op: t.v });
+        cur = [];
+      } else cur.push(t);
+    }
+    if (cur.length) lists.push({ cmd: cur, op: null });
+    return lists;
+  }
+
+  function splitPipes(tokens) {
+    const segs = [];
+    let cur = { words: [], redir: [] };
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (t.t === 'op' && t.v === '|') { segs.push(cur); cur = { words: [], redir: [] }; continue; }
+      if (t.t === 'redir') {
+        const target = tokens[i + 1] && tokens[i + 1].v;
+        cur.redir.push({ op: t.op, fd: t.fd, target });
+        i++;
+        continue;
+      }
+      cur.words.push(t.v);
+    }
+    segs.push(cur);
+    return segs;
+  }
+
+  async function execCommandTokens(tokens, stdin, flags) {
+    const segs = splitPipes(tokens);
+    let input = stdin || '';
+    let last = { code: 0, out: '' };
+    for (let si = 0; si < segs.length; si++) {
+      const seg = segs[si];
+      let words = seg.words.slice();
+      if (!words.length) continue;
+      // alias
+      if (ALIAS[words[0]]) words = lex(ALIAS[words[0]]).filter(x => x.t === 'w').map(x => x.v).concat(words.slice(1));
+      const name = words[0];
+      const args = [];
+      for (const w of words.slice(1)) {
+        if (/[*?]/.test(w)) args.push(...await glob(await expandWord(w)));
+        else args.push(await expandWord(w));
+      }
+      // 输入重定向
+      for (const r of seg.redir) {
+        if (r.op === '<') input = await readText(await realPath(await expandWord(r.target))).catch(() => '');
+      }
+      const cmd = CMDS[name];
+      let res;
+      if (cmd) res = await cmd.fn(args, input);
+      else {
+        res = await tryExternal(name, args, input);
+      }
+      res = res || {};
+      LAST = res.code || 0;
+      last = res;
+      if (res.hold) return res;
+      if (res.err) IO.out(RED + res.err + R);
+      // 输出重定向
+      let stdout = res.out || '';
+      const outRedir = seg.redir.find(r => r.op === '>' || r.op === '>>');
+      if (outRedir) {
+        const p = await realPath(await expandWord(outRedir.target));
+        const prev = outRedir.op === '>>' ? await readText(p).catch(() => '') : '';
+        await IO.call('fs.write', p, prev + stdout, { mime:'text/plain' });
+        stdout = '';
+      }
+      if (res.clear) { IO.out(ESC + '[2J' + ESC + '[H'); stdout = ''; }
+      if (si === segs.length - 1) {
+        if (stdout) IO.out(res.page ? stdout : stdout.replace(/\n/g, '\r\n'));
+      }
+      input = stdout;
+    }
+    return last;
+  }
+
+  /* 不认识的名字：先看是不是 JS 全局函数（保持 JSHeL 的能力） */
+  async function tryExternal(name, args, stdin) {
+    const fn = IO.api && IO.api[name];
+    if (typeof fn === 'function') {
+      try {
+        const v = await fn(...args);
+        return { code: 0, out: v === undefined ? '' : String(v) + '\n' };
+      } catch (e) { return { code: 1, err: name + ': ' + (e.message || e) + '\n' }; }
+    }
+    return { code: 127, err: name + ': 命令未找到（试 `help` 看内置命令）\n' };
+  }
+
+  async function execLine(line, opts) {
+    opts = opts || {};
+    const tokens = lex(line);
+    const lists = splitLists(tokens);
+    let res = { code: 0, out: '' };
+    for (const L of lists) {
+      if (L.op === '&&' && res.code !== 0) continue;
+      if (L.op === '||' && res.code === 0) continue;
+      res = await execCommandTokens(L.cmd, opts.stdin || '', {});
+    }
+    return res;
+  }
+
+  /* 判断这一行是不是 shell 命令（而不是 JS 表达式） */
+  /* 一行到底是「shell 命令」还是「JS 表达式」？
+   *
+   * 判定顺序很重要：**先看第一个词是不是命令**，再看有没有 shell 语法。
+   * 早期版本优先看 `| ; >`，结果 `mkdir("a"); write("b")` 这种一句里带分号的 JS
+   * 被整行当成 shell，报「命令未找到」——这就是用户看到的那个 bug。
+   */
+  function isShellLine(line) {
+    const s = String(line || '').trim();
+    if (!s) return false;
+    const m = s.match(/^([A-Za-z_][\w.-]*)/);
+    if (!m) return false;
+    const name = m[1];
+    if (!CMDS[name]) return false;
+    const rest = s.slice(name.length);
+
+    /* 函数调用、成员访问、赋值、比较：都是 JS，别抢。
+     * 注意成员访问必须**紧贴**（ls.home / ls[0]），不能允许空格——
+     * `ls .home` 里的 `.home` 是点分路径参数，不是属性访问。
+     * 早期写成 /^\s*\./ 就把所有 `cmd .path` 都判成 JS 了，
+     * 于是 `ls .home` 变成求值 `ls.home`（undefined），一行输出都没有。 */
+    if (/^\s*\(/.test(rest)) return false;
+    if (/^\./.test(rest) || /^\[/.test(rest)) return false;
+    if (/^\s*=[^=]/.test(rest)) return false;
+    if (/^\s*([+\-*/%]<|\?\?|\|\||&&)\s/.test(rest)) return false;
+    return true;
+  }
+
+  function attach(io) {
+    IO = io;
+    ENV.PATH = '/bin:/usr/bin';
+    ENV.TERM = 'xterm-256color';
+    ENV.HOME = '.home';
+  }
+
+  return {
+    attach, execLine, isShellLine, commands: CMDS, lex,
+    editor: makeEditor,
+    get ENV() { return ENV; }
+  };
+})();
+
 </script>
 
 
@@ -2116,7 +3560,7 @@ self.onmessage = async (ev) => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.1';
+const HT_VERSION = '0.0.0.2';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -2149,8 +3593,11 @@ function svgIcon(name, cls) {
 /* ---------------------------------------------------------------- 设置 */
 const Settings = {
   DEFAULTS: {
-    font: 14, lineHeight: 12, cursorStyle: 'bar', cursorBlink: '0', grid: '1',
-    prompt: '> ', cdn: 'esm.sh',
+    /* 光标形态与闪烁不提供设置：固定照参考项目那套（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）。
+     * 背景网格也不提供设置，固定开着（很淡，只为看清桌面边界）。
+     * rows = 固定显示行数，0 表示自动铺满。 */
+    font: 14, lineHeight: 12, rows: 0, haptic: '1',
+    cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
     agentMode: 'backend',
@@ -2162,24 +3609,48 @@ const Settings = {
      * 响应先吐 reasoning_content 再吐 content，测试时又慢又费 token；
      * 关掉后 temperature 才有意义。需要推理时在设置里打开（会正确回传 reasoning_content）。 */
     agentThinking: '0',
-    agentSteps: 16, historyLimit: 500
+    agentSteps: 120, historyLimit: 500
   },
+  /* 只在内存里、永不落盘的键（API Key 属于这一类） */
+  VOLATILE: ['agentKey'],
   data: {},
   load() {
     try {
       const raw = localStorage.getItem('ht.settings');
       this.data = Object.assign({}, this.DEFAULTS, raw ? JSON.parse(raw) : {});
     } catch (e) { this.data = Object.assign({}, this.DEFAULTS); }
+    /* 历史遗留版本可能把密钥存进来过：加载时一律丢弃 */
+    for (const x of this.VOLATILE) this.data[x] = this.DEFAULTS[x];
+    /* 老版本把默认模型写成了 gpt-4o-mini 并落进 localStorage，导致用户升级后
+     * 打开直连还在问 GPT。这里做一次无痛迁移：只有「从没改过」的旧默认值才替换。 */
+    if (this.data.agentModel === 'gpt-4o-mini') {
+      this.data.agentModel = this.DEFAULTS.agentModel;
+      try { localStorage.setItem('ht.settings', JSON.stringify(this._persisted())); } catch (e) {}
+    }
     return this.data;
   },
   get(k) { return this.data[k] !== undefined ? this.data[k] : this.DEFAULTS[k]; },
   set(k, v) {
     this.data[k] = v;
-    try { localStorage.setItem('ht.settings', JSON.stringify(this.data)); } catch (e) {}
-    if (k === 'grid') applyGrid(v);
-    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink' || k === 'cursorStyle') TerminalManager.applyAll();
-    FS.write('.config.settings', JSON.stringify(this.data, null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
+    /* 直连密钥只在内存：不写 localStorage，也不写 .config.settings。刷新即消失。 */
+    const volatile = this.VOLATILE.includes(k);
+    if (!volatile) {
+      try {
+        const keep = Object.assign({}, this.data);
+        for (const x of this.VOLATILE) delete keep[x];
+        localStorage.setItem('ht.settings', JSON.stringify(keep));
+      } catch (e) {}
+      FS.write('.config.settings', JSON.stringify(this._persisted(), null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
+    }
+    if (k === 'font' || k === 'lineHeight' || k === 'rows') {
+      if (typeof TerminalManager !== 'undefined') TerminalManager.applyAll();
+    }
     return v;
+  },
+  _persisted() {
+    const o = Object.assign({}, this.data);
+    for (const x of this.VOLATILE) delete o[x];
+    return o;
   },
   all() { return Object.assign({}, this.data); }
 };
@@ -2208,8 +3679,9 @@ function watchSystemTheme() {
   if (mq.addEventListener) mq.addEventListener('change', on);
   else if (mq.addListener) mq.addListener(on);   // Safari < 14
 }
-function applyGrid(on) {
-  document.body.classList.toggle('nogrid', on !== '1');
+/* 背景网格固定开着：很淡的一层，只为让人看得出桌面边界，不给设置项。 */
+function applyGrid() {
+  document.body.classList.remove('nogrid');
 }
 
 /* ---------------------------------------------------------------- Toast */
@@ -2277,23 +3749,44 @@ const RESERVED = new Set(['', '.', '..']);
 function normPath(p, cwd) {
   cwd = cwd || '.home';
   if (p === undefined || p === null || String(p).trim() === '') return cwd;
-  p = String(p).trim();
-  if (p === '.') return '.';
-  if (p === '..') {
-    const s = cwd.split('.').filter(Boolean);
-    s.pop();
-    return s.length ? '.' + s.join('.') : '.';
-  }
-  if (p.startsWith('.')) {
-    // 绝对路径：`.home.foo`；末尾的点只是排版，去掉
-    p = p.replace(/\.+$/, '');
+  let s = String(p).trim().replace(/\\/g, '/');
+  if (!s) return cwd;
+  if (s === '/' || s === '.') return '.';
+
+  /* 路径方言（模仿 Linux 终端，底层仍是点分扁平结构）：
+   *   /            根                 /home/notes = .home.notes
+   *   ~            .home
+   *   @            当前目录           @、@/notes、@.notes
+   *   ..           上一级             ../x
+   *   "/" 与 "." 都是分隔符，反斜杠也当分隔符。
+   */
+  const cwdSegs = cwd === '.' ? [] : cwd.slice(1).split('.');
+  let base, rest;
+  if (s === '~' || s.startsWith('~/') || s.startsWith('~.')) {
+    base = []; rest = 'home/' + s.replace(/^~[\/.]?/, '');
+  } else if (s === '@') {
+    return cwd.toLowerCase();
+  } else if (s.startsWith('@')) {
+    base = cwdSegs.slice(); rest = s.slice(1);
+  } else if (s.startsWith('/')) {
+    base = []; rest = s.slice(1);
+  } else if (s.startsWith('..')) {
+    base = cwdSegs.slice(); rest = s;
+  } else if (s.startsWith('.')) {
+    base = []; rest = s.replace(/^\.+/, '');
   } else {
-    p = (cwd === '.' ? '.' : cwd + '.') + p;
+    base = cwdSegs.slice(); rest = s;
   }
-  const out = [];
-  for (const seg of p.split('.')) {
+
+  const out = base.slice();
+  /* ".." 里含点，直接 split 会被当成分隔符吃掉，先换成占位符 */
+  rest = rest.replace(/\.\./g, '\u0001');
+  for (const seg of rest.split(/[\/.]+/)) {
     if (!seg) continue;
-    if (seg === '..') { out.pop(); continue; }
+    if (seg === '\u0001') { out.pop(); continue; }
+    if (seg === '~') { out.length = 0; out.push('home'); continue; }
+    /* 路径中间出现的 @ 代表「当前目录」这个绝对位置 */
+    if (seg === '@') { out.length = 0; out.push(...cwdSegs); continue; }
     out.push(seg);
   }
   return (out.length ? '.' + out.join('.') : '.').toLowerCase();
@@ -2606,7 +4099,7 @@ const FS = {
     } catch (e) {}
   },
 
-  exists(p) { return this.idx.has(p) || this.temp.has(p) || this.virtualStat(p); },
+  exists(p) { return this.idx.has(p) || this.temp.has(p) || DIRS.indexOf(p) >= 0 || this.virtualStat(p); },
   isVirtual(p) {
     return p === '.proc' || p.startsWith('.proc.') || p === '.localstorage' || p.startsWith('.localstorage.') ||
       p === '.pkg' || p.startsWith('.pkg.') || p === '.temp' || p.startsWith('.temp.') ||
@@ -2720,6 +4213,14 @@ const FS = {
     const seg = baseName(p);
     const err = checkName(seg);
     if (err) throw new Error(err + '（' + seg + '）');
+    /* 父目录必须存在。点号既是分隔符又常被当成扩展名，于是
+     * `write(".home.a.txt")` 会被解析成「.home.a 目录下的 txt」，
+     * 默默在不存在的地方造一个谁也看不见的文件（`ls .home` 永远列不出来）。
+     * 与其留下幽灵，不如当场报错——这也和 mkdir 的规则保持一致。 */
+    const par = parentPath(p);
+    if (par !== '.' && !this.exists(par) && !this.temp.has(par)) {
+      throw new Error('父目录不存在: ' + par + '（点名就是路径分隔符，文件名不要带点）');
+    }
     if (p.startsWith('.localstorage.')) {
       const key = decodeLsName(p.slice(14));
       if (key === null) throw new Error('localStorage 键名不合法');
@@ -3187,24 +4688,40 @@ const UNI11_JS = [
   'https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js',
   'https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js'
 ];
+/* 加载顺序：DepCache（IndexedDB）→ CDN。
+ * 为什么不用 CDN.js：它是 <script src>，每次新标签都要走一次浏览器 HTTP 缓存，
+ * 而 HTTP 缓存会被「清除数据」清掉、部分 CDN 还返回 no-store。
+ * 自己存一份，第二次打开页面是**零网络请求**，秒开。 */
+async function loadOne(list, check, label, onLog, required) {
+  if (check()) return true;
+  let lastErr = null;
+  for (const url of list) {
+    try {
+      onLog && onLog('加载 ' + label);
+      await loadScriptCached(url, onLog);
+      if (check()) return true;
+      lastErr = new Error(label + ' 已下载但没有注册全局变量');
+    } catch (e) { lastErr = e; }
+  }
+  if (required) throw new Error(label + ' 加载失败：' + (lastErr && lastErr.message || lastErr) + '（检查网络或 CDN）');
+  return false;
+}
+
 async function loadXterm(onLog) {
-  if (window.Terminal && window.FitAddon) return true;
-  onLog && onLog('加载 xterm.css');
-  await CDN.css(XTERM_CSS);
-  onLog && onLog('加载 xterm.js');
+  if (window.Terminal && window.FitAddon && window.Unicode11Addon) return true;
+
   if (!window.Terminal) {
-    const ok = await CDN.js(XTERM_JS);
-    if (!ok || !window.Terminal) throw new Error('xterm.js 加载失败：请检查网络或 CDN 可用性');
+    onLog && onLog('准备 xterm.css');
+    let cssOk = false;
+    for (const u of XTERM_CSS) {
+      try { await loadStyleCached(u, onLog); cssOk = true; break; } catch (e) {}
+    }
+    if (!cssOk) { onLog && onLog('xterm.css 拿不到，用内置最小样式兜底'); injectStyle('@import url("");.xterm{position:relative;user-select:none}.xterm .xterm-viewport{overflow-y:scroll;background:transparent}'); }
   }
-  onLog && onLog('加载 addon-fit');
-  if (!window.FitAddon) {
-    const ok = await CDN.js(FIT_JS);
-    if (!ok || !window.FitAddon) throw new Error('addon-fit 加载失败');
-  }
-  // Unicode11 是「锦上添花」：CDN 不通时不让它拖死启动，退化为默认宽度表。
-  if (!window.Unicode11Addon) {
-    try { await CDN.js(UNI11_JS); } catch (e) { /* 忽略，见上 */ }
-  }
+  await loadOne(XTERM_JS, () => !!window.Terminal, 'xterm.js', onLog, true);
+  await loadOne(FIT_JS, () => !!window.FitAddon, 'addon-fit', onLog, true);
+  /* Unicode11 是锦上添花：拿不到就退化成默认宽度表，不阻塞启动 */
+  await loadOne(UNI11_JS, () => !!window.Unicode11Addon, 'addon-unicode11', onLog, false);
   return true;
 }
 
@@ -3253,8 +4770,10 @@ function termTheme(forceLight) {
   return {
     background: 'rgba(0,0,0,0)',
     foreground: cssVar('--fg') || (light ? '#182624' : '#d6e7e3'),
-    cursor: cssVar('--accent') || '#5eead4',
-    cursorAccent: light ? '#ffffff' : '#08110f',
+    /* xterm 自己画的方块/竖线光标一律透明：全部交给叠加层 .ht-cursor，
+     * 这样才有「呼吸、虚线、椭圆描边、阻尼缓动」这些 xterm 给不了的形态。 */
+    cursor: 'rgba(0,0,0,0)',
+    cursorAccent: 'rgba(0,0,0,0)',
     selectionBackground: light ? 'rgba(13,148,136,.22)' : 'rgba(94,234,212,.24)',
     selectionForeground: undefined,
     black: light ? '#1c2b29' : '#0b1112',
@@ -3505,12 +5024,13 @@ class TerminalSession {
   _mount() {
     if (!this.container) throw new Error('终端缺少容器');
     this.term = new window.Terminal({
-      /* 光标与参考项目对齐：默认竖线（bar）+ 不闪烁；失焦时描边而不是消失。
-       * 形态/闪烁可在「更多 → 外观」里改，改完只动 options，不重建终端。 */
-      cursorBlink: Settings.get('cursorBlink') === '1',
-      cursorStyle: Settings.get('cursorStyle') || 'bar',
-      cursorInactiveStyle: 'outline',
-      cursorWidth: 2,
+      /* 光标：xterm 原生光标设为透明且不闪，真正的光标是叠加层 .ht-cursor。
+       * 形态（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）与缓动全在 _initCursor 里，
+       * 不给设置项——照参考项目固定成一套。 */
+      cursorBlink: false,
+      cursorStyle: 'bar',
+      cursorInactiveStyle: 'none',
+      cursorWidth: 1,
       fontFamily: xtermFont(),
       fontSize: Number(Settings.get('font')) || 14,
       lineHeight: (Number(Settings.get('lineHeight')) || 12) / 10,
@@ -3531,14 +5051,21 @@ class TerminalSession {
       smoothScrollDuration: 0
     });
     this.term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      /* F5 / F12：原样交给浏览器。返回 false 让 xterm 不吞键、不发 ESC 序列，
+       * 浏览器因此能收到真正的 F5（刷新页面）与 F12（开发者工具）。 */
+      if (e.key === 'F5' || e.key === 'F12') return false;
+      /* F11：软件级接管，和顶栏 ⛶ 完全同一套行为（同一个 toggleFullscreen）。 */
+      if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return false; }
       // Ctrl+Shift+C/V 走浏览器复制粘贴；其余交给全局快捷键。
-      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey) {
+      if (e.ctrlKey && e.shiftKey) {
         const k = e.key.toLowerCase();
         if (k === 'c' || k === 'v') return false;
       }
       return true;
     });
     this.term.open(this.container);
+    this._initCursor();
     // Unicode 11 宽度表：CJK/emoji 占 1 格还是 2 格，必须与渲染一致，否则会错位。
     if (window.Unicode11Addon) {
       try {
@@ -3551,12 +5078,129 @@ class TerminalSession {
       this.term.loadAddon(this.fit);
       this.fit.fit();
     } catch (e) { console.warn('fit 失败', e); }
-    this.term.onData(d => { this._post({ t:'in', data:Keys.shape(d) }); });
+    this.term.onData(d => {
+      this._post({ t:'in', data:Keys.shape(d) });
+      // 短振动只在「像一次按键」时触发：粘贴一大段不抖，控制序列也不抖
+      if (d.length <= 2 && d.charCodeAt(0) > 0x1f) haptic(5);
+      this._cursorIdle();
+    });
     this.term.onResize(({ cols, rows }) => this._post({ t:'resize', cols, rows }));
     this._ro = new ResizeObserver(() => this.fitNow());
     this._ro.observe(this.container);
     setTimeout(() => this.fitNow(), 30);
     this.term.focus();
+  }
+
+  /* ---------------------------------------------------------------- 自定义光标
+   * xterm 自带光标被设成透明，这里用一个绝对定位的 div 画。为什么不用原生光标：
+   * 原生只支持 bar/block/underline 三态 + 闪烁，做不出「失焦椭圆描边、备用屏虚线、
+   * 空闲呼吸、阻尼缓动」这些参考项目里的形态。
+   */
+  _initCursor() {
+    const host = this.term && this.term.element;
+    if (!host) return;
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    const el = document.createElement('div');
+    el.className = 'ht-cursor';
+    el.setAttribute('aria-hidden', 'true');
+    host.appendChild(el);
+    this.cur = { el, x:0, y:0, tx:0, ty:0, init:false, raf:0, idle:0, hollow:false, alt:false };
+    this.term.onCursorMove(() => this._cursorPlace());
+
+    const ta = this.term.textarea;
+    if (ta) {
+      ta.addEventListener('focus', () => { this.cur.hollow = false; this._cursorStyle(); this._cursorIdle(); });
+      ta.addEventListener('blur', () => {
+        this.cur.hollow = true;
+        clearTimeout(this.cur.idle);
+        this._cursorStyle();
+      });
+      if (document.activeElement !== ta) { this.cur.hollow = true; this._cursorStyle(); }
+    }
+    // 选中文本时不呼吸（正在拖选时呼吸会干扰）
+    this.term.onSelectionChange(() => {
+      const sel = this.term.hasSelection && this.term.hasSelection();
+      this.cur.el.classList.toggle('ht-cursor--paused', !!sel);
+      if (sel) this.cur.el.classList.remove('ht-cursor--breathing');
+    });
+    requestAnimationFrame(() => this._cursorPlace());
+  }
+
+  _cursorStyle() {
+    const c = this.cur;
+    if (!c) return;
+    c.el.classList.toggle('ht-cursor--hollow', !!c.hollow);
+    c.el.classList.toggle('ht-cursor--dashed', !!c.alt);
+    if (c.hollow || c.alt) c.el.classList.remove('ht-cursor--breathing');
+  }
+
+  _cursorRaf() {
+    const c = this.cur;
+    if (c && !c.raf) c.raf = requestAnimationFrame(() => this._cursorTick());
+  }
+
+  /* 阻尼缓动：每帧向目标逼近 22%。快速移动（按方向键连翻）时追不上，
+   * 停手后再平滑收敛——这就是「平滑移动」的手感来源。 */
+  _cursorTick() {
+    const c = this.cur;
+    if (!c) return;
+    c.x += (c.tx - c.x) * 0.22;
+    c.y += (c.ty - c.y) * 0.22;
+    if (Math.abs(c.tx - c.x) < 0.35) c.x = c.tx;
+    if (Math.abs(c.ty - c.y) < 0.35) c.y = c.ty;
+    c.el.style.left = c.x + 'px';
+    c.el.style.top = c.y + 'px';
+    if (c.x !== c.tx || c.y !== c.ty) c.raf = requestAnimationFrame(() => this._cursorTick());
+    else c.raf = 0;
+  }
+
+  _cursorPlace() {
+    const c = this.cur, t = this.term;
+    if (!c || !t || !t.element) return;
+    const buf = t.buffer.active;
+    /* cursorY 是「当前显示基准」上的相对行，baseY 是基准的绝对偏移，
+     * viewportY 是视口顶端的绝对行——三者推出光标在视口内的行号。
+     * 滚动之后这个算法依然准，不依赖任何尺寸测量。 */
+    const vRow = buf.cursorY + buf.baseY - buf.viewportY;
+    if (vRow < 0 || vRow >= t.rows) { c.el.style.display = 'none'; return; }
+    c.el.style.display = '';
+
+    const screen = t.element.querySelector('.xterm-screen');
+    if (!screen) { this._cursorRaf(); return; }
+    const hostR = t.element.getBoundingClientRect();
+    const sr = screen.getBoundingClientRect();
+    const offX = sr.left - hostR.left;
+    const offY = sr.top - hostR.top;
+    const cellW = sr.width / Math.max(1, t.cols);
+    const cellH = sr.height / Math.max(1, t.rows);
+    if (!cellW || !cellH) { this._cursorRaf(); return; }
+
+    const alt = buf.type === 'alternate';
+    if (alt !== c.alt) { c.alt = alt; this._cursorStyle(); }
+
+    const w = c.hollow ? 7 : 2;
+    c.el.style.width = w + 'px';
+    c.el.style.height = cellH + 'px';
+    const px = offX + buf.cursorX * cellW + 1 - w / 2;
+    const py = offY + vRow * cellH;
+    if (!c.init) { c.x = c.tx = px; c.y = c.ty = py; c.init = true; }
+    const moved = px !== c.tx || py !== c.ty;
+    c.tx = px; c.ty = py;
+    if (moved) this._cursorIdle();
+    this._cursorRaf();
+  }
+
+  /* 只有「聚焦 + 空闲 ≥1s + 不在备用屏」才呼吸 */
+  _cursorIdle() {
+    const c = this.cur;
+    if (!c) return;
+    c.el.classList.remove('ht-cursor--breathing');
+    clearTimeout(c.idle);
+    c.idle = setTimeout(() => {
+      if (c.hollow || c.alt) return;
+      if (this.term && this.term.hasSelection && this.term.hasSelection()) return;
+      c.el.classList.add('ht-cursor--breathing');
+    }, 1000);
   }
 
   fitNow() {
@@ -3565,6 +5209,27 @@ class TerminalSession {
       const dims = this.fit.proposeDimensions();
       if (!dims || !isFinite(dims.cols) || !isFinite(dims.rows) || dims.cols < 2 || dims.rows < 1) return;
       this.fit.fit();
+
+      /* 固定显示行数（参考项目的 fixedRows）：0 = 自动铺满。
+       * 做法是先把容器能容纳的最大行数算出来，取 min(设定值, 最大行数)，
+       * 再把 .xterm 的高度钉死成 rows × 行高 —— 多出来的空间留白，不拉伸行高。 */
+      const fixed = Number(Settings.get('rows')) || 0;
+      const host = this.term.element;
+      if (host) {
+        if (fixed > 0) {
+          const screen = host.querySelector('.xterm-screen');
+          const cellH = screen ? screen.getBoundingClientRect().height / Math.max(1, this.term.rows) : 0;
+          if (cellH > 0) {
+            const maxRows = Math.floor((this.container.clientHeight || 0) / cellH);
+            const rows = Math.max(1, Math.min(fixed, maxRows || fixed));
+            host.style.height = (rows * cellH) + 'px';
+            if (rows !== this.term.rows) this.term.resize(this.term.cols, rows);
+          }
+        } else {
+          host.style.height = '';
+        }
+      }
+      this._cursorPlace();
     } catch (e) {}
   }
 
@@ -3638,11 +5303,8 @@ class TerminalSession {
     if (!this.term) return;
     this.term.options.fontSize = Number(Settings.get('font')) || 14;
     this.term.options.lineHeight = (Number(Settings.get('lineHeight')) || 12) / 10;
-    this.term.options.cursorBlink = Settings.get('cursorBlink') === '1';
-    const cs = Settings.get('cursorStyle') || 'bar';
-    if (this.term.options.cursorStyle !== cs) this.term.options.cursorStyle = cs;
     this.term.options.theme = termTheme();
-    setTimeout(() => this.fitNow(), 20);
+    setTimeout(() => { this.fitNow(); this._cursorPlace(); }, 20);
   }
 
   write(s) { this.term && this.term.write(s); }
@@ -3656,8 +5318,11 @@ class TerminalSession {
     try { this.worker && this.worker.terminate(); } catch (e) {}
     this.worker = null;
     try { this._ro && this._ro.disconnect(); } catch (e) {}
+    try { clearTimeout(this.cur && this.cur.idle); } catch (e) {}
+    try { if (this.cur && this.cur.raf) cancelAnimationFrame(this.cur.raf); } catch (e) {}
     try { this.term && this.term.dispose(); } catch (e) {}
     this.term = null;
+    this.cur = null;
   }
 }
 
@@ -3756,6 +5421,9 @@ const WindowManager = {
       if (app) opts = Object.assign({}, opts, { type:app.type, title:opts.title || app.title, icon:app.icon, app:app.name });
       else opts = Object.assign({}, opts, { type:'about' });
     }
+    /* 只给了 html 没给类型：当作浏览器窗口（srcdoc 直开）。
+     * 智能体的 window_html 工具和老代码都会这么调。 */
+    if (!opts.type && opts.html) opts = Object.assign({}, opts, { type:'browser', title:opts.title || 'HTML' });
     if (opts.app === 'agent' || opts.type === 'agent') {
       const ex = [...this.windows.values()].find(w => w.type === 'agent');
       if (ex) { this.focus(ex.id); if (ex.minimized) this.restore(ex.id); return ex; }
@@ -3814,7 +5482,70 @@ const WindowManager = {
     this._render(win, opts);
     this._syncDock();
     this.focus(id);
+    this._animIn(win, opts.from);
     return win;
+  },
+
+  /* ---------------------------------------------------------------- 窗口动效
+   * "从一个点扩散"的关键不是 scale 本身，而是 transform-origin 指哪儿：
+   *   origin 在触发按钮的位置 → 视觉上就是「从这个图标长出来的」。
+   * 没有触发点（程序开窗）就用窗口中心，看起来是从中间展开。
+   */
+  _animIn(win, from) {
+    const el = win.el;
+    if (!el || !el.animate) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (from && isFinite(from.x) && isFinite(from.y)) {
+      const r = el.getBoundingClientRect();
+      el.style.transformOrigin = (from.x - r.left) + 'px ' + (from.y - r.top) + 'px';
+    } else {
+      el.style.transformOrigin = '50% 50%';
+    }
+    el.classList.add('anim-in');
+    const done = () => { el.classList.remove('anim-in'); el.style.transformOrigin = ''; };
+    el.addEventListener('animationend', done, { once:true });
+    /* 兜底：某些环境下 animationend 不触发（元素被隐藏等），别让类卡住 */
+    setTimeout(done, 520);
+  },
+
+  /* 关窗 = 溶解。先播动画再从 DOM 移除；期间 pointer-events:none 防误点。 */
+  _animOut(win, cb) {
+    const el = win.el;
+    if (!el || !el.animate || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) { cb(); return; }
+    el.classList.add('anim-out');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; cb(); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 400);
+  },
+
+  /* 最小化：把"收进哪儿"算出来，交给 CSS 变量。 */
+  _dockPoint(id) {
+    const icon = document.querySelector('#dock [data-win="' + id + '"]');
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    if (icon) {
+      const r = icon.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
+    }
+    return { x: dbox.width / 2, y: dbox.height + 24 };
+  },
+  _animMin(win, cb) {
+    const el = win.el;
+    if (!el || !el.animate || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) { cb(); return; }
+    const r = el.getBoundingClientRect();
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    const p = this._dockPoint(win.id);
+    /* 位移要换算成相对窗口中心的偏移，scale 才会朝图标方向收 */
+    const mx = p.x + dbox.left - (r.left + r.width / 2);
+    const my = p.y + dbox.top - (r.top + r.height / 2);
+    el.style.setProperty('--mx', mx + 'px');
+    el.style.setProperty('--my', my + 'px');
+    el.style.transformOrigin = '50% 50%';
+    el.classList.add('anim-min');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; el.classList.remove('anim-min'); cb(); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 380);
   },
 
   _render(win, opts) {
@@ -4025,19 +5756,37 @@ const WindowManager = {
 
   minimize(id) {
     const w = this.windows.get(id);
-    if (!w) return;
+    if (!w || w.minimized) return;
     w.minimized = true;
-    w.el.classList.add('min');
-    if (w.content && w.content.onHide) w.content.onHide();
+    /* 先算 Dock 位置再藏：_syncDock 之后图标位置才准，
+     * 但 .min 会被 display:none 掉，所以顺序是 同步 Dock → 取点 → 动画 → 加 .min */
     this._syncDock();
+    if (w.content && w.content.onHide) w.content.onHide();
+    this._animMin(w, () => { w.el.classList.add('min'); });
   },
   restore(id) {
     const w = this.windows.get(id);
     if (!w) return;
     w.minimized = false;
+    const wasMin = w.el.classList.contains('min');
     w.el.classList.remove('min');
     this.focus(id);
     if (w.content && w.content.onShow) w.content.onShow();
+    if (!wasMin) return;
+    /* 从 Dock 位置反向长出来，和最小化对称 */
+    const el = w.el;
+    if (!el || !el.animate) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = el.getBoundingClientRect();
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    const p = this._dockPoint(id);
+    el.style.setProperty('--mx', (p.x + dbox.left - (r.left + r.width / 2)) + 'px');
+    el.style.setProperty('--my', (p.y + dbox.top - (r.top + r.height / 2)) + 'px');
+    el.classList.add('anim-restore');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; el.classList.remove('anim-restore'); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 420);
   },
   toggleMin(id) {
     const w = this.windows.get(id);
@@ -4049,6 +5798,11 @@ const WindowManager = {
   toggleMax(id) {
     const w = this.windows.get(id);
     if (!w) return;
+    /* 加 .tween 让 left/top/width/height 插值过渡（外扩 / 内缩），
+     * 过渡结束立刻摘掉，避免以后拖拽时窗口"追不上"鼠标。 */
+    w.el.classList.add('tween');
+    clearTimeout(w._tweenT);
+    w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 300);
     if (w.maximized) {
       const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
       w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px';
@@ -4070,11 +5824,14 @@ const WindowManager = {
   close(id) {
     const w = this.windows.get(id);
     if (!w) return;
+    if (w.closing) return;
+    w.closing = true;
     if (w.onClose) { try { w.onClose(); } catch (e) {} }
+    /* 内容先 dispose，释放 worker / iframe；视觉上再慢慢溶解掉 */
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
-    w.el.remove();
     this.windows.delete(id);
     this._syncDock();
+    this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
   },
   closeFocused() {
     const w = this.focused();
@@ -4223,7 +5980,7 @@ class BrowserApp {
         <!-- sandbox 是这里的关键：它会让 mailto:/intent:// 之类的顶层式导航被内核直接拦下，
              不再产生 ERR_UNKNOWN_URL_SCHEME；allow-same-origin 只用于同源首页的链接拦截。 -->
         <iframe referrerpolicy="no-referrer"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
           allow="clipboard-read; clipboard-write; fullscreen"></iframe>
         <div class="br-notice" id="brNotice" hidden>
           <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
@@ -4261,15 +6018,21 @@ class BrowserApp {
     });
     this._msg = (e) => {
       if (!e.data) return;
-      if (e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      if (e.data.htNav && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) this.navigate(e.data.htNav);
       // 同源注入的脚本抓到外部协议时，转成面板，而不是让 iframe 去撞 ERR_UNKNOWN_URL_SCHEME
-      if (e.data.htExternal && e.source === this.frame.contentWindow) {
+      if (e.data.htExternal && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) {
         this.showNotice(e.data.htExternal.kind || 'external', e.data.htExternal);
+      }
+      /* 同源页调 window.open / target=_blank：在内部开新标签，不去碰真浏览器 */
+      if (e.data.htNewTab && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) {
+        this.addTab(String(e.data.htNewTab));
       }
     };
     window.addEventListener('message', this._msg);
 
-    this.addTab(this.opts.url || '');
+    /* 智能体经常直接给一段 HTML（content），而不是 URL。
+     * 以前这里只认 url，于是「打开 HTML」变成打开一个空白页，看起来像坏了。 */
+    this.addTab(this.opts.url || '', this.opts.html || '');
   }
 
   act(a) {
@@ -4330,10 +6093,18 @@ class BrowserApp {
     try { doc = this.frame.contentDocument; } catch (e) { return; }
     if (!doc || doc.__htHardened) return;
     doc.__htHardened = true;
-    const relay = (u) => {
+    /* targetOrigin 必须用 '*'：srcdoc + sandbox 的 iframe 是 opaque origin，
+     * origin 字符串是 "null"，用 location.origin 当 targetOrigin 会被浏览器直接丢弃，
+     * 表现就是「点了 mailto 什么都不发生」。
+     * 校验也不靠 e.source —— iframe 一旦导航，contentWindow 会换成新的 WindowProxy，
+     * 拿旧引用比 strict equal 永远为 false。改用每个窗口一份随机串 htTok。 */
+    const tok = this._tok || (this._tok = Math.random().toString(36).slice(2, 10));
+    /* 同源可控时**根本不用 postMessage**：回调就在父窗口的 realm 里跑，
+     * 闭包里的 this 就是 BrowserApp，直接调方法最可靠（无异步、无丢消息）。 */
+    const handle = (u) => {
       const c = classifyUrl(u);
       if (c.kind === 'external' || c.kind === 'blocked') {
-        try { window.postMessage({ htExternal: c }, location.origin); } catch (e) {}
+        this.showNotice(c.kind === 'external' ? 'external' : c.kind, c);
         return true;
       }
       return false;
@@ -4342,27 +6113,65 @@ class BrowserApp {
       const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
       if (!a) return;
       const href = a.getAttribute('href') || '';
-      if (relay(href)) { e.preventDefault(); e.stopPropagation(); }
+      if (handle(href)) { e.preventDefault(); e.stopPropagation(); return; }
+
+      /* target=_blank：优先在**这个小浏览器里**开新标签页。
+       * 只有同源页面能拦到（跨域 DOM 读不到），跨域的交给浏览器自己处理——
+       * 也就是「尽量内部打开，实在不行才外部」，正是想要的行为。 */
+      const target = (a.getAttribute('target') || '').toLowerCase();
+      if (target === '_blank' || target === '_new') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.addTab(href.startsWith('#') ? (this.current() && this.current().url) || '' : href);
+      }
     }, true);
+
+    /* 页面自己写 window.open 的，同样先转内部新标签 */
     try {
       const w = doc.defaultView;
       if (w && !w.__htOpenPatched) {
         w.__htOpenPatched = true;
         const orig = w.open;
-        w.open = function (u, ...rest) { return (u && relay(String(u))) ? null : orig.call(w, u, ...rest); };
+        const self = this;
+        w.open = function (u, ...rest) {
+          const target = u == null ? '' : String(u);
+          if (!target) return null;
+          if (handle(target)) return null;
+          /* 闭包在父窗口里，self 就是那个 BrowserApp：直接开内部标签 */
+          try { self.addTab(target); return null; }
+          catch (e) { try { (window.parent || window).postMessage({ htNewTab: target, htTok: tok }, '*'); return null; } catch (e2) { return orig.call(w, target, ...rest); } }
+        };
       }
     } catch (e) {}
   }
 
   current() { return this.tabs[this.active] || null; }
 
-  addTab(url) {
-    const t = { url:'', title:'新标签', hist:[], idx:-1 };
+  addTab(url, html) {
+    const t = { url:'', title:'新标签', hist:[], idx:-1, html:'' };
     this.tabs.push(t);
     this.active = this.tabs.length - 1;
     this.renderTabs();
-    if (url) this.navigate(url, true);
+    if (html) this.loadHtml(html, this.opts.title || '');
+    else if (url) this.navigate(url, true);
     else { this.loadHome(); this.setAddr(''); }
+    this.renderTabs();
+  }
+
+  /* 直接渲染一段 HTML（srcdoc）。地址栏留空，标签标题取 <title> 或传入的 title。
+   * 用 srcdoc 而不是 blob:/data: —— 后者在部分内核里会触发 URL scheme 相关的拦截。 */
+  loadHtml(html, title) {
+    this.hideNotice();
+    this.frame.removeAttribute('src');
+    this.frame.srcdoc = String(html || '');
+    this.frameEl.classList.remove('blocked');
+    const t = this.current();
+    if (t) {
+      t.url = '';
+      t.html = String(html || '');
+      t.title = title || 'HTML';
+    }
+    this.setAddr('');
     this.renderTabs();
   }
   closeTab(i) {
@@ -4682,15 +6491,18 @@ const AGENT_SYSTEM = `你是 hterminal 里的智能体，运行在一个浏览�
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
 - 文件名必须像标识符：字母/中文开头，只含字母、中文、数字、下划线和短横线；不区分大小写。
 - 常用目录：.home（用户文件）、.bin（可执行函数）、.app（应用）、.dev（设备）、.proc（进程）、.pkg（包）、.config（设置）、.agent（会话）、.sys（只读系统信息）、.temp（临时）、.queryfile（用户提供的文件）。
-- 终端在 Worker 里跑 JS；你通过工具在主页面执行，可以直接使用全局 hterm API：hterm.readFile/writeFile/listDir/openWindow/exec/saveFile 等。
+- 终端在 Worker 里跑 JS；你通过工具在主页面执行，所以 document / window / localStorage
+  都是真的（不是模拟）。也能直接用全局 hterm API：hterm.readFile/writeFile/listDir/openWindow/exec/saveFile。
 - 浏览器是沙箱，不需要额外安全许可；不要询问“是否允许执行”，直接做。
 
 工作方式：
 - 先观察（list_dir/read_file/js），再动手。修改前尽量读原内容。
 - 需要复杂能力时用 js 工具，它支持 await，返回值会被序列化给你。
-- 写文件用 write_file；运行代码用 js；开窗口用 open_window。
-- 完成后用简短中文说明做了什么、结果如何。不要输出大段无关代码。
-- 工具失败时读错误信息再重试，不要重复同样的失败调用。`;
+- 写文件用 write_file；运行代码用 js；开窗口优先用 window_html / ui，不要每次手写 WindowManager.open。
+- 想看界面长什么样就调 screenshot，比用文字描述界面省事得多。
+- 同一个工具、同样的参数不要连着重试。失败两次就换办法，或者直接说明卡在哪。
+- 已经做过的事不要重复做，已经说过的话不要重复说。每次回答只给新增信息。
+- 完成后用简短中文说明做了什么、结果如何。不要输出大段无关代码。`;
 
 const AGENT_TOOLS = [
   { type:'function', function:{
@@ -4725,14 +6537,39 @@ const AGENT_TOOLS = [
     parameters:{ type:'object', properties:{ id:{ type:'string' } }, required:['id'] }
   }},
   { type:'function', function:{
-    name:'fetch_url', description:'抓取一个 URL 的文本内容（受浏览器 CORS 限制）。',
+    name:'fetch_url', description:'抓取一个 URL 的文本内容。跨域被拦时会自动改用文本化代理（r.jina.ai / allorigins），一般都能拿到正文。',
     parameters:{ type:'object', properties:{ url:{ type:'string' }, method:{ type:'string' }, headers:{ type:'object' }, body:{ type:'string' } }, required:['url'] }
+  }},
+  { type:'function', function:{
+    name:'screenshot', description:'把页面或某个窗口截成 PNG。返回值里带图片，可以直接看。适合确认界面是否正常、排查布局问题。',
+    parameters:{ type:'object', properties:{
+      target:{ type:'string', description:'CSS 选择器；省略=整个桌面。也可传窗口 id' },
+      window_id:{ type:'string', description:'窗口 id（比 CSS 选择器更稳）' }
+    } }
+  }},
+  { type:'function', function:{
+    name:'window_html', description:'用一段 HTML 开一个小窗口（内部用 srcdoc 渲染），最省事的「给用户看东西」方式。',
+    parameters:{ type:'object', properties:{ title:{ type:'string' }, html:{ type:'string' }, w:{ type:'number' }, h:{ type:'number' } }, required:['html'] }
+  }},
+  { type:'function', function:{
+    name:'ui', description:'桌面 UI 操作：list=列出所有窗口；note=弹一条提示；close=关窗口。不做别的。',
+    parameters:{ type:'object', properties:{ action:{ type:'string' }, text:{ type:'string' }, id:{ type:'string' } }, required:['action'] }
   }},
   { type:'function', function:{
     name:'save_file', description:'把文本作为文件下载到用户的电脑。',
     parameters:{ type:'object', properties:{ name:{ type:'string' }, content:{ type:'string' }, mime:{ type:'string' } }, required:['name','content'] }
   }}
 ];
+
+/* 把参数对象变成稳定的字符串指纹：键排序，避免 {a:1,b:2} 与 {b:2,a:1} 被当成两次不同调用。 */
+function stableKey(v) {
+  const walk = (x) => {
+    if (x === null || typeof x !== 'object') return JSON.stringify(x);
+    if (Array.isArray(x)) return '[' + x.map(walk).join(',') + ']';
+    return '{' + Object.keys(x).sort().map(k => JSON.stringify(k) + ':' + walk(x[k])).join(',') + '}';
+  };
+  try { return walk(v); } catch (e) { return String(v); }
+}
 
 function jsonSafe(v, limit) {
   limit = limit || 12000;
@@ -4758,6 +6595,132 @@ function jsonSafe(v, limit) {
   return out;
 }
 
+/* 抓网页：直连 → 文本化代理 → 通用 CORS 代理。
+ *
+ * 直连失败基本都是 CORS（百度、新闻站 100% 会拦）。过去这里一失败就报错，
+ * 智能体于是「卡在工具调用」上下不来。现在按顺序降级，并且优先用 r.jina.ai：
+ * 它把页面转成 markdown 再返回，对模型来说比原始 HTML 干净得多，还省 token。 */
+async function agentFetch(args) {
+  const url = String(args.url || '').trim();
+  if (!url) throw new Error('url 为空');
+  const tries = [];
+  if (!args.method || /^get$/i.test(args.method)) {
+    tries.push(async () => {
+      const r = await fetch(url, { headers:args.headers || {}, credentials:'omit' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return { text: await r.text(), via:'直连', status:r.status };
+    });
+    tries.push(async () => {
+      const r = await fetch('https://r.jina.ai/' + url, { credentials:'omit', headers:{ 'Accept':'text/plain' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return { text: await r.text(), via:'r.jina.ai 文本化', status:r.status };
+    });
+    tries.push(async () => {
+      const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url), { credentials:'omit' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return { text: await r.text(), via:'allorigins 代理', status:r.status };
+    });
+  } else {
+    tries.push(async () => {
+      const r = await fetch(url, { method:args.method, headers:args.headers || {}, body:args.body, credentials:'omit' });
+      return { text: await r.text(), via:'直连', status:r.status };
+    });
+  }
+
+  const errs = [];
+  for (const fn of tries) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    try {
+      const r = await fn();
+      clearTimeout(timer);
+      const head = 'HTTP ' + r.status + ' · 来自 ' + r.via + '\n\n';
+      const body = String(r.text || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+      return head + body.slice(0, 12000);
+    } catch (e) {
+      clearTimeout(timer);
+      errs.push((e && e.message || e) + (e && e.name === 'AbortError' ? '（超时）' : ''));
+    }
+  }
+  throw new Error('抓取失败，三种方式都不通：' + errs.join(' / ')
+    + '。\n可以改用 window_html 或 browser 打开这个地址让用户自己看，不要反复重试同一个 URL。');
+}
+
+/* ---------------------------------------------------------------- Markdown
+ * 智能体输出基本是 markdown（标题、列表、代码块、表格）。之前用 esc() 直接塞进
+ * innerHTML，于是 `**加粗**` 和 ``` 代码围栏原样显示成一堆符号，很难读。
+ * 这里引 marked（MIT，约 40KB），并把结果过一遍白名单清洗：
+ * 只要它吐出来的东西里有 <script>、on* 属性或 javascript: 链接，一律摘掉——
+ * 模型输出属于「不可信输入」，不能直接 innerHTML。
+ */
+const MARKED_URLS = [
+  'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js',
+  'https://unpkg.com/marked@12.0.2/marked.min.js'
+];
+let _markedTried = false;
+async function ensureMarked() {
+  if (window.marked) return window.marked;
+  if (_markedTried) return null;
+  _markedTried = true;
+  for (const u of MARKED_URLS) {
+    try {
+      await loadScriptCached(u);
+      if (window.marked) { window.marked.setOptions({ breaks:true, gfm:true }); return window.marked; }
+    } catch (e) {}
+  }
+  return null;
+}
+
+const MD_OK_TAGS = new Set(['P','BR','HR','STRONG','EM','DEL','CODE','PRE','BLOCKQUOTE','UL','OL','LI',
+  'H1','H2','H3','H4','H5','H6','TABLE','THEAD','TBODY','TR','TH','TD','A','IMG','SPAN','DIV','INPUT']);
+
+function sanitizeHtml(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(html || '');
+  const walk = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === 1) {
+        if (!MD_OK_TAGS.has(child.tagName)) { child.remove(); continue; }
+        for (const attr of [...child.attributes]) {
+          const n = attr.name.toLowerCase();
+          const v = String(attr.value || '');
+          if (n.startsWith('on')) { child.removeAttribute(attr.name); continue; }
+          if ((n === 'href' || n === 'src') && /^\s*(javascript|data:text\/html|vbscript):/i.test(v)) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        if (child.tagName === 'A') child.setAttribute('rel', 'noopener noreferrer');
+        walk(child);
+      } else if (child.nodeType === 8) {
+        child.remove();
+      }
+    }
+  };
+  walk(tpl.content);
+  return tpl.innerHTML;
+}
+
+/* marked 没加载好时退化成「保留换行 + 转义」——至少不会满屏符号 */
+function mdToHtml(text) {
+  const src = String(text == null ? '' : text);
+  if (!window.marked) return esc(src).replace(/\n/g, '<br>');
+  try { return sanitizeHtml(window.marked.parse(src)); }
+  catch (e) { return esc(src).replace(/\n/g, '<br>'); }
+}
+
+/* ---------------------------------------------------------------- 附件（多模态）
+ * 输入框支持：粘贴图片 / 选择文件 / 拖进来。图片走 OpenAI 的 image_url part，
+ * 文本文件直接当正文附在后面（比 base64 塞给模型便宜得多）。 */
+const MAX_IMG_BYTES = 4 * 1024 * 1024;
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ''));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(file);
+  });
+}
+
 class AgentApp {
   constructor(container, opts, win) {
     this.el = container;
@@ -4768,6 +6731,8 @@ class AgentApp {
     this.abort = null;
     this.onTitle = null;
     this._disposed = false;
+    /* 待发送附件：{ name, mime, size, dataUrl?, text?, isImage } */
+    this.attachments = [];
 
     this.el.innerHTML = `<div class="ag">
       <div class="ag-head">
@@ -4781,8 +6746,10 @@ class AgentApp {
       </div>
       <div class="ag-log"></div>
       <div class="ag-input">
-        <textarea placeholder="给智能体一个任务…  Enter 发送，Shift+Enter 换行"></textarea>
+        <div class="ag-att" hidden></div>
+        <textarea placeholder="给智能体一个任务…  Enter 发送，Shift+Enter 换行；可直接粘贴图片"></textarea>
         <div class="ag-actions">
+          <button class="btn" data-a="attach" title="添加图片 / 文件（也可以直接粘贴或拖进来）">＋</button>
           <span class="ag-hint">工具直接执行，不问许可 · 会话保存在 .agent.session</span>
           <div class="grow"></div>
           <button class="btn" data-a="stop" disabled>停止</button>
@@ -4799,14 +6766,76 @@ class AgentApp {
     this.ta.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.act('send'); }
     });
+    this.attEl = $('.ag-att', this.el);
+    this._bindAttach();
     this.renderStatus('idle');
     this.updateModelLabel();
     this.loadSession();
+    /* 后台预取 markdown 渲染器，加载完重画一次（不阻塞首屏） */
+    ensureMarked().then(m => { if (m && !this._disposed) this.render(); }).catch(() => {});
+  }
+
+  /* ---------------------------------------------------------------- 附件 */
+  _bindAttach() {
+    const ta = this.ta;
+    if (!ta) return;
+    /* 粘贴：截图工具直接 Ctrl+V 就能给智能体看图 */
+    ta.addEventListener('paste', (e) => {
+      const files = [...((e.clipboardData && e.clipboardData.files) || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      this.addFiles(files);
+    });
+    /* 拖进来 */
+    const zone = $('.ag-input', this.el);
+    if (zone) {
+      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add('drop'); }));
+      ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove('drop'); }));
+      zone.addEventListener('drop', (e) => {
+        const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+        if (files.length) this.addFiles(files);
+      });
+    }
+  }
+
+  async addFiles(files) {
+    for (const f of files) {
+      if (this.attachments.length >= 6) { toast('一次最多 6 个附件', true); break; }
+      const isImage = /^image\//i.test(f.type);
+      if (isImage && f.size > MAX_IMG_BYTES) { toast(f.name + ' 超过 4MB，换小一点的图', true); continue; }
+      try {
+        if (isImage) {
+          this.attachments.push({ name:f.name || 'paste.png', mime:f.type, size:f.size, isImage:true, dataUrl:await fileToDataUrl(f) });
+        } else if (f.size <= 256 * 1024) {
+          /* 小文本文件直接内联成正文，比 base64 便宜太多 */
+          this.attachments.push({ name:f.name, mime:f.type || 'text/plain', size:f.size, isImage:false, text:await f.text() });
+        } else {
+          toast(f.name + ' 太大（>256KB），先存到文件系统再用 read_file', true);
+        }
+      } catch (e) { toast('读取失败：' + f.name, true); }
+    }
+    this.renderAttachments();
+  }
+
+  renderAttachments() {
+    if (!this.attEl) return;
+    const list = this.attachments;
+    this.attEl.hidden = !list.length;
+    this.attEl.innerHTML = list.map((a, i) => `
+      <span class="ag-chip" title="${esc(a.name)}">
+        ${a.isImage ? `<img src="${a.dataUrl}" alt="">` : `<i class="ag-chip-i">${esc((a.name.split('.').pop() || 'txt').slice(0, 4))}</i>`}
+        <b>${esc(a.name.length > 18 ? a.name.slice(0, 16) + '…' : a.name)}</b>
+        <button data-att="${i}" title="移除">×</button>
+      </span>`).join('');
+    $$('[data-att]', this.attEl).forEach(b => b.onclick = () => {
+      this.attachments.splice(Number(b.dataset.att), 1);
+      this.renderAttachments();
+    });
   }
 
   updateModelLabel() {
     const m = $('.agModel', this.el);
-    if (m) m.textContent = (Settings.get('agentProvider') || 'openai') + ' · ' + (Settings.get('agentModel') || 'gpt-4o-mini');
+    if (m) m.textContent = (Settings.get('agentProvider') || 'openai') + ' · ' + (Settings.get('agentModel') || 'deepseek-flash');
     if (this.onTitle) this.onTitle('agent · ' + (Settings.get('agentModel') || ''));
   }
 
@@ -4861,9 +6890,12 @@ class AgentApp {
     let html = '';
     for (const m of msgs) {
       if (m.role === 'user') {
-        html += `<div class="msg user"><span class="role">you</span>${esc(m.content || '')}</div>`;
+        /* content 可能是多模态数组：渲染时优先用 display 字段（发送前已拍平） */
+        const shown = m.display != null ? m.display
+          : (Array.isArray(m.content) ? m.content.filter(p => p.type === 'text').map(p => p.text).join('\n') + '\n[图片]' : m.content);
+        html += `<div class="msg user"><span class="role">you</span>${esc(shown || '')}</div>`;
       } else if (m.role === 'assistant') {
-        const body = m.content ? esc(m.content) : '';
+        const body = m.content ? mdToHtml(m.content) : '';
         const tc = (m.tool_calls || []).map(t => {
           let args = t.function && t.function.arguments || '';
           try { args = JSON.stringify(JSON.parse(args)); } catch (e) {}
@@ -4871,7 +6903,10 @@ class AgentApp {
         }).join('');
         if (body || tc) html += `<div class="msg assistant"><span class="role">agent</span>${body}${tc}</div>`;
       } else if (m.role === 'tool') {
-        html += `<div class="msg tool"><b>${esc(m.name || 'tool')}</b>\n${esc(String(m.content || '').slice(0, 1800))}</div>`;
+        const raw = Array.isArray(m.content)
+          ? m.content.map(p => p.type === 'text' ? p.text : '[图片 ' + Math.round(String(p.image_url && p.image_url.url || '').length * 0.75 / 1024) + ' KB]').join('\n')
+          : String(m.content || '');
+        html += `<div class="msg tool"><b>${esc(m.name || 'tool')}</b>\n${esc(raw.slice(0, 1800))}</div>`;
       } else if (m.role === 'error') {
         html += `<div class="msg error">${esc(m.content || '')}</div>`;
       }
@@ -4889,7 +6924,10 @@ class AgentApp {
   }
 
   async act(a) {
-    if (a === 'send') {
+    if (a === 'attach') {
+      const files = await pickFiles({ multiple:true });
+      if (files && files.length) await this.addFiles(files);
+    } else if (a === 'send') {
       const text = this.ta.value.trim();
       if (!text || this.running) return;
       this.ta.value = '';
@@ -4934,27 +6972,85 @@ class AgentApp {
 
   async send(text) {
     if (this.running) return;
-    this.messages.push({ role:'user', content:text });
+    const atts = this.attachments.slice();
+    const parts = [];
+    let plain = String(text || '');
+
+    /* 文本类附件并进正文：模型读文本比读 base64 图片省一半以上的 token */
+    for (const a of atts) {
+      if (!a.isImage && a.text) {
+        plain += (plain ? '\n\n' : '') + '--- 附件 ' + a.name + ' ---\n' + String(a.text).slice(0, 8000);
+      }
+    }
+    if (plain) parts.push({ type:'text', text:plain });
+    for (const a of atts) {
+      if (a.isImage) parts.push({ type:'image_url', image_url:{ url:a.dataUrl } });
+    }
+
+    /* 只有纯文本时继续用字符串：兼容那些不认 content 数组的老端点 */
+    const content = parts.some(p => p.type === 'image_url') ? parts : plain;
+    const shown = plain + (atts.filter(a => a.isImage).length ? '\n\n[图片 ×' + atts.filter(a => a.isImage).length + ']' : '');
+
+    this.messages.push({ role:'user', content, display:shown || '[图片]' });
+    this.attachments = [];
+    this.renderAttachments();
     this.render(); await this.saveSession();
     try { await this.run(); }
     catch (e) { this.pushError(e); }
     finally { this.running = false; this.renderStatus('idle'); }
   }
 
+  /* 把内部消息列表转成 OpenAI 能接受的形状。
+   *
+   * 这里有一个必须做、且很容易漏的规范化：**assistant.tool_calls 与 role=tool 必须严格配对**。
+   * 用户点了「停止」、或者网络中途断掉时，会话里会留下「assistant 要求调工具，但没有对应
+   * tool 结果」的残缺记录。下一次请求原样发出去，服务端直接 400：
+   *   "An assistant message with 'tool_calls' must be followed by tool messages..."
+   * 所以这里逐条重建：每个带 tool_calls 的 assistant 后面，一定补上它所有 call_id 的
+   * tool 消息（缺失的填「已取消」）；孤立的 tool 消息（前面没有对应请求）直接丢掉。
+   */
   apiMessages() {
     const out = [{ role:'system', content:AGENT_SYSTEM }];
-    /* reasoning_content 只有 DeepSeek 认；发给 OpenAI 官方或别的兼容端点会 400。
-     * 所以只在「直连且地址是 deepseek」时才回传。 */
     const keepReasoning = Settings.get('agentMode') === 'direct' &&
       /deepseek/i.test(String(Settings.get('agentDirectUrl') || ''));
+
+    /* 先建立 call_id → tool 结果 的索引；后出现的覆盖先出现的（重试场景）。 */
+    const toolByCall = new Map();
     for (const m of this.messages) {
-      if (m.role === 'error') continue;
-      const o = { role:m.role, content:m.content == null ? '' : String(m.content) };
-      if (m.tool_calls) o.tool_calls = m.tool_calls;
-      if (m.tool_call_id) o.tool_call_id = m.tool_call_id;
+      if (m.role === 'tool' && m.tool_call_id) toolByCall.set(m.tool_call_id, m);
+    }
+    const usedCalls = new Set();
+
+    for (const m of this.messages) {
+      if (m.role === 'error' || m.role === 'tool') continue;   // tool 在下面跟着 assistant 一起发
+
+      if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
+        const calls = m.tool_calls.filter(t => t && t.function && t.function.name);
+        if (!calls.length) {
+          if (m.content) out.push({ role:'assistant', content:String(m.content) });
+          continue;
+        }
+        const a = { role:'assistant', content:m.content == null ? '' : String(m.content), tool_calls:calls };
+        if (keepReasoning && m.reasoning_content) a.reasoning_content = m.reasoning_content;
+        out.push(a);
+        for (const t of calls) {
+          const hit = toolByCall.get(t.id);
+          usedCalls.add(t.id);
+          out.push({
+            role:'tool',
+            tool_call_id:t.id,
+            name:(hit && hit.name) || t.function.name,
+            /* 空 content 也会被某些兼容端点拒绝，兜一句占位 */
+            content:hit ? (String(hit.content == null ? '' : hit.content) || '(空结果)') : '(已取消：用户中断了这一轮)'
+          });
+        }
+        continue;
+      }
+
+      /* 多模态 user 消息的 content 本身就是数组，必须原样保留 */
+      const o = { role:m.role, content:Array.isArray(m.content) ? m.content : (m.content == null ? '' : String(m.content)) };
+      if (m.role === 'assistant' && !o.content) continue;      // 空的 assistant 没有意义
       if (m.name) o.name = m.name;
-      /* DeepSeek 思考模式 + tools 的硬性要求：所有历史轮的 reasoning_content 都要回传，
-       * 少一条就 400。非思考模式带了也会被忽略。 */
       if (keepReasoning && m.reasoning_content) o.reasoning_content = m.reasoning_content;
       out.push(o);
     }
@@ -5045,27 +7141,55 @@ class AgentApp {
   async run() {
     this.running = true;
     this.renderStatus('thinking', 'thinking');
-    const maxSteps = Math.max(1, Math.min(60, Number(Settings.get('agentSteps')) || 16));
+    /* 上限来自设置（默认 120）。旧版本硬编码 60，长任务会被拦腰砍断。 */
+    const maxSteps = Math.max(1, Math.min(120, Number(Settings.get('agentSteps')) || 120));
+    /* 同一轮里的调用指纹：防止模型原地打转（同一个工具、同样的参数反复调）。
+     * 指纹只在这一轮有效，用户下次提问会重来。 */
+    const calls = new Map();
     let steps = 0;
+
     while (this.running && steps < maxSteps) {
       steps++;
       this.renderStatus('thinking', 'thinking · step ' + steps);
       const msg = await this.callModel();
-      if (!this.running) { this.messages.push(msg); break; }
-      this.messages.push(msg);
+      if (!this.running) { this._pushAssistant(msg, true); break; }
+      this._pushAssistant(msg, false);
       this.render(); await this.saveSession();
 
       if (msg.tool_calls && msg.tool_calls.length) {
         for (const tc of msg.tool_calls) {
-          if (!this.running) break;
+          if (!this.running) {
+            /* 用户中途停止：给这条 call 补一个占位结果，会话保持完整，
+             * 下次提问不会因为「assistant 有 tool_calls 但缺 tool 消息」而 400。 */
+            this.messages.push({ role:'tool', tool_call_id:tc.id, name:tc.function.name, content:'(已取消：用户中断了这一轮)' });
+            continue;
+          }
           const name = tc.function.name;
           let args = {};
-          try { args = JSON.parse(tc.function.arguments || '{}'); } catch (e) {}
-          this.renderStatus('tool', name);
+          let badArgs = null;
+          try { args = JSON.parse(tc.function.arguments || '{}'); }
+          catch (e) { badArgs = e; }
+
+          const sig = name + '|' + stableKey(args);
+          const seen = (calls.get(sig) || 0) + 1;
+          calls.set(sig, seen);
+
+          this.renderStatus('tool', seen > 1 ? name + ' ×' + seen : name);
           let result;
-          try { result = await this.execTool(name, args); }
-          catch (e) { result = '工具错误：' + (e && e.message || e); }
-          const tmsg = { role:'tool', tool_call_id:tc.id, name, content:String(result == null ? '' : result).slice(0, 14000) };
+          if (badArgs) {
+            result = '参数不是合法 JSON：' + badArgs.message + '。收到的原始参数是：' + String(tc.function.arguments || '').slice(0, 300);
+          } else if (seen >= 2) {
+            /* 重复调用拦截。不执行，直接把「你已经做过」告诉模型——
+             * 这是治「反复输出 / 原地打转」最有效的一招，比单纯限步数好。 */
+            result = '你刚刚已经用完全相同的参数调用过 ' + name + '（第 ' + seen + ' 次），结果和上面那次一样，'
+                   + '这里不再重复执行。请直接使用已有结果；确实需要新信息的，请换参数或换工具。';
+          } else {
+            try { result = await this.execTool(name, args); }
+            catch (e) { result = '工具错误：' + (e && e.message || e); }
+          }
+
+          const body = Array.isArray(result) ? result : String(result == null ? '' : result).slice(0, 14000);
+          const tmsg = { role:'tool', tool_call_id:tc.id, name, content:body };
           this.messages.push(tmsg);
           this.render(); await this.saveSession();
         }
@@ -5074,11 +7198,27 @@ class AgentApp {
       break;
     }
     if (steps >= maxSteps) {
-      this.messages.push({ role:'error', content:'已达到最大步数 (' + maxSteps + ')，循环停止。' });
+      this.messages.push({ role:'error', content:'已达到最大步数 (' + maxSteps + ')，循环停止。可在「更多 → 智能体 → 最大步数」里调高。' });
       this.render();
     }
     this.running = false;
     this.renderStatus('idle');
+  }
+
+  /* 收下一条 assistant 消息。两个小动作都在治「重复输出」：
+   *   1. 连续两轮正文一模一样 → 只保留第一条，后面的不再塞回会话（否则模型会
+   *      看着自己的重复内容越写越重复）；
+   *   2. 正文为空但有工具调用 → 正常收，这是标准流程。 */
+  _pushAssistant(msg, interrupted) {
+    if (interrupted) {
+      msg = Object.assign({}, msg);
+      msg.content = (msg.content || '') + (msg.content ? '\n\n' : '') + '(已中断)';
+    }
+    const prev = [...this.messages].reverse().find(m => m.role === 'assistant');
+    if (msg.content && prev && prev.content === msg.content && !(msg.tool_calls && msg.tool_calls.length)) {
+      msg = Object.assign({}, msg, { content:'' });
+    }
+    this.messages.push(msg);
   }
 
   async execTool(name, args) {
@@ -5129,13 +7269,36 @@ class AgentApp {
       return '已关闭 ' + args.id;
     }
     if (name === 'fetch_url') {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 20000);
+      return await agentFetch(args);
+    }
+    if (name === 'screenshot') {
+      let url;
+      if (args.window_id) url = await shotWindow(args.window_id);
+      else url = await shot(args.target || null);
+      /* 同时落盘一份：模型这轮未必看得到图，用户后面还能在文件系统里翻出来。 */
+      let path = '';
       try {
-        const r = await fetch(args.url, { method:args.method || 'GET', headers:args.headers || {}, body:args.body, signal:ctrl.signal });
-        const text = await r.text();
-        return 'HTTP ' + r.status + '\n\n' + text.slice(0, 12000);
-      } finally { clearTimeout(t); }
+        const name = '.temp.shot-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png';
+        const bin = await (await fetch(url)).blob();
+        await FS.write(name, bin, { kind:'file', mime:'image/png' });
+        path = name;
+      } catch (e) {}
+      const kb = Math.round(String(url).length * 0.75 / 1024);
+      return [
+        { type:'text', text:'截图完成' + (path ? '，已保存到 ' + path : '') + '（约 ' + kb + ' KB）' + (args.window_id ? '，窗口 ' + args.window_id : '') },
+        { type:'image_url', image_url:{ url } }
+      ];
+    }
+    if (name === 'window_html') {
+      const id = QuickUI.html(args.title || 'html', args.html || '', { w:args.w, h:args.h });
+      return '已打开 HTML 窗口 ' + id;
+    }
+    if (name === 'ui') {
+      const a = String(args.action || '').toLowerCase();
+      if (a === 'list') return jsonSafe(QuickUI.desk());
+      if (a === 'note') { QuickUI.note(args.text || ''); return '已提示'; }
+      if (a === 'close') { WindowManager.close(args.id); return '已关闭 ' + args.id; }
+      return 'action 只支持 list / note / close';
     }
     if (name === 'save_file') {
       await saveFile(args.name || 'agent.txt', args.content || '', args.mime || 'text/plain');
@@ -5151,6 +7314,439 @@ class AgentApp {
     this.saveSession();
   }
 }
+
+/* ============================================================================
+ * hterminal · 依赖缓存 / 振动 / 截图 / TUI 智能体 / 嵌套 shell
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ * 由 AI 智能体生成并维护。
+ *
+ * 这个文件解决四件事：
+ *   1. 依赖只为「第一次」付网费：CDN 脚本与样式抓一次就进 IndexedDB，
+ *      以后所有终端、所有窗口共用同一份，不再每个 session 重下一遍。
+ *   2. 振动反馈：移动端按键、智能体完成/失败时的短振动。
+ *   3. 截图：把页面 / 某个元素 / 某个窗口截成 PNG，给智能体做视觉诊断用。
+ *   4. TUI 智能体与嵌套 shell：让 AI 和人都能在终端里用函数式接口操作。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 振动反馈 */
+/* 只在「像一次按键」时抖一下；很轻，且始终尊重用户的系统设置（navigator.vibrate
+ * 在没有权限或桌面端会静默失败，这里包一层 try）。 */
+let _hapticAt = 0;
+function haptic(ms) {
+  try {
+    if (typeof Settings !== 'undefined' && Settings.get('haptic') === '0') return;
+    if (!navigator.vibrate) return;
+    const now = Date.now();
+    /* 连打时节流：40ms 内不重复抖，否则输入快的用户手机会一直嗡嗡 */
+    if (now - _hapticAt < 40) return;
+    _hapticAt = now;
+    navigator.vibrate(Math.max(3, Math.min(30, ms || 6)));
+  } catch (e) {}
+}
+
+/* ---------------------------------------------------------------- 依赖缓存
+ * 为什么不用浏览器 HTTP 缓存：它会被「清空数据」清掉、也跨设备不共享，
+ * 而且部分 CDN 会返回 no-store。IndexedDB 里的这份是我们自己说了算的。
+ * 键 = 完整 URL；值 = { text, at, mime }。
+ */
+const DepCache = {
+  NAME: 'ht-deps',
+  STORE: 'files',
+  _db: null,
+  _mem: new Map(),          // 会话内一级缓存，省掉一次 IDB 往返
+
+  open() {
+    if (this._db) return Promise.resolve(this._db);
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(this.NAME, 1); }
+      catch (e) { return resolve(null); }
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(this.STORE)) db.createObjectStore(this.STORE, { keyPath: 'url' });
+      };
+      req.onsuccess = () => { this._db = req.result; resolve(this._db); };
+      req.onerror = () => resolve(null);
+    });
+  },
+
+  async get(url) {
+    if (this._mem.has(url)) return this._mem.get(url);
+    const db = await this.open();
+    if (!db) return null;
+    const row = await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(this.STORE, 'readonly');
+        const rq = tx.objectStore(this.STORE).get(url);
+        rq.onsuccess = () => resolve(rq.result || null);
+        rq.onerror = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+    if (row && row.text) this._mem.set(url, row.text);
+    return row ? row.text : null;
+  },
+
+  async put(url, text, mime) {
+    if (!text) return;
+    this._mem.set(url, text);
+    const db = await this.open();
+    if (!db) return;
+    try {
+      const tx = db.transaction(this.STORE, 'readwrite');
+      tx.objectStore(this.STORE).put({ url, text, mime: mime || '', at: Date.now(), size: text.length });
+    } catch (e) {}
+  },
+
+  async list() {
+    const db = await this.open();
+    if (!db) return [];
+    return await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(this.STORE, 'readonly');
+        const rq = tx.objectStore(this.STORE).getAll();
+        rq.onsuccess = () => resolve((rq.result || []).map(r => ({ url:r.url, size:r.size, at:r.at })));
+        rq.onerror = () => resolve([]);
+      } catch (e) { resolve([]); }
+    });
+  },
+
+  async clear() {
+    this._mem.clear();
+    const db = await this.open();
+    if (!db) return;
+    try { db.transaction(this.STORE, 'readwrite').objectStore(this.STORE).clear(); } catch (e) {}
+  },
+
+  /* 统计：给「更多 → 数据」显示「已缓存 N 项 / X KB」 */
+  async usage() {
+    const rows = await this.list();
+    const bytes = rows.reduce((s, r) => s + (r.size || 0), 0);
+    return { count: rows.length, bytes };
+  }
+};
+
+/* 注入一段脚本并等它执行完。用 textContent 而不是 src，这样不再发网络请求。 */
+function injectScript(code) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.textContent = code;
+    s.onerror = (e) => reject(e);
+    document.head.appendChild(s);
+    /* textContent 的脚本同步执行，这里 resolve 只是让调用方统一 await */
+    resolve(true);
+  });
+}
+
+function injectStyle(css) {
+  const st = document.createElement('style');
+  st.textContent = css;
+  document.head.appendChild(st);
+  return st;
+}
+
+/* 带缓存的脚本加载：缓存优先 → 网络 → 回写缓存。失败会抛错，让调用方降级。 */
+async function loadScriptCached(url, onLog) {
+  const hit = await DepCache.get(url);
+  if (hit) {
+    onLog && onLog('缓存命中 ' + shortUrl(url));
+    try { await injectScript(hit); return true; }
+    catch (e) { /* 缓存内容坏了：当作没命中，走网络 */ }
+  }
+  onLog && onLog('下载 ' + shortUrl(url));
+  const res = await fetch(url, { mode:'cors', credentials:'omit' });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' · ' + url);
+  const text = await res.text();
+  if (!text) throw new Error('空响应 · ' + url);
+  await DepCache.put(url, text, 'text/javascript');
+  await injectScript(text);
+  return true;
+}
+
+async function loadStyleCached(url, onLog) {
+  const hit = await DepCache.get(url);
+  if (hit) { onLog && onLog('缓存命中 ' + shortUrl(url)); injectStyle(hit); return true; }
+  const res = await fetch(url, { mode:'cors', credentials:'omit' });
+  if (!res.ok) throw new Error('HTTP ' + res.status + ' · ' + url);
+  const text = await res.text();
+  await DepCache.put(url, text, 'text/css');
+  injectStyle(text);
+  return true;
+}
+
+function shortUrl(u) {
+  try { return String(u).replace(/^https?:\/\//, '').split('/').slice(0, 2).join('/'); }
+  catch (e) { return String(u); }
+}
+
+/* ---------------------------------------------------------------- 截图
+ * html2canvas 而不是浏览器原生 getDisplayMedia：前者能截「页面里的某个元素」，
+ * 不需要用户授权，也能把 iframe 之外的 UI 一起拍进去。原生 API 只能整屏，
+ * 而且必须用户点确认——对「智能体自动诊断」毫无用处。
+ */
+let _h2c = null;
+const H2C_URLS = [
+  'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+  'https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js'
+];
+
+async function ensureHtml2Canvas() {
+  if (_h2c || window.html2canvas) { _h2c = window.html2canvas; return _h2c; }
+  let last;
+  for (const u of H2C_URLS) {
+    try { await loadScriptCached(u); if (window.html2canvas) { _h2c = window.html2canvas; return _h2c; } }
+    catch (e) { last = e; }
+  }
+  throw new Error('html2canvas 加载失败：' + (last && last.message || last));
+}
+
+/* 截图主入口。target 可以是 CSS 选择器、DOM 元素，或省略（= 整个桌面）。 */
+async function shot(target, opts) {
+  opts = opts || {};
+  const h2c = await ensureHtml2Canvas();
+  let el = target;
+  if (typeof target === 'string') el = document.querySelector(target);
+  if (target == null) el = document.getElementById('desk') || document.body;
+  if (!el) throw new Error('截图目标不存在：' + target);
+
+  /* backgroundColor:null 保留透明；scale 默认 1（不要 2，AI 用不到那么清楚，
+   * 体积翻四倍反而更慢更容易超 token）。 */
+  const canvas = await h2c(el, {
+    backgroundColor: opts.bg || null,
+    scale: opts.scale || 1,
+    useCORS: true,
+    allowTaint: false,
+    logging: false,
+    ignoreElements: (n) => n.classList && (n.classList.contains('ht-cursor') || n.classList.contains('win-snap'))
+  });
+  const type = opts.type || 'image/png';
+  return canvas.toDataURL(type, opts.quality || 0.92);
+}
+
+async function shotWindow(id) {
+  const w = WindowManager.get ? WindowManager.get(id) : null;
+  const el = w && w.el ? w.el : document.querySelector('.win[data-id="' + id + '"]');
+  if (!el) throw new Error('找不到窗口 ' + id);
+  return await shot(el);
+}
+
+/* 把 dataURL 转成可以塞进 OpenAI 多模态消息的结构 */
+function dataUrlToPart(dataUrl) {
+  const m = /^data:([^;]+);base64,(.*)$/.exec(String(dataUrl || ''));
+  if (!m) return null;
+  return { type:'image_url', image_url:{ url: dataUrl } };
+}
+
+/* ---------------------------------------------------------------- 无头智能体
+ * 给 TUI 版和函数式调用用：不占屏幕，直接复用 AgentApp 的完整 harness（工具、
+ * 会话、JSONL 全都一样），只是把 DOM 放在一个游离节点里。
+ * 这样「窗口版」和「TUI 版」永远共用同一套逻辑，不会出现两边行为不一致。
+ */
+const HeadlessAgent = {
+  app: null,
+  ensure() {
+    if (this.app && !this.app._disposed) return this.app;
+    const host = document.createElement('div');
+    host.style.display = 'none';
+    document.body.appendChild(host);
+    this.app = new AgentApp(host, { headless: true }, null);
+    this.app.onTitle = null;
+    return this.app;
+  },
+  async reset() {
+    if (this.app) { try { this.app.dispose(); } catch (e) {} }
+    this.app = null;
+  },
+  /* 跑一轮：发一条用户消息，等 harness 把工具循环走完，把新增消息原样返回。 */
+  async turn(text, hooks) {
+    const app = this.ensure();
+    if (app.running) throw new Error('上一轮还没结束（可用 hterm.agentTui.stop() 中断）');
+    const before = app.messages.length;
+    if (hooks && hooks.onStart) hooks.onStart();
+    await app.send(String(text || ''));
+    const added = app.messages.slice(before);
+    return {
+      messages: added,
+      text: added.filter(m => m.role === 'assistant' && m.content).map(m => m.content).join('\n\n'),
+      tools: added.filter(m => m.role === 'tool').map(m => ({ name:m.name, content:m.content }))
+    };
+  }
+};
+
+/* ---------------------------------------------------------------- 格式化助手
+ * TUI 里打印消息用。故意不引 markdown 库：终端里渲染 markdown 反而更难读，
+ * 这里只做「去掉多余空行 + 缩进工具结果」两件事。
+ */
+function tuiText(m, width) {
+  width = width || 80;
+  const wrap = (s, indent) => {
+    const pad = ' '.repeat(indent || 0);
+    const lines = [];
+    for (const raw of String(s == null ? '' : s).split('\n')) {
+      if (raw.length <= width - (indent || 0)) { lines.push(pad + raw); continue; }
+      let rest = raw;
+      while (rest.length > width - (indent || 0)) {
+        lines.push(pad + rest.slice(0, width - (indent || 0)));
+        rest = rest.slice(width - (indent || 0));
+      }
+      lines.push(pad + rest);
+    }
+    return lines.join('\n');
+  };
+  if (m.role === 'assistant') {
+    let s = String(m.content || '').trim();
+    if (m.tool_calls && m.tool_calls.length) {
+      s += (s ? '\n' : '') + m.tool_calls.map(t => '→ ' + t.function.name + ' ' + String(t.function.arguments || '').slice(0, 120)).join('\n');
+    }
+    return wrap(s || '(空)', 0);
+  }
+  if (m.role === 'tool') return wrap('  ← ' + (m.name || 'tool') + ': ' + String(m.content || '').replace(/\n/g, '\n    '), 0);
+  if (m.role === 'error') return wrap('! ' + (m.content || ''), 0);
+  return wrap(String(m.content || ''), 0);
+}
+
+/* ---------------------------------------------------------------- 提示词小工具 */
+/* 让智能体少写代码：这些是「一句话就能开的窗口」，比让它拼 API 省很多 token。 */
+const QuickUI = {
+  /* 弹一个小卡片（不是窗口，是一条浮动提示），适合报进度 */
+  note(text, ms) {
+    toast(String(text || ''), false, ms);
+    return 'noted';
+  },
+  /* 开一个只有 HTML 的窗口——智能体最常见的需求 */
+  html(title, html, opts) {
+    opts = opts || {};
+    const w = WindowManager.open({ type:'browser', title:title || 'html', html:String(html || ''), w:opts.w, h:opts.h });
+    return w ? w.id : null;
+  },
+  /* 开一个文件查看器 */
+  file(path, title) {
+    const w = WindowManager.open({ type:'editor', path, title:title || baseName(path) });
+    return w ? w.id : null;
+  },
+  /* 开一个跑代码的窗口 */
+  code(code, title) {
+    const w = WindowManager.open({ type:'shell', code:String(code || ''), title:title || 'code', banner:false });
+    return w ? w.id : null;
+  },
+  /* 桌面上所有窗口的极简快照——智能体「看一眼」比 list() 更省 token */
+  desk() {
+    return WindowManager.list().map(w => ({ id:w.id, type:w.type, title:w.title, x:Math.round(w.x), y:Math.round(w.y), w:Math.round(w.w), h:Math.round(w.h), max:!!w.maximized }));
+  }
+};
+
+/* ---------------------------------------------------------------- TUI 宿主（主线程侧）
+ * Worker 里的 agentTui 每一步都会调到这里。只做三件事：跑一轮、停、重置。
+ * 会话仍然是同一个 .agent.session——TUI 和窗口版看到的是同一段对话。
+ */
+const AgentTuiHost = {
+  async turn(text, opts) {
+    const app = HeadlessAgent.ensure();
+    if (app.running) throw new Error('上一轮还没跑完');
+    const before = app.messages.length;
+    await app.send(String(text || ''));
+    const added = app.messages.slice(before);
+    return {
+      messages: added.map(m => ({ role:m.role, name:m.name, content:String(m.content == null ? '' : m.content).slice(0, 4000), tool_calls:(m.tool_calls || []).map(t => ({ name:t.function && t.function.name, args:String(t.function && t.function.arguments || '').slice(0, 400) })) })),
+      text: added.filter(m => m.role === 'assistant' && m.content).map(m => m.content).join('\n\n'),
+      tools: added.filter(m => m.role === 'tool').map(m => m.name)
+    };
+  },
+  stop() {
+    if (HeadlessAgent.app) HeadlessAgent.app.act('stop');
+    return true;
+  },
+  reset() {
+    HeadlessAgent.reset();
+    return true;
+  },
+  status() {
+    const a = HeadlessAgent.app;
+    return { running: !!(a && a.running), messages: a ? a.messages.length : 0 };
+  }
+};
+
+/* ---------------------------------------------------------------- DOM RPC（主线程侧）
+ * Worker 里没有 DOM。这个对象是「Worker 想摸页面」时唯一的入口，Worker 侧那层
+ * document 代理把每个操作翻译成一次 call('dom.op', name, args)。
+ *
+ * 设计原则：**只传值，不传引用**。返回值一律是能 JSON 化的快照，
+ * 因为跨线程没有对象身份可言。改完想再看最新值，就再查一次。
+ */
+const DomRpc = {
+  _el(sel) {
+    if (!sel) return null;
+    if (typeof sel !== 'string') return null;
+    try { return document.querySelector(sel); } catch (e) { return null; }
+  },
+  _desc(el, i) {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return {
+      index: i,
+      tag: el.tagName ? el.tagName.toLowerCase() : '',
+      id: el.id || '',
+      cls: typeof el.className === 'string' ? el.className : '',
+      text: (el.textContent || '').trim().slice(0, 500),
+      value: el.value === undefined ? undefined : el.value,
+      rect: { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) },
+      visible: cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
+      style: { display:cs.display, position:cs.position, color:cs.color, background:cs.backgroundColor }
+    };
+  },
+  async op(name, args) {
+    args = args || [];
+    switch (name) {
+      case 'query': return this._desc(this._el(args[0]), 0);
+      case 'all': {
+        let list = [];
+        try { list = [...document.querySelectorAll(String(args[0] || '*'))]; } catch (e) {}
+        const lim = Math.min(list.length, Number(args[1]) || 40);
+        return { count: list.length, items: list.slice(0, lim).map((el, i) => this._desc(el, i)) };
+      }
+      case 'text': { const el = this._el(args[0]); return el ? (el.textContent || '').trim() : null; }
+      case 'html': { const el = this._el(args[0]); return el ? el.innerHTML : null; }
+      case 'attr': { const el = this._el(args[0]); return el ? el.getAttribute(args[1]) : null; }
+      case 'setAttr': { const el = this._el(args[0]); if (!el) return false; el.setAttribute(args[1], String(args[2])); return true; }
+      case 'setText': { const el = this._el(args[0]); if (!el) return false; el.textContent = String(args[1]); return true; }
+      case 'setValue': { const el = this._el(args[0]); if (!el) return false; el.value = String(args[1]); el.dispatchEvent(new Event('input', { bubbles:true })); el.dispatchEvent(new Event('change', { bubbles:true })); return true; }
+      case 'click': { const el = this._el(args[0]); if (!el) return false; el.click(); return true; }
+      case 'addClass': { const el = this._el(args[0]); if (!el) return false; el.classList.add(String(args[1])); return true; }
+      case 'removeClass': { const el = this._el(args[0]); if (!el) return false; el.classList.remove(String(args[1])); return true; }
+      case 'toggleClass': { const el = this._el(args[0]); if (!el) return false; el.classList.toggle(String(args[1]), args[2] === undefined ? undefined : !!args[2]); return true; }
+      case 'hasClass': { const el = this._el(args[0]); return el ? el.classList.contains(String(args[1])) : false; }
+      case 'setTitle': document.title = String(args[0]); return true;
+      case 'exists': return !!this._el(args[0]);
+      case 'rect': { const el = this._el(args[0]); if (!el) return null; const r = el.getBoundingClientRect(); return { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) }; }
+      case 'computed': {
+        const el = this._el(args[0]); if (!el) return null;
+        const cs = getComputedStyle(el); const out = {};
+        for (const p of (args[1] || [])) out[p] = cs.getPropertyValue(p);
+        return out;
+      }
+      case 'title': return document.title;
+      case 'url': return location.href;
+      case 'readyState': return document.readyState;
+      case 'ls.get': return localStorage.getItem(String(args[0]));
+      case 'ls.set': localStorage.setItem(String(args[0]), String(args[1])); return true;
+      case 'ls.clear': localStorage.clear(); return true;
+      case 'ls.keys': return Object.keys(localStorage);
+      case 'ls.all': {
+        const o = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          o[k] = localStorage.getItem(k);
+        }
+        return o;
+      }
+      case 'toast': { toast(String(args[0] || '')); return true; }
+      case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
+      case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }
+      case 'wins': return WindowManager.list();
+      default: throw new Error('dom.op 不支持：' + name);
+    }
+  }
+};
 
 /* ============================================================================
  * hterminal · boot / RPC / window API / drawer
@@ -5221,6 +7817,22 @@ const RPC = {
       }
       case 'drawer.open': Drawer.open(); return true;
       case 'agent.open': { const w = WindowManager.open({ type:'agent' }); return w ? w.id : null; }
+      /* ---- TUI 智能体：worker 里的 agentTui.* 全走这里 ---- */
+      case 'agent.turn': return await AgentTuiHost.turn(a[0]);
+      case 'agent.stop': return AgentTuiHost.stop();
+      case 'agent.status': return AgentTuiHost.status();
+      case 'agent.reset': return AgentTuiHost.reset();
+      /* ---- 嵌套 shell / 截图 ---- */
+      case 'shell.open': { const w = WindowManager.open({ type:'shell', cwd:a[0] || undefined, banner:a[1] !== false }); return w ? { id:w.id, cwd:w.cwd || a[0] || '.home' } : null; }
+      case 'shot.page': return await shot(a[0] || null, a[1] || {});
+      case 'shot.window': return await shotWindow(a[0]);
+      /* ---- 依赖缓存 ---- */
+      case 'deps.usage': return await DepCache.usage();
+      case 'deps.list': return await DepCache.list();
+      case 'deps.clear': await DepCache.clear(); return true;
+      case 'deps.load': await loadScriptCached(a[0]); return true;
+      /* ---- DOM：worker 摸页面的唯一通道 ---- */
+      case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
       default: throw new Error('未知 RPC：' + op);
     }
   }
@@ -5277,35 +7889,52 @@ const AppMenu = {
   }
 };
 
+/* 全屏只有一个入口：顶栏 ⛶、F11、Ctrl+Shift+Enter 全走这里。
+ * 这样「样式和行为联动」是结构上保证的，不是靠两边各写一遍。
+ *
+ * 浏览器可能拒绝 requestFullscreen（没有用户手势、iframe 未授权等）。这时退到
+ * 软件级全屏：给 body 加 .fs，隐藏顶栏、桌面铺满——功能上仍然是「切全屏了」，
+ * 按钮状态也照常翻转，不会出现「按了没反应」。 */
+function fullscreenOn() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains('fs'));
+}
+function syncFullscreenBtn() {
+  const on = fullscreenOn();
+  $$('[data-act="fullscreen"]').forEach(b => {
+    b.classList.toggle('k--active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = on ? '退出全屏（F11）' : '全屏（F11）';
+  });
+  setTimeout(() => { try { TerminalManager.applyAll(); } catch (e) {} }, 260);
+}
 function toggleFullscreen() {
   const el = document.documentElement;
   const isFs = document.fullscreenElement || document.webkitFullscreenElement;
-  try {
-    if (isFs) {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else {
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (req) {
-        const p = req.call(el);
-        if (p && p.catch) p.catch(() => toast('当前环境不允许全屏', true));
-      } else { toast('当前环境不支持全屏', true); }
-    }
-  } catch (e) { toast('全屏切换失败：' + (e.message || e), true); }
-  setTimeout(() => {
-    const btn = document.querySelector('[data-act="fullscreen"]');
-    if (btn) btn.classList.toggle('k--active', !!(document.fullscreenElement || document.webkitFullscreenElement));
-    TerminalManager.applyAll();
-  }, 320);
+  const soft = () => { document.body.classList.toggle('fs'); syncFullscreenBtn(); };
+
+  if (isFs) {
+    try { (document.exitFullscreen || document.webkitExitFullscreen).call(document).catch(() => {}); }
+    catch (e) { soft(); return; }
+    if (document.body.classList.contains('fs')) document.body.classList.remove('fs');
+    setTimeout(syncFullscreenBtn, 200);
+    return;
+  }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) { soft(); return; }
+  let p;
+  try { p = req.call(el); }
+  catch (e) { soft(); return; }
+  if (p && p.then) {
+    p.then(() => setTimeout(syncFullscreenBtn, 120))
+     .catch(() => { soft(); toast('浏览器不允许真全屏，已切换软件级全屏'); });
+  } else {
+    setTimeout(syncFullscreenBtn, 200);
+  }
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
-/* 光标形态分段按钮的高亮同步 */
-function syncCursorSeg() {
-  const seg = document.getElementById('setCursorStyle');
-  if (!seg) return;
-  const cur = Settings.get('cursorStyle') || 'bar';
-  $$('[data-cursor]', seg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cursor === cur)));
-}
+/* 光标形态不再提供设置（固定照参考项目那一套），这个函数已删除。
+ * 留个注释在这里，避免以后有人搜不到以为忘了写。 */
 
 const Drawer = {
   opened: false,
@@ -5320,8 +7949,16 @@ const Drawer = {
       };
     });
     // 启动器里的应用项
+    /* 从按钮位置开窗：窗口会"从这个图标扩散出来"，而不是凭空出现 */
     $$('#launcher [data-app]').forEach(b => {
-      b.onclick = () => { AppMenu.close(); WindowManager.open({ type:b.dataset.app }); };
+      b.onclick = () => {
+        const r = b.getBoundingClientRect();
+        AppMenu.close();
+        WindowManager.open({
+          type: b.dataset.app,
+          from: { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        });
+      };
     });
     const launcherMore = $('#launcher [data-act="more"]');
     if (launcherMore) launcherMore.onclick = () => { AppMenu.close(); this.open(); };
@@ -5332,6 +7969,7 @@ const Drawer = {
     $('#drawer-overlay').onclick = () => this.close();
     const bindRange = (id, key, fmt) => {
       const el = document.getElementById(id);
+      if (!el) return;
       const val = document.getElementById(id + 'Val');
       el.addEventListener('input', () => {
         const v = Number(el.value);
@@ -5341,24 +7979,15 @@ const Drawer = {
     };
     bindRange('setFont', 'font');
     bindRange('setLine', 'lineHeight', v => (v / 10).toFixed(1));
-    // 光标形态（三选一，用分段按钮）
-    const seg = $('#setCursorStyle');
-    if (seg) {
-      $$('[data-cursor]', seg).forEach(b => b.onclick = () => {
-        Settings.set('cursorStyle', b.dataset.cursor);
-        syncCursorSeg();
-      });
-    }
+    bindRange('setRows', 'rows', v => (v ? v + ' 行' : '自动'));
     // 二选一的一律用开关
     const bindSwitch = (id, key, onVal, offVal) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
     };
-    bindSwitch('setCursorBlink', 'cursorBlink', '1', '0');
-    bindSwitch('setGrid', 'grid', '1', '0');
-    $('#setPrompt').onchange = e => Settings.set('prompt', e.target.value || '> ');
-    $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
+    bindSwitch('setHaptic', 'haptic', '1', '0');
+    if ($('#setCdn')) $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
     // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
     bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
     bindSwitch('setAgentThinking', 'agentThinking', '1', '0');
@@ -5368,7 +7997,7 @@ const Drawer = {
     $('#setAgentUrl').onchange = e => { Settings.set('agentUrl', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
-    $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 16, 1, 60));
+    $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 120, 1, 120));
 
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
     $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
@@ -5383,6 +8012,11 @@ const Drawer = {
     $('#btnAgentImport').onclick = () => this.agentImport();
     $('#btnAgentClear').onclick = () => this.agentClear();
     $('#btnNuke').onclick = () => nuke();
+    if ($('#btnClearDeps')) $('#btnClearDeps').onclick = async () => {
+      await DepCache.clear();
+      toast('依赖缓存已清空，下次打开会重新下载');
+      try { this.refresh(); } catch (e) {}
+    };
     $('#btnAbout').onclick = () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
 
     this.syncControls();
@@ -5393,11 +8027,10 @@ const Drawer = {
     $('#setFontVal').textContent = String(Settings.get('font'));
     $('#setLine').value = Settings.get('lineHeight');
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
-    if ($('#setCursorBlink')) $('#setCursorBlink').checked = Settings.get('cursorBlink') === '1';
-    if ($('#setGrid')) $('#setGrid').checked = Settings.get('grid') === '1';
-    syncCursorSeg();
-    $('#setPrompt').value = Settings.get('prompt');
-    $('#setCdn').value = Settings.get('cdn');
+    if ($('#setRows')) { $('#setRows').value = String(Settings.get('rows') || 0); }
+    if ($('#setRowsVal')) { const r = Number(Settings.get('rows')) || 0; $('#setRowsVal').textContent = r ? r + ' 行' : '自动'; }
+    if ($('#setHaptic')) $('#setHaptic').checked = Settings.get('haptic') === '1';
+    if ($('#setCdn')) $('#setCdn').value = Settings.get('cdn');
     $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');
     $('#setAgentDirectUrl').value = Settings.get('agentDirectUrl');
@@ -5452,6 +8085,18 @@ const Drawer = {
     } catch (e) {}
     $('#stSession').textContent = (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers';
     $('#stHist').textContent = String(loadHistory().length);
+    try {
+      const d = await DepCache.usage();
+      if ($('#stDeps')) $('#stDeps').textContent = d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空';
+    } catch (e) {}
+    try {
+      const d = await DepCache.list();
+      if ($('#depList')) {
+        $('#depList').innerHTML = d.length
+          ? d.map(x => `<div class="drawer__item"><b>${esc(x.url.split('/').pop().split('?')[0].slice(0, 40))}</b><span>${(x.size / 1024).toFixed(0)} KB</span></div>`).join('')
+          : '<div class="drawer__item"><span>还没有缓存</span></div>';
+      }
+    } catch (e) {}
   },
   async checkBackend() {
     const el = $('#stBackend');
@@ -5550,13 +8195,56 @@ const Drawer = {
 };
 
 /* ---------------------------------------------------------------- 清理全部数据 */
+/* 彻底清除：不是「清几个已知的键」，而是把浏览器给这个源的存储全部掀掉。
+ *   1. 先枚举 indexedDB.databases()（Chrome/Edge/Safari 都支持），逐个删；
+ *      老浏览器没有这个 API 就退回删我们自己的两个库名。
+ *   2. localStorage / sessionStorage 直接 clear()。
+ *   3. 所有 Cache Storage、所有 Service Worker 注册。
+ *   4. 最后不 reload 而是 replace()：避免用户按后退又回到旧状态。
+ * 任何一步失败都不阻断后面的步骤——目标只有一个：什么都不留。 */
+async function wipeAllStorage() {
+  const done = [];
+  const fail = [];
+  const step = async (name, fn) => { try { await fn(); done.push(name); } catch (e) { fail.push(name + ':' + (e && e.message || e)); } };
+
+  await step('idb-close', async () => { try { IDB.db && IDB.db.close(); } catch (e) {} IDB.db = null; });
+  await step('indexeddb', async () => {
+    let names = [];
+    if (indexedDB.databases) {
+      const list = await indexedDB.databases();
+      names = list.map(d => d.name).filter(Boolean);
+    }
+    if (!names.length) names = ['hterm-fs', 'ht-deps'];
+    await Promise.all(names.map(n => new Promise((res) => {
+      const r = indexedDB.deleteDatabase(n);
+      r.onsuccess = r.onerror = r.onblocked = () => res();
+      /* onblocked 说明还有连接没关掉；等一小会儿强制放行，不能卡死在这里 */
+      setTimeout(res, 1500);
+    })));
+  });
+  await step('localStorage', async () => { localStorage.clear(); });
+  await step('sessionStorage', async () => { sessionStorage.clear(); });
+  await step('caches', async () => {
+    if (!window.caches) return;
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => caches.delete(k)));
+  });
+  await step('serviceWorker', async () => {
+    if (!navigator.serviceWorker) return;
+    const rs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(rs.map(r => r.unregister()));
+  });
+  return { done, fail };
+}
+
 async function nuke() {
-  if (!(await confirmDlg('清除全部数据', '将删除 IndexedDB、localStorage、Cache Storage 中的本页数据，然后重新加载。<br><br><b style="color:var(--red)">不可撤销。</b>', true))) return;
-  try { IDB.db && IDB.db.close(); } catch (e) {}
-  try { await new Promise((res) => { const r = indexedDB.deleteDatabase('hterm-fs'); r.onsuccess = r.onerror = r.onblocked = () => res(); }); } catch (e) {}
-  try { localStorage.clear(); } catch (e) {}
-  try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
-  location.reload();
+  if (!(await confirmDlg('清除全部数据',
+    '会删掉这个页面的<b>全部</b>本地数据：IndexedDB（所有库，含文件系统、依赖缓存）、localStorage、sessionStorage、Cache Storage、Service Worker。<br><br>然后强制重新加载页面，什么都不留。<br><br><b style="color:var(--red)">不可撤销。</b>', true))) return;
+  toast('正在清除…');
+  const r = await wipeAllStorage();
+  try { if (r.fail.length) console.warn('[nuke] 未完成的步骤：', r.fail); } catch (e) {}
+  /* replace 而非 reload：后退键回不到旧页面状态 */
+  location.replace(location.pathname + '?reset=' + Date.now());
 }
 
 /* ---------------------------------------------------------------- window API */

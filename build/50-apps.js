@@ -115,7 +115,7 @@ class BrowserApp {
         <!-- sandbox 是这里的关键：它会让 mailto:/intent:// 之类的顶层式导航被内核直接拦下，
              不再产生 ERR_UNKNOWN_URL_SCHEME；allow-same-origin 只用于同源首页的链接拦截。 -->
         <iframe referrerpolicy="no-referrer"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
           allow="clipboard-read; clipboard-write; fullscreen"></iframe>
         <div class="br-notice" id="brNotice" hidden>
           <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
@@ -153,15 +153,21 @@ class BrowserApp {
     });
     this._msg = (e) => {
       if (!e.data) return;
-      if (e.data.htNav && e.source === this.frame.contentWindow) this.navigate(e.data.htNav);
+      if (e.data.htNav && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) this.navigate(e.data.htNav);
       // 同源注入的脚本抓到外部协议时，转成面板，而不是让 iframe 去撞 ERR_UNKNOWN_URL_SCHEME
-      if (e.data.htExternal && e.source === this.frame.contentWindow) {
+      if (e.data.htExternal && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) {
         this.showNotice(e.data.htExternal.kind || 'external', e.data.htExternal);
+      }
+      /* 同源页调 window.open / target=_blank：在内部开新标签，不去碰真浏览器 */
+      if (e.data.htNewTab && (e.source === this.frame.contentWindow || e.data.htTok === this._tok)) {
+        this.addTab(String(e.data.htNewTab));
       }
     };
     window.addEventListener('message', this._msg);
 
-    this.addTab(this.opts.url || '');
+    /* 智能体经常直接给一段 HTML（content），而不是 URL。
+     * 以前这里只认 url，于是「打开 HTML」变成打开一个空白页，看起来像坏了。 */
+    this.addTab(this.opts.url || '', this.opts.html || '');
   }
 
   act(a) {
@@ -222,10 +228,18 @@ class BrowserApp {
     try { doc = this.frame.contentDocument; } catch (e) { return; }
     if (!doc || doc.__htHardened) return;
     doc.__htHardened = true;
-    const relay = (u) => {
+    /* targetOrigin 必须用 '*'：srcdoc + sandbox 的 iframe 是 opaque origin，
+     * origin 字符串是 "null"，用 location.origin 当 targetOrigin 会被浏览器直接丢弃，
+     * 表现就是「点了 mailto 什么都不发生」。
+     * 校验也不靠 e.source —— iframe 一旦导航，contentWindow 会换成新的 WindowProxy，
+     * 拿旧引用比 strict equal 永远为 false。改用每个窗口一份随机串 htTok。 */
+    const tok = this._tok || (this._tok = Math.random().toString(36).slice(2, 10));
+    /* 同源可控时**根本不用 postMessage**：回调就在父窗口的 realm 里跑，
+     * 闭包里的 this 就是 BrowserApp，直接调方法最可靠（无异步、无丢消息）。 */
+    const handle = (u) => {
       const c = classifyUrl(u);
       if (c.kind === 'external' || c.kind === 'blocked') {
-        try { window.postMessage({ htExternal: c }, location.origin); } catch (e) {}
+        this.showNotice(c.kind === 'external' ? 'external' : c.kind, c);
         return true;
       }
       return false;
@@ -234,27 +248,65 @@ class BrowserApp {
       const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
       if (!a) return;
       const href = a.getAttribute('href') || '';
-      if (relay(href)) { e.preventDefault(); e.stopPropagation(); }
+      if (handle(href)) { e.preventDefault(); e.stopPropagation(); return; }
+
+      /* target=_blank：优先在**这个小浏览器里**开新标签页。
+       * 只有同源页面能拦到（跨域 DOM 读不到），跨域的交给浏览器自己处理——
+       * 也就是「尽量内部打开，实在不行才外部」，正是想要的行为。 */
+      const target = (a.getAttribute('target') || '').toLowerCase();
+      if (target === '_blank' || target === '_new') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.addTab(href.startsWith('#') ? (this.current() && this.current().url) || '' : href);
+      }
     }, true);
+
+    /* 页面自己写 window.open 的，同样先转内部新标签 */
     try {
       const w = doc.defaultView;
       if (w && !w.__htOpenPatched) {
         w.__htOpenPatched = true;
         const orig = w.open;
-        w.open = function (u, ...rest) { return (u && relay(String(u))) ? null : orig.call(w, u, ...rest); };
+        const self = this;
+        w.open = function (u, ...rest) {
+          const target = u == null ? '' : String(u);
+          if (!target) return null;
+          if (handle(target)) return null;
+          /* 闭包在父窗口里，self 就是那个 BrowserApp：直接开内部标签 */
+          try { self.addTab(target); return null; }
+          catch (e) { try { (window.parent || window).postMessage({ htNewTab: target, htTok: tok }, '*'); return null; } catch (e2) { return orig.call(w, target, ...rest); } }
+        };
       }
     } catch (e) {}
   }
 
   current() { return this.tabs[this.active] || null; }
 
-  addTab(url) {
-    const t = { url:'', title:'新标签', hist:[], idx:-1 };
+  addTab(url, html) {
+    const t = { url:'', title:'新标签', hist:[], idx:-1, html:'' };
     this.tabs.push(t);
     this.active = this.tabs.length - 1;
     this.renderTabs();
-    if (url) this.navigate(url, true);
+    if (html) this.loadHtml(html, this.opts.title || '');
+    else if (url) this.navigate(url, true);
     else { this.loadHome(); this.setAddr(''); }
+    this.renderTabs();
+  }
+
+  /* 直接渲染一段 HTML（srcdoc）。地址栏留空，标签标题取 <title> 或传入的 title。
+   * 用 srcdoc 而不是 blob:/data: —— 后者在部分内核里会触发 URL scheme 相关的拦截。 */
+  loadHtml(html, title) {
+    this.hideNotice();
+    this.frame.removeAttribute('src');
+    this.frame.srcdoc = String(html || '');
+    this.frameEl.classList.remove('blocked');
+    const t = this.current();
+    if (t) {
+      t.url = '';
+      t.html = String(html || '');
+      t.title = title || 'HTML';
+    }
+    this.setAddr('');
     this.renderTabs();
   }
   closeTab(i) {

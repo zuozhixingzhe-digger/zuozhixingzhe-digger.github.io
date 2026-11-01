@@ -14,6 +14,8 @@
 'use strict';
 
 const http = require('node:http');
+const fs = require('node:fs');
+const nodePath = require('node:path');
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.HT_PORT || 8787);
@@ -26,7 +28,7 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
-const VERSION = '0.0.0.1';
+const VERSION = '0.0.0.2';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {
@@ -345,7 +347,25 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (req.method === 'GET') {
-      if (req.url === '/health') {
+      const reqPath = String(req.url || '').split('?')[0];
+      /* 根路径直接给页面：启动后端 = 启动应用，不用再开静态服务器 */
+      if (reqPath === '/' || reqPath === '/index.html') {
+        let raw;
+        try { raw = fs.readFileSync(nodePath.join(__dirname, 'index.html')); }
+        catch (e) {
+          reply(req, res, 404, { error: { message: '找不到 index.html（和本脚本放同一目录）', type: 'not_found' } });
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Length': raw.length,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff'
+        });
+        res.end(raw);
+        return;
+      }
+      if (reqPath === '/health') {
         reply(req, res, 200, {
           ok: true,
           service: 'hterminal-modelserver',
@@ -360,11 +380,12 @@ const server = http.createServer(async (req, res) => {
         });
         return;
       }
-      reply(req, res, 200, { service: 'hterminal-modelserver', post: '/v1/chat/completions', health: '/health' });
+      /* 其他所有 GET 一律拒绝：不做文件服务器，避免本机网页借端口读磁盘 */
+      reply(req, res, 403, { error: { message: '本服务只提供 index.html、/health 与 /v1/chat/completions', type: 'forbidden' } });
       return;
     }
-    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
-      reply(req, res, 404, { error: { message: '只有 POST /v1/chat/completions', type: 'not_found' } });
+    if (req.method !== 'POST' || String(req.url || '').split('?')[0] !== '/v1/chat/completions') {
+      reply(req, res, 403, { error: { message: '只接受 POST /v1/chat/completions', type: 'forbidden' } });
       return;
     }
     if (req.headers['x-hterm-client'] !== 'hterminal') {

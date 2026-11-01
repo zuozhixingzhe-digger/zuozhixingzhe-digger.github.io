@@ -67,6 +67,22 @@ const RPC = {
       }
       case 'drawer.open': Drawer.open(); return true;
       case 'agent.open': { const w = WindowManager.open({ type:'agent' }); return w ? w.id : null; }
+      /* ---- TUI 智能体：worker 里的 agentTui.* 全走这里 ---- */
+      case 'agent.turn': return await AgentTuiHost.turn(a[0]);
+      case 'agent.stop': return AgentTuiHost.stop();
+      case 'agent.status': return AgentTuiHost.status();
+      case 'agent.reset': return AgentTuiHost.reset();
+      /* ---- 嵌套 shell / 截图 ---- */
+      case 'shell.open': { const w = WindowManager.open({ type:'shell', cwd:a[0] || undefined, banner:a[1] !== false }); return w ? { id:w.id, cwd:w.cwd || a[0] || '.home' } : null; }
+      case 'shot.page': return await shot(a[0] || null, a[1] || {});
+      case 'shot.window': return await shotWindow(a[0]);
+      /* ---- 依赖缓存 ---- */
+      case 'deps.usage': return await DepCache.usage();
+      case 'deps.list': return await DepCache.list();
+      case 'deps.clear': await DepCache.clear(); return true;
+      case 'deps.load': await loadScriptCached(a[0]); return true;
+      /* ---- DOM：worker 摸页面的唯一通道 ---- */
+      case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
       default: throw new Error('未知 RPC：' + op);
     }
   }
@@ -123,35 +139,52 @@ const AppMenu = {
   }
 };
 
+/* 全屏只有一个入口：顶栏 ⛶、F11、Ctrl+Shift+Enter 全走这里。
+ * 这样「样式和行为联动」是结构上保证的，不是靠两边各写一遍。
+ *
+ * 浏览器可能拒绝 requestFullscreen（没有用户手势、iframe 未授权等）。这时退到
+ * 软件级全屏：给 body 加 .fs，隐藏顶栏、桌面铺满——功能上仍然是「切全屏了」，
+ * 按钮状态也照常翻转，不会出现「按了没反应」。 */
+function fullscreenOn() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains('fs'));
+}
+function syncFullscreenBtn() {
+  const on = fullscreenOn();
+  $$('[data-act="fullscreen"]').forEach(b => {
+    b.classList.toggle('k--active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = on ? '退出全屏（F11）' : '全屏（F11）';
+  });
+  setTimeout(() => { try { TerminalManager.applyAll(); } catch (e) {} }, 260);
+}
 function toggleFullscreen() {
   const el = document.documentElement;
   const isFs = document.fullscreenElement || document.webkitFullscreenElement;
-  try {
-    if (isFs) {
-      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else {
-      const req = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (req) {
-        const p = req.call(el);
-        if (p && p.catch) p.catch(() => toast('当前环境不允许全屏', true));
-      } else { toast('当前环境不支持全屏', true); }
-    }
-  } catch (e) { toast('全屏切换失败：' + (e.message || e), true); }
-  setTimeout(() => {
-    const btn = document.querySelector('[data-act="fullscreen"]');
-    if (btn) btn.classList.toggle('k--active', !!(document.fullscreenElement || document.webkitFullscreenElement));
-    TerminalManager.applyAll();
-  }, 320);
+  const soft = () => { document.body.classList.toggle('fs'); syncFullscreenBtn(); };
+
+  if (isFs) {
+    try { (document.exitFullscreen || document.webkitExitFullscreen).call(document).catch(() => {}); }
+    catch (e) { soft(); return; }
+    if (document.body.classList.contains('fs')) document.body.classList.remove('fs');
+    setTimeout(syncFullscreenBtn, 200);
+    return;
+  }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) { soft(); return; }
+  let p;
+  try { p = req.call(el); }
+  catch (e) { soft(); return; }
+  if (p && p.then) {
+    p.then(() => setTimeout(syncFullscreenBtn, 120))
+     .catch(() => { soft(); toast('浏览器不允许真全屏，已切换软件级全屏'); });
+  } else {
+    setTimeout(syncFullscreenBtn, 200);
+  }
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
-/* 光标形态分段按钮的高亮同步 */
-function syncCursorSeg() {
-  const seg = document.getElementById('setCursorStyle');
-  if (!seg) return;
-  const cur = Settings.get('cursorStyle') || 'bar';
-  $$('[data-cursor]', seg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cursor === cur)));
-}
+/* 光标形态不再提供设置（固定照参考项目那一套），这个函数已删除。
+ * 留个注释在这里，避免以后有人搜不到以为忘了写。 */
 
 const Drawer = {
   opened: false,
@@ -166,8 +199,16 @@ const Drawer = {
       };
     });
     // 启动器里的应用项
+    /* 从按钮位置开窗：窗口会"从这个图标扩散出来"，而不是凭空出现 */
     $$('#launcher [data-app]').forEach(b => {
-      b.onclick = () => { AppMenu.close(); WindowManager.open({ type:b.dataset.app }); };
+      b.onclick = () => {
+        const r = b.getBoundingClientRect();
+        AppMenu.close();
+        WindowManager.open({
+          type: b.dataset.app,
+          from: { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+        });
+      };
     });
     const launcherMore = $('#launcher [data-act="more"]');
     if (launcherMore) launcherMore.onclick = () => { AppMenu.close(); this.open(); };
@@ -178,6 +219,7 @@ const Drawer = {
     $('#drawer-overlay').onclick = () => this.close();
     const bindRange = (id, key, fmt) => {
       const el = document.getElementById(id);
+      if (!el) return;
       const val = document.getElementById(id + 'Val');
       el.addEventListener('input', () => {
         const v = Number(el.value);
@@ -187,24 +229,15 @@ const Drawer = {
     };
     bindRange('setFont', 'font');
     bindRange('setLine', 'lineHeight', v => (v / 10).toFixed(1));
-    // 光标形态（三选一，用分段按钮）
-    const seg = $('#setCursorStyle');
-    if (seg) {
-      $$('[data-cursor]', seg).forEach(b => b.onclick = () => {
-        Settings.set('cursorStyle', b.dataset.cursor);
-        syncCursorSeg();
-      });
-    }
+    bindRange('setRows', 'rows', v => (v ? v + ' 行' : '自动'));
     // 二选一的一律用开关
     const bindSwitch = (id, key, onVal, offVal) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
     };
-    bindSwitch('setCursorBlink', 'cursorBlink', '1', '0');
-    bindSwitch('setGrid', 'grid', '1', '0');
-    $('#setPrompt').onchange = e => Settings.set('prompt', e.target.value || '> ');
-    $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
+    bindSwitch('setHaptic', 'haptic', '1', '0');
+    if ($('#setCdn')) $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
     // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
     bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
     bindSwitch('setAgentThinking', 'agentThinking', '1', '0');
@@ -214,7 +247,7 @@ const Drawer = {
     $('#setAgentUrl').onchange = e => { Settings.set('agentUrl', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
-    $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 16, 1, 60));
+    $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 120, 1, 120));
 
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
     $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
@@ -229,6 +262,11 @@ const Drawer = {
     $('#btnAgentImport').onclick = () => this.agentImport();
     $('#btnAgentClear').onclick = () => this.agentClear();
     $('#btnNuke').onclick = () => nuke();
+    if ($('#btnClearDeps')) $('#btnClearDeps').onclick = async () => {
+      await DepCache.clear();
+      toast('依赖缓存已清空，下次打开会重新下载');
+      try { this.refresh(); } catch (e) {}
+    };
     $('#btnAbout').onclick = () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
 
     this.syncControls();
@@ -239,11 +277,10 @@ const Drawer = {
     $('#setFontVal').textContent = String(Settings.get('font'));
     $('#setLine').value = Settings.get('lineHeight');
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
-    if ($('#setCursorBlink')) $('#setCursorBlink').checked = Settings.get('cursorBlink') === '1';
-    if ($('#setGrid')) $('#setGrid').checked = Settings.get('grid') === '1';
-    syncCursorSeg();
-    $('#setPrompt').value = Settings.get('prompt');
-    $('#setCdn').value = Settings.get('cdn');
+    if ($('#setRows')) { $('#setRows').value = String(Settings.get('rows') || 0); }
+    if ($('#setRowsVal')) { const r = Number(Settings.get('rows')) || 0; $('#setRowsVal').textContent = r ? r + ' 行' : '自动'; }
+    if ($('#setHaptic')) $('#setHaptic').checked = Settings.get('haptic') === '1';
+    if ($('#setCdn')) $('#setCdn').value = Settings.get('cdn');
     $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');
     $('#setAgentDirectUrl').value = Settings.get('agentDirectUrl');
@@ -298,6 +335,18 @@ const Drawer = {
     } catch (e) {}
     $('#stSession').textContent = (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers';
     $('#stHist').textContent = String(loadHistory().length);
+    try {
+      const d = await DepCache.usage();
+      if ($('#stDeps')) $('#stDeps').textContent = d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空';
+    } catch (e) {}
+    try {
+      const d = await DepCache.list();
+      if ($('#depList')) {
+        $('#depList').innerHTML = d.length
+          ? d.map(x => `<div class="drawer__item"><b>${esc(x.url.split('/').pop().split('?')[0].slice(0, 40))}</b><span>${(x.size / 1024).toFixed(0)} KB</span></div>`).join('')
+          : '<div class="drawer__item"><span>还没有缓存</span></div>';
+      }
+    } catch (e) {}
   },
   async checkBackend() {
     const el = $('#stBackend');
@@ -396,13 +445,56 @@ const Drawer = {
 };
 
 /* ---------------------------------------------------------------- 清理全部数据 */
+/* 彻底清除：不是「清几个已知的键」，而是把浏览器给这个源的存储全部掀掉。
+ *   1. 先枚举 indexedDB.databases()（Chrome/Edge/Safari 都支持），逐个删；
+ *      老浏览器没有这个 API 就退回删我们自己的两个库名。
+ *   2. localStorage / sessionStorage 直接 clear()。
+ *   3. 所有 Cache Storage、所有 Service Worker 注册。
+ *   4. 最后不 reload 而是 replace()：避免用户按后退又回到旧状态。
+ * 任何一步失败都不阻断后面的步骤——目标只有一个：什么都不留。 */
+async function wipeAllStorage() {
+  const done = [];
+  const fail = [];
+  const step = async (name, fn) => { try { await fn(); done.push(name); } catch (e) { fail.push(name + ':' + (e && e.message || e)); } };
+
+  await step('idb-close', async () => { try { IDB.db && IDB.db.close(); } catch (e) {} IDB.db = null; });
+  await step('indexeddb', async () => {
+    let names = [];
+    if (indexedDB.databases) {
+      const list = await indexedDB.databases();
+      names = list.map(d => d.name).filter(Boolean);
+    }
+    if (!names.length) names = ['hterm-fs', 'ht-deps'];
+    await Promise.all(names.map(n => new Promise((res) => {
+      const r = indexedDB.deleteDatabase(n);
+      r.onsuccess = r.onerror = r.onblocked = () => res();
+      /* onblocked 说明还有连接没关掉；等一小会儿强制放行，不能卡死在这里 */
+      setTimeout(res, 1500);
+    })));
+  });
+  await step('localStorage', async () => { localStorage.clear(); });
+  await step('sessionStorage', async () => { sessionStorage.clear(); });
+  await step('caches', async () => {
+    if (!window.caches) return;
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => caches.delete(k)));
+  });
+  await step('serviceWorker', async () => {
+    if (!navigator.serviceWorker) return;
+    const rs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(rs.map(r => r.unregister()));
+  });
+  return { done, fail };
+}
+
 async function nuke() {
-  if (!(await confirmDlg('清除全部数据', '将删除 IndexedDB、localStorage、Cache Storage 中的本页数据，然后重新加载。<br><br><b style="color:var(--red)">不可撤销。</b>', true))) return;
-  try { IDB.db && IDB.db.close(); } catch (e) {}
-  try { await new Promise((res) => { const r = indexedDB.deleteDatabase('hterm-fs'); r.onsuccess = r.onerror = r.onblocked = () => res(); }); } catch (e) {}
-  try { localStorage.clear(); } catch (e) {}
-  try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
-  location.reload();
+  if (!(await confirmDlg('清除全部数据',
+    '会删掉这个页面的<b>全部</b>本地数据：IndexedDB（所有库，含文件系统、依赖缓存）、localStorage、sessionStorage、Cache Storage、Service Worker。<br><br>然后强制重新加载页面，什么都不留。<br><br><b style="color:var(--red)">不可撤销。</b>', true))) return;
+  toast('正在清除…');
+  const r = await wipeAllStorage();
+  try { if (r.fail.length) console.warn('[nuke] 未完成的步骤：', r.fail); } catch (e) {}
+  /* replace 而非 reload：后退键回不到旧页面状态 */
+  location.replace(location.pathname + '?reset=' + Date.now());
 }
 
 /* ---------------------------------------------------------------- window API */

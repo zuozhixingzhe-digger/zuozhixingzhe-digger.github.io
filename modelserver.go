@@ -22,12 +22,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
-const version = "0.0.0.1"
+const version = "0.0.0.2"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -563,6 +564,19 @@ func localOnly(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+
+/* scriptDir：可执行文件所在目录。go run 时是临时目录，所以优先用可执行文件路径；
+ * 找不到就退回当前工作目录——两种情况都能覆盖「把 index.html 放在旁边」的用法。 */
+func scriptDir() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Dir(exe)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	if !localOnly(w, r) {
 		return
@@ -573,6 +587,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		/* 根路径直接返回页面：启动后端就等于启动应用 */
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			raw, err := os.ReadFile(filepath.Join(scriptDir(), "index.html"))
+			if err != nil {
+				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "找不到 index.html（和本脚本放同一目录）", "type": "not_found"}})
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+			w.WriteHeader(http.StatusOK)
+			w.Write(raw)
+			return
+		}
 		if r.URL.Path == "/health" {
 			reply(w, r, 200, map[string]any{
 				"ok": true, "service": "hterminal-modelserver", "version": version,
@@ -584,11 +613,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		reply(w, r, 200, map[string]any{"service": "hterminal-modelserver", "post": "/v1/chat/completions", "health": "/health"})
+		/* 其他 GET 一律拒绝：不做文件服务器 */
+		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "本服务只提供 index.html、/health 与 /v1/chat/completions", "type": "forbidden"}})
 		return
 	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
-		reply(w, r, 404, map[string]any{"error": map[string]any{"message": "只有 POST /v1/chat/completions", "type": "not_found"}})
+		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "只接受 POST /v1/chat/completions", "type": "forbidden"}})
 		return
 	}
 	if r.Header.Get("X-HTerm-Client") != "hterminal" {

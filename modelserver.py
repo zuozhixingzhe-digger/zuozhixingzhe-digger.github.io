@@ -36,7 +36,9 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.0.1"
+VERSION = "0.0.0.2"
+# 脚本所在目录：index.html 会从这里读
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def text_of(content):
@@ -381,10 +383,38 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def serve_index(self):
+        """把同目录的 index.html 原样返回。
+        这样「傻瓜式」：启动后端，浏览器打开 http://127.0.0.1:8787/ 就是应用本体，
+        不需要再另开一个静态服务器。"""
+        path = os.path.join(ROOT, "index.html")
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+        except Exception:
+            self.reply(404, {"error": {"message": "找不到 index.html（把它和本脚本放在同一目录）", "type": "not_found"}})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def deny(self):
+        # 只放行页面、健康检查、补全接口。其余一律拒绝——不做文件服务器，
+        # 免得本机任何一个网页都能借这个端口读你的磁盘。
+        self.reply(403, {"error": {"message": "本服务只提供 index.html 与 /health、/v1/chat/completions", "type": "forbidden"}})
+
     def do_GET(self):
         if not self.local_only():
             return
-        if self.path == "/health":
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            self.serve_index()
+            return
+        if path == "/health":
             self.reply(200, {
                 "ok": True,
                 "service": "hterminal-modelserver",
@@ -398,13 +428,13 @@ class Handler(BaseHTTPRequestHandler):
                 },
             })
             return
-        self.reply(200, {"service": "hterminal-modelserver", "post": "/v1/chat/completions", "health": "/health"})
+        self.deny()
 
     def do_POST(self):
         if not self.local_only():
             return
-        if self.path != "/v1/chat/completions":
-            self.reply(404, {"error": {"message": "只有 /v1/chat/completions", "type": "not_found"}})
+        if self.path.split("?")[0] != "/v1/chat/completions":
+            self.reply(403, {"error": {"message": "只接受 POST /v1/chat/completions", "type": "forbidden"}})
             return
         if self.headers.get("X-HTerm-Client", "") != "hterminal":
             self.reply(403, {"error": {"message": "缺少 X-HTerm-Client", "type": "forbidden"}})

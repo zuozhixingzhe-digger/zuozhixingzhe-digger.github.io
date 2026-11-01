@@ -24,24 +24,40 @@ const UNI11_JS = [
   'https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js',
   'https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js'
 ];
+/* 加载顺序：DepCache（IndexedDB）→ CDN。
+ * 为什么不用 CDN.js：它是 <script src>，每次新标签都要走一次浏览器 HTTP 缓存，
+ * 而 HTTP 缓存会被「清除数据」清掉、部分 CDN 还返回 no-store。
+ * 自己存一份，第二次打开页面是**零网络请求**，秒开。 */
+async function loadOne(list, check, label, onLog, required) {
+  if (check()) return true;
+  let lastErr = null;
+  for (const url of list) {
+    try {
+      onLog && onLog('加载 ' + label);
+      await loadScriptCached(url, onLog);
+      if (check()) return true;
+      lastErr = new Error(label + ' 已下载但没有注册全局变量');
+    } catch (e) { lastErr = e; }
+  }
+  if (required) throw new Error(label + ' 加载失败：' + (lastErr && lastErr.message || lastErr) + '（检查网络或 CDN）');
+  return false;
+}
+
 async function loadXterm(onLog) {
-  if (window.Terminal && window.FitAddon) return true;
-  onLog && onLog('加载 xterm.css');
-  await CDN.css(XTERM_CSS);
-  onLog && onLog('加载 xterm.js');
+  if (window.Terminal && window.FitAddon && window.Unicode11Addon) return true;
+
   if (!window.Terminal) {
-    const ok = await CDN.js(XTERM_JS);
-    if (!ok || !window.Terminal) throw new Error('xterm.js 加载失败：请检查网络或 CDN 可用性');
+    onLog && onLog('准备 xterm.css');
+    let cssOk = false;
+    for (const u of XTERM_CSS) {
+      try { await loadStyleCached(u, onLog); cssOk = true; break; } catch (e) {}
+    }
+    if (!cssOk) { onLog && onLog('xterm.css 拿不到，用内置最小样式兜底'); injectStyle('@import url("");.xterm{position:relative;user-select:none}.xterm .xterm-viewport{overflow-y:scroll;background:transparent}'); }
   }
-  onLog && onLog('加载 addon-fit');
-  if (!window.FitAddon) {
-    const ok = await CDN.js(FIT_JS);
-    if (!ok || !window.FitAddon) throw new Error('addon-fit 加载失败');
-  }
-  // Unicode11 是「锦上添花」：CDN 不通时不让它拖死启动，退化为默认宽度表。
-  if (!window.Unicode11Addon) {
-    try { await CDN.js(UNI11_JS); } catch (e) { /* 忽略，见上 */ }
-  }
+  await loadOne(XTERM_JS, () => !!window.Terminal, 'xterm.js', onLog, true);
+  await loadOne(FIT_JS, () => !!window.FitAddon, 'addon-fit', onLog, true);
+  /* Unicode11 是锦上添花：拿不到就退化成默认宽度表，不阻塞启动 */
+  await loadOne(UNI11_JS, () => !!window.Unicode11Addon, 'addon-unicode11', onLog, false);
   return true;
 }
 
@@ -90,8 +106,10 @@ function termTheme(forceLight) {
   return {
     background: 'rgba(0,0,0,0)',
     foreground: cssVar('--fg') || (light ? '#182624' : '#d6e7e3'),
-    cursor: cssVar('--accent') || '#5eead4',
-    cursorAccent: light ? '#ffffff' : '#08110f',
+    /* xterm 自己画的方块/竖线光标一律透明：全部交给叠加层 .ht-cursor，
+     * 这样才有「呼吸、虚线、椭圆描边、阻尼缓动」这些 xterm 给不了的形态。 */
+    cursor: 'rgba(0,0,0,0)',
+    cursorAccent: 'rgba(0,0,0,0)',
     selectionBackground: light ? 'rgba(13,148,136,.22)' : 'rgba(94,234,212,.24)',
     selectionForeground: undefined,
     black: light ? '#1c2b29' : '#0b1112',
@@ -342,12 +360,13 @@ class TerminalSession {
   _mount() {
     if (!this.container) throw new Error('终端缺少容器');
     this.term = new window.Terminal({
-      /* 光标与参考项目对齐：默认竖线（bar）+ 不闪烁；失焦时描边而不是消失。
-       * 形态/闪烁可在「更多 → 外观」里改，改完只动 options，不重建终端。 */
-      cursorBlink: Settings.get('cursorBlink') === '1',
-      cursorStyle: Settings.get('cursorStyle') || 'bar',
-      cursorInactiveStyle: 'outline',
-      cursorWidth: 2,
+      /* 光标：xterm 原生光标设为透明且不闪，真正的光标是叠加层 .ht-cursor。
+       * 形态（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）与缓动全在 _initCursor 里，
+       * 不给设置项——照参考项目固定成一套。 */
+      cursorBlink: false,
+      cursorStyle: 'bar',
+      cursorInactiveStyle: 'none',
+      cursorWidth: 1,
       fontFamily: xtermFont(),
       fontSize: Number(Settings.get('font')) || 14,
       lineHeight: (Number(Settings.get('lineHeight')) || 12) / 10,
@@ -368,14 +387,21 @@ class TerminalSession {
       smoothScrollDuration: 0
     });
     this.term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      /* F5 / F12：原样交给浏览器。返回 false 让 xterm 不吞键、不发 ESC 序列，
+       * 浏览器因此能收到真正的 F5（刷新页面）与 F12（开发者工具）。 */
+      if (e.key === 'F5' || e.key === 'F12') return false;
+      /* F11：软件级接管，和顶栏 ⛶ 完全同一套行为（同一个 toggleFullscreen）。 */
+      if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return false; }
       // Ctrl+Shift+C/V 走浏览器复制粘贴；其余交给全局快捷键。
-      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey) {
+      if (e.ctrlKey && e.shiftKey) {
         const k = e.key.toLowerCase();
         if (k === 'c' || k === 'v') return false;
       }
       return true;
     });
     this.term.open(this.container);
+    this._initCursor();
     // Unicode 11 宽度表：CJK/emoji 占 1 格还是 2 格，必须与渲染一致，否则会错位。
     if (window.Unicode11Addon) {
       try {
@@ -388,12 +414,129 @@ class TerminalSession {
       this.term.loadAddon(this.fit);
       this.fit.fit();
     } catch (e) { console.warn('fit 失败', e); }
-    this.term.onData(d => { this._post({ t:'in', data:Keys.shape(d) }); });
+    this.term.onData(d => {
+      this._post({ t:'in', data:Keys.shape(d) });
+      // 短振动只在「像一次按键」时触发：粘贴一大段不抖，控制序列也不抖
+      if (d.length <= 2 && d.charCodeAt(0) > 0x1f) haptic(5);
+      this._cursorIdle();
+    });
     this.term.onResize(({ cols, rows }) => this._post({ t:'resize', cols, rows }));
     this._ro = new ResizeObserver(() => this.fitNow());
     this._ro.observe(this.container);
     setTimeout(() => this.fitNow(), 30);
     this.term.focus();
+  }
+
+  /* ---------------------------------------------------------------- 自定义光标
+   * xterm 自带光标被设成透明，这里用一个绝对定位的 div 画。为什么不用原生光标：
+   * 原生只支持 bar/block/underline 三态 + 闪烁，做不出「失焦椭圆描边、备用屏虚线、
+   * 空闲呼吸、阻尼缓动」这些参考项目里的形态。
+   */
+  _initCursor() {
+    const host = this.term && this.term.element;
+    if (!host) return;
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    const el = document.createElement('div');
+    el.className = 'ht-cursor';
+    el.setAttribute('aria-hidden', 'true');
+    host.appendChild(el);
+    this.cur = { el, x:0, y:0, tx:0, ty:0, init:false, raf:0, idle:0, hollow:false, alt:false };
+    this.term.onCursorMove(() => this._cursorPlace());
+
+    const ta = this.term.textarea;
+    if (ta) {
+      ta.addEventListener('focus', () => { this.cur.hollow = false; this._cursorStyle(); this._cursorIdle(); });
+      ta.addEventListener('blur', () => {
+        this.cur.hollow = true;
+        clearTimeout(this.cur.idle);
+        this._cursorStyle();
+      });
+      if (document.activeElement !== ta) { this.cur.hollow = true; this._cursorStyle(); }
+    }
+    // 选中文本时不呼吸（正在拖选时呼吸会干扰）
+    this.term.onSelectionChange(() => {
+      const sel = this.term.hasSelection && this.term.hasSelection();
+      this.cur.el.classList.toggle('ht-cursor--paused', !!sel);
+      if (sel) this.cur.el.classList.remove('ht-cursor--breathing');
+    });
+    requestAnimationFrame(() => this._cursorPlace());
+  }
+
+  _cursorStyle() {
+    const c = this.cur;
+    if (!c) return;
+    c.el.classList.toggle('ht-cursor--hollow', !!c.hollow);
+    c.el.classList.toggle('ht-cursor--dashed', !!c.alt);
+    if (c.hollow || c.alt) c.el.classList.remove('ht-cursor--breathing');
+  }
+
+  _cursorRaf() {
+    const c = this.cur;
+    if (c && !c.raf) c.raf = requestAnimationFrame(() => this._cursorTick());
+  }
+
+  /* 阻尼缓动：每帧向目标逼近 22%。快速移动（按方向键连翻）时追不上，
+   * 停手后再平滑收敛——这就是「平滑移动」的手感来源。 */
+  _cursorTick() {
+    const c = this.cur;
+    if (!c) return;
+    c.x += (c.tx - c.x) * 0.22;
+    c.y += (c.ty - c.y) * 0.22;
+    if (Math.abs(c.tx - c.x) < 0.35) c.x = c.tx;
+    if (Math.abs(c.ty - c.y) < 0.35) c.y = c.ty;
+    c.el.style.left = c.x + 'px';
+    c.el.style.top = c.y + 'px';
+    if (c.x !== c.tx || c.y !== c.ty) c.raf = requestAnimationFrame(() => this._cursorTick());
+    else c.raf = 0;
+  }
+
+  _cursorPlace() {
+    const c = this.cur, t = this.term;
+    if (!c || !t || !t.element) return;
+    const buf = t.buffer.active;
+    /* cursorY 是「当前显示基准」上的相对行，baseY 是基准的绝对偏移，
+     * viewportY 是视口顶端的绝对行——三者推出光标在视口内的行号。
+     * 滚动之后这个算法依然准，不依赖任何尺寸测量。 */
+    const vRow = buf.cursorY + buf.baseY - buf.viewportY;
+    if (vRow < 0 || vRow >= t.rows) { c.el.style.display = 'none'; return; }
+    c.el.style.display = '';
+
+    const screen = t.element.querySelector('.xterm-screen');
+    if (!screen) { this._cursorRaf(); return; }
+    const hostR = t.element.getBoundingClientRect();
+    const sr = screen.getBoundingClientRect();
+    const offX = sr.left - hostR.left;
+    const offY = sr.top - hostR.top;
+    const cellW = sr.width / Math.max(1, t.cols);
+    const cellH = sr.height / Math.max(1, t.rows);
+    if (!cellW || !cellH) { this._cursorRaf(); return; }
+
+    const alt = buf.type === 'alternate';
+    if (alt !== c.alt) { c.alt = alt; this._cursorStyle(); }
+
+    const w = c.hollow ? 7 : 2;
+    c.el.style.width = w + 'px';
+    c.el.style.height = cellH + 'px';
+    const px = offX + buf.cursorX * cellW + 1 - w / 2;
+    const py = offY + vRow * cellH;
+    if (!c.init) { c.x = c.tx = px; c.y = c.ty = py; c.init = true; }
+    const moved = px !== c.tx || py !== c.ty;
+    c.tx = px; c.ty = py;
+    if (moved) this._cursorIdle();
+    this._cursorRaf();
+  }
+
+  /* 只有「聚焦 + 空闲 ≥1s + 不在备用屏」才呼吸 */
+  _cursorIdle() {
+    const c = this.cur;
+    if (!c) return;
+    c.el.classList.remove('ht-cursor--breathing');
+    clearTimeout(c.idle);
+    c.idle = setTimeout(() => {
+      if (c.hollow || c.alt) return;
+      if (this.term && this.term.hasSelection && this.term.hasSelection()) return;
+      c.el.classList.add('ht-cursor--breathing');
+    }, 1000);
   }
 
   fitNow() {
@@ -402,6 +545,27 @@ class TerminalSession {
       const dims = this.fit.proposeDimensions();
       if (!dims || !isFinite(dims.cols) || !isFinite(dims.rows) || dims.cols < 2 || dims.rows < 1) return;
       this.fit.fit();
+
+      /* 固定显示行数（参考项目的 fixedRows）：0 = 自动铺满。
+       * 做法是先把容器能容纳的最大行数算出来，取 min(设定值, 最大行数)，
+       * 再把 .xterm 的高度钉死成 rows × 行高 —— 多出来的空间留白，不拉伸行高。 */
+      const fixed = Number(Settings.get('rows')) || 0;
+      const host = this.term.element;
+      if (host) {
+        if (fixed > 0) {
+          const screen = host.querySelector('.xterm-screen');
+          const cellH = screen ? screen.getBoundingClientRect().height / Math.max(1, this.term.rows) : 0;
+          if (cellH > 0) {
+            const maxRows = Math.floor((this.container.clientHeight || 0) / cellH);
+            const rows = Math.max(1, Math.min(fixed, maxRows || fixed));
+            host.style.height = (rows * cellH) + 'px';
+            if (rows !== this.term.rows) this.term.resize(this.term.cols, rows);
+          }
+        } else {
+          host.style.height = '';
+        }
+      }
+      this._cursorPlace();
     } catch (e) {}
   }
 
@@ -475,11 +639,8 @@ class TerminalSession {
     if (!this.term) return;
     this.term.options.fontSize = Number(Settings.get('font')) || 14;
     this.term.options.lineHeight = (Number(Settings.get('lineHeight')) || 12) / 10;
-    this.term.options.cursorBlink = Settings.get('cursorBlink') === '1';
-    const cs = Settings.get('cursorStyle') || 'bar';
-    if (this.term.options.cursorStyle !== cs) this.term.options.cursorStyle = cs;
     this.term.options.theme = termTheme();
-    setTimeout(() => this.fitNow(), 20);
+    setTimeout(() => { this.fitNow(); this._cursorPlace(); }, 20);
   }
 
   write(s) { this.term && this.term.write(s); }
@@ -493,8 +654,11 @@ class TerminalSession {
     try { this.worker && this.worker.terminate(); } catch (e) {}
     this.worker = null;
     try { this._ro && this._ro.disconnect(); } catch (e) {}
+    try { clearTimeout(this.cur && this.cur.idle); } catch (e) {}
+    try { if (this.cur && this.cur.raf) cancelAnimationFrame(this.cur.raf); } catch (e) {}
     try { this.term && this.term.dispose(); } catch (e) {}
     this.term = null;
+    this.cur = null;
   }
 }
 
@@ -593,6 +757,9 @@ const WindowManager = {
       if (app) opts = Object.assign({}, opts, { type:app.type, title:opts.title || app.title, icon:app.icon, app:app.name });
       else opts = Object.assign({}, opts, { type:'about' });
     }
+    /* 只给了 html 没给类型：当作浏览器窗口（srcdoc 直开）。
+     * 智能体的 window_html 工具和老代码都会这么调。 */
+    if (!opts.type && opts.html) opts = Object.assign({}, opts, { type:'browser', title:opts.title || 'HTML' });
     if (opts.app === 'agent' || opts.type === 'agent') {
       const ex = [...this.windows.values()].find(w => w.type === 'agent');
       if (ex) { this.focus(ex.id); if (ex.minimized) this.restore(ex.id); return ex; }
@@ -651,7 +818,70 @@ const WindowManager = {
     this._render(win, opts);
     this._syncDock();
     this.focus(id);
+    this._animIn(win, opts.from);
     return win;
+  },
+
+  /* ---------------------------------------------------------------- 窗口动效
+   * "从一个点扩散"的关键不是 scale 本身，而是 transform-origin 指哪儿：
+   *   origin 在触发按钮的位置 → 视觉上就是「从这个图标长出来的」。
+   * 没有触发点（程序开窗）就用窗口中心，看起来是从中间展开。
+   */
+  _animIn(win, from) {
+    const el = win.el;
+    if (!el || !el.animate) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (from && isFinite(from.x) && isFinite(from.y)) {
+      const r = el.getBoundingClientRect();
+      el.style.transformOrigin = (from.x - r.left) + 'px ' + (from.y - r.top) + 'px';
+    } else {
+      el.style.transformOrigin = '50% 50%';
+    }
+    el.classList.add('anim-in');
+    const done = () => { el.classList.remove('anim-in'); el.style.transformOrigin = ''; };
+    el.addEventListener('animationend', done, { once:true });
+    /* 兜底：某些环境下 animationend 不触发（元素被隐藏等），别让类卡住 */
+    setTimeout(done, 520);
+  },
+
+  /* 关窗 = 溶解。先播动画再从 DOM 移除；期间 pointer-events:none 防误点。 */
+  _animOut(win, cb) {
+    const el = win.el;
+    if (!el || !el.animate || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) { cb(); return; }
+    el.classList.add('anim-out');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; cb(); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 400);
+  },
+
+  /* 最小化：把"收进哪儿"算出来，交给 CSS 变量。 */
+  _dockPoint(id) {
+    const icon = document.querySelector('#dock [data-win="' + id + '"]');
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    if (icon) {
+      const r = icon.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
+    }
+    return { x: dbox.width / 2, y: dbox.height + 24 };
+  },
+  _animMin(win, cb) {
+    const el = win.el;
+    if (!el || !el.animate || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) { cb(); return; }
+    const r = el.getBoundingClientRect();
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    const p = this._dockPoint(win.id);
+    /* 位移要换算成相对窗口中心的偏移，scale 才会朝图标方向收 */
+    const mx = p.x + dbox.left - (r.left + r.width / 2);
+    const my = p.y + dbox.top - (r.top + r.height / 2);
+    el.style.setProperty('--mx', mx + 'px');
+    el.style.setProperty('--my', my + 'px');
+    el.style.transformOrigin = '50% 50%';
+    el.classList.add('anim-min');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; el.classList.remove('anim-min'); cb(); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 380);
   },
 
   _render(win, opts) {
@@ -862,19 +1092,37 @@ const WindowManager = {
 
   minimize(id) {
     const w = this.windows.get(id);
-    if (!w) return;
+    if (!w || w.minimized) return;
     w.minimized = true;
-    w.el.classList.add('min');
-    if (w.content && w.content.onHide) w.content.onHide();
+    /* 先算 Dock 位置再藏：_syncDock 之后图标位置才准，
+     * 但 .min 会被 display:none 掉，所以顺序是 同步 Dock → 取点 → 动画 → 加 .min */
     this._syncDock();
+    if (w.content && w.content.onHide) w.content.onHide();
+    this._animMin(w, () => { w.el.classList.add('min'); });
   },
   restore(id) {
     const w = this.windows.get(id);
     if (!w) return;
     w.minimized = false;
+    const wasMin = w.el.classList.contains('min');
     w.el.classList.remove('min');
     this.focus(id);
     if (w.content && w.content.onShow) w.content.onShow();
+    if (!wasMin) return;
+    /* 从 Dock 位置反向长出来，和最小化对称 */
+    const el = w.el;
+    if (!el || !el.animate) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const r = el.getBoundingClientRect();
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    const p = this._dockPoint(id);
+    el.style.setProperty('--mx', (p.x + dbox.left - (r.left + r.width / 2)) + 'px');
+    el.style.setProperty('--my', (p.y + dbox.top - (r.top + r.height / 2)) + 'px');
+    el.classList.add('anim-restore');
+    let fired = false;
+    const end = () => { if (fired) return; fired = true; el.classList.remove('anim-restore'); };
+    el.addEventListener('animationend', end, { once:true });
+    setTimeout(end, 420);
   },
   toggleMin(id) {
     const w = this.windows.get(id);
@@ -886,6 +1134,11 @@ const WindowManager = {
   toggleMax(id) {
     const w = this.windows.get(id);
     if (!w) return;
+    /* 加 .tween 让 left/top/width/height 插值过渡（外扩 / 内缩），
+     * 过渡结束立刻摘掉，避免以后拖拽时窗口"追不上"鼠标。 */
+    w.el.classList.add('tween');
+    clearTimeout(w._tweenT);
+    w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 300);
     if (w.maximized) {
       const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
       w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px';
@@ -907,11 +1160,14 @@ const WindowManager = {
   close(id) {
     const w = this.windows.get(id);
     if (!w) return;
+    if (w.closing) return;
+    w.closing = true;
     if (w.onClose) { try { w.onClose(); } catch (e) {} }
+    /* 内容先 dispose，释放 worker / iframe；视觉上再慢慢溶解掉 */
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
-    w.el.remove();
     this.windows.delete(id);
     this._syncDock();
+    this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
   },
   closeFocused() {
     const w = this.focused();

@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.1';
+const HT_VERSION = '0.0.0.2';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -38,8 +38,11 @@ function svgIcon(name, cls) {
 /* ---------------------------------------------------------------- 设置 */
 const Settings = {
   DEFAULTS: {
-    font: 14, lineHeight: 12, cursorStyle: 'bar', cursorBlink: '0', grid: '1',
-    prompt: '> ', cdn: 'esm.sh',
+    /* 光标形态与闪烁不提供设置：固定照参考项目那套（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）。
+     * 背景网格也不提供设置，固定开着（很淡，只为看清桌面边界）。
+     * rows = 固定显示行数，0 表示自动铺满。 */
+    font: 14, lineHeight: 12, rows: 0, haptic: '1',
+    cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
     agentMode: 'backend',
@@ -51,24 +54,48 @@ const Settings = {
      * 响应先吐 reasoning_content 再吐 content，测试时又慢又费 token；
      * 关掉后 temperature 才有意义。需要推理时在设置里打开（会正确回传 reasoning_content）。 */
     agentThinking: '0',
-    agentSteps: 16, historyLimit: 500
+    agentSteps: 120, historyLimit: 500
   },
+  /* 只在内存里、永不落盘的键（API Key 属于这一类） */
+  VOLATILE: ['agentKey'],
   data: {},
   load() {
     try {
       const raw = localStorage.getItem('ht.settings');
       this.data = Object.assign({}, this.DEFAULTS, raw ? JSON.parse(raw) : {});
     } catch (e) { this.data = Object.assign({}, this.DEFAULTS); }
+    /* 历史遗留版本可能把密钥存进来过：加载时一律丢弃 */
+    for (const x of this.VOLATILE) this.data[x] = this.DEFAULTS[x];
+    /* 老版本把默认模型写成了 gpt-4o-mini 并落进 localStorage，导致用户升级后
+     * 打开直连还在问 GPT。这里做一次无痛迁移：只有「从没改过」的旧默认值才替换。 */
+    if (this.data.agentModel === 'gpt-4o-mini') {
+      this.data.agentModel = this.DEFAULTS.agentModel;
+      try { localStorage.setItem('ht.settings', JSON.stringify(this._persisted())); } catch (e) {}
+    }
     return this.data;
   },
   get(k) { return this.data[k] !== undefined ? this.data[k] : this.DEFAULTS[k]; },
   set(k, v) {
     this.data[k] = v;
-    try { localStorage.setItem('ht.settings', JSON.stringify(this.data)); } catch (e) {}
-    if (k === 'grid') applyGrid(v);
-    if (k === 'font' || k === 'lineHeight' || k === 'cursorBlink' || k === 'cursorStyle') TerminalManager.applyAll();
-    FS.write('.config.settings', JSON.stringify(this.data, null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
+    /* 直连密钥只在内存：不写 localStorage，也不写 .config.settings。刷新即消失。 */
+    const volatile = this.VOLATILE.includes(k);
+    if (!volatile) {
+      try {
+        const keep = Object.assign({}, this.data);
+        for (const x of this.VOLATILE) delete keep[x];
+        localStorage.setItem('ht.settings', JSON.stringify(keep));
+      } catch (e) {}
+      FS.write('.config.settings', JSON.stringify(this._persisted(), null, 2), { kind:'object', mime:'application/json' }).catch(() => {});
+    }
+    if (k === 'font' || k === 'lineHeight' || k === 'rows') {
+      if (typeof TerminalManager !== 'undefined') TerminalManager.applyAll();
+    }
     return v;
+  },
+  _persisted() {
+    const o = Object.assign({}, this.data);
+    for (const x of this.VOLATILE) delete o[x];
+    return o;
   },
   all() { return Object.assign({}, this.data); }
 };
@@ -97,8 +124,9 @@ function watchSystemTheme() {
   if (mq.addEventListener) mq.addEventListener('change', on);
   else if (mq.addListener) mq.addListener(on);   // Safari < 14
 }
-function applyGrid(on) {
-  document.body.classList.toggle('nogrid', on !== '1');
+/* 背景网格固定开着：很淡的一层，只为让人看得出桌面边界，不给设置项。 */
+function applyGrid() {
+  document.body.classList.remove('nogrid');
 }
 
 /* ---------------------------------------------------------------- Toast */
@@ -166,23 +194,44 @@ const RESERVED = new Set(['', '.', '..']);
 function normPath(p, cwd) {
   cwd = cwd || '.home';
   if (p === undefined || p === null || String(p).trim() === '') return cwd;
-  p = String(p).trim();
-  if (p === '.') return '.';
-  if (p === '..') {
-    const s = cwd.split('.').filter(Boolean);
-    s.pop();
-    return s.length ? '.' + s.join('.') : '.';
-  }
-  if (p.startsWith('.')) {
-    // 绝对路径：`.home.foo`；末尾的点只是排版，去掉
-    p = p.replace(/\.+$/, '');
+  let s = String(p).trim().replace(/\\/g, '/');
+  if (!s) return cwd;
+  if (s === '/' || s === '.') return '.';
+
+  /* 路径方言（模仿 Linux 终端，底层仍是点分扁平结构）：
+   *   /            根                 /home/notes = .home.notes
+   *   ~            .home
+   *   @            当前目录           @、@/notes、@.notes
+   *   ..           上一级             ../x
+   *   "/" 与 "." 都是分隔符，反斜杠也当分隔符。
+   */
+  const cwdSegs = cwd === '.' ? [] : cwd.slice(1).split('.');
+  let base, rest;
+  if (s === '~' || s.startsWith('~/') || s.startsWith('~.')) {
+    base = []; rest = 'home/' + s.replace(/^~[\/.]?/, '');
+  } else if (s === '@') {
+    return cwd.toLowerCase();
+  } else if (s.startsWith('@')) {
+    base = cwdSegs.slice(); rest = s.slice(1);
+  } else if (s.startsWith('/')) {
+    base = []; rest = s.slice(1);
+  } else if (s.startsWith('..')) {
+    base = cwdSegs.slice(); rest = s;
+  } else if (s.startsWith('.')) {
+    base = []; rest = s.replace(/^\.+/, '');
   } else {
-    p = (cwd === '.' ? '.' : cwd + '.') + p;
+    base = cwdSegs.slice(); rest = s;
   }
-  const out = [];
-  for (const seg of p.split('.')) {
+
+  const out = base.slice();
+  /* ".." 里含点，直接 split 会被当成分隔符吃掉，先换成占位符 */
+  rest = rest.replace(/\.\./g, '\u0001');
+  for (const seg of rest.split(/[\/.]+/)) {
     if (!seg) continue;
-    if (seg === '..') { out.pop(); continue; }
+    if (seg === '\u0001') { out.pop(); continue; }
+    if (seg === '~') { out.length = 0; out.push('home'); continue; }
+    /* 路径中间出现的 @ 代表「当前目录」这个绝对位置 */
+    if (seg === '@') { out.length = 0; out.push(...cwdSegs); continue; }
     out.push(seg);
   }
   return (out.length ? '.' + out.join('.') : '.').toLowerCase();
@@ -495,7 +544,7 @@ const FS = {
     } catch (e) {}
   },
 
-  exists(p) { return this.idx.has(p) || this.temp.has(p) || this.virtualStat(p); },
+  exists(p) { return this.idx.has(p) || this.temp.has(p) || DIRS.indexOf(p) >= 0 || this.virtualStat(p); },
   isVirtual(p) {
     return p === '.proc' || p.startsWith('.proc.') || p === '.localstorage' || p.startsWith('.localstorage.') ||
       p === '.pkg' || p.startsWith('.pkg.') || p === '.temp' || p.startsWith('.temp.') ||
@@ -609,6 +658,14 @@ const FS = {
     const seg = baseName(p);
     const err = checkName(seg);
     if (err) throw new Error(err + '（' + seg + '）');
+    /* 父目录必须存在。点号既是分隔符又常被当成扩展名，于是
+     * `write(".home.a.txt")` 会被解析成「.home.a 目录下的 txt」，
+     * 默默在不存在的地方造一个谁也看不见的文件（`ls .home` 永远列不出来）。
+     * 与其留下幽灵，不如当场报错——这也和 mkdir 的规则保持一致。 */
+    const par = parentPath(p);
+    if (par !== '.' && !this.exists(par) && !this.temp.has(par)) {
+      throw new Error('父目录不存在: ' + par + '（点名就是路径分隔符，文件名不要带点）');
+    }
     if (p.startsWith('.localstorage.')) {
       const key = decodeLsName(p.slice(14));
       if (key === null) throw new Error('localStorage 键名不合法');

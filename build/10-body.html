@@ -8,16 +8,8 @@
 <noscript><div class="noscript">hterminal 需要 JavaScript：请启用后重新打开本页。</div></noscript>
 
 <div class="app" id="app">
-  <!-- 顶部控制 / 状态栏：左边品牌与当前目录，中间符号控制键，右边窗口与「更多」 -->
+  <!-- 顶部控制栏：只有按键。品牌 / 版本 / 路径都不占位置，顶栏从 ⌃ 开始 -->
   <header class="topbar" id="topbar" data-state="ok">
-    <div class="tb-left">
-      <a class="tb-brand" id="tbBrand" href="#" title="关于 hterminal">
-        <b>hterminal</b>
-        <span class="tb-ver" id="tbVer">0.0.0.1</span>
-      </a>
-      <span class="tb-where" id="tbWhere" title="当前目录">.home</span>
-    </div>
-
     <div class="tb-mid" id="ctrlRow" role="toolbar" aria-label="终端控制键">
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
       <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
@@ -64,7 +56,7 @@
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">0.0.0.1</span></div>
+      <div class="boot-title">hterminal <span id="bootVer">0.0.0.2</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -91,7 +83,7 @@
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.1</span></div>
+      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.2</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -109,33 +101,24 @@
     <section class="drawer__section">
       <div class="drawer__title">外观</div>
       <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
-      <div class="drawer__row"><span>字号</span><input id="setFont" type="range" min="9" max="26" step="1"><b id="setFontVal">14</b></div>
+      <div class="drawer__row"><span>终端字号</span><input id="setFont" type="range" min="9" max="26" step="1" aria-label="终端字号"><b id="setFontVal">14</b></div>
+      <div class="drawer__row"><span>显示行数</span><input id="setRows" type="range" min="0" max="80" step="1" aria-label="显示行数"><b id="setRowsVal">自动</b></div>
       <div class="drawer__row"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
-      <div class="drawer__row"><span>光标形态</span>
-        <div class="seg" id="setCursorStyle" role="group" aria-label="光标形态">
-          <button type="button" data-cursor="bar" aria-pressed="true" title="竖线（bar）">▏</button>
-          <button type="button" data-cursor="block" aria-pressed="false" title="方块（block）">▌</button>
-          <button type="button" data-cursor="underline" aria-pressed="false" title="下划线（underline）">▁</button>
-        </div>
+      <div class="drawer__row"><span>按键振动</span>
+        <label class="sw" title="按键 / 响铃时短振动"><input type="checkbox" id="setHaptic"><i></i></label>
       </div>
-      <div class="drawer__row"><span>光标闪烁</span>
-        <label class="sw" title="闪烁 / 不闪烁"><input type="checkbox" id="setCursorBlink"><i></i></label>
-      </div>
-      <div class="drawer__row"><span>背景网格</span>
-        <label class="sw" title="显示 / 隐藏桌面网格"><input type="checkbox" id="setGrid"><i></i></label>
-      </div>
-      <div class="drawer__note">主题跟随系统：系统切换深/浅色时自动跟随，不提供手动开关。</div>
+      <div class="drawer__note">主题跟随系统，系统切换深/浅色时自动跟随。「显示行数」固定终端高度（0 = 自动铺满），与参考项目一致。</div>
     </section>
 
     <section class="drawer__section">
       <div class="drawer__title">终端</div>
-      <div class="drawer__row"><span>提示符</span><input id="setPrompt" type="text" maxlength="16"></div>
+      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">.home&gt; </b></div>
       <div class="drawer__row"><span>历史条数</span><b id="stHist">—</b></div>
       <div class="drawer__grid">
         <button class="dbtn" id="btnClearHist">清空历史</button>
         <button class="dbtn" id="btnRestartTerm">重启底层终端</button>
       </div>
-      <div class="drawer__note">Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出终端。上下方向键翻历史，Tab 补全路径；顶栏的 ⌃⌥⇧ 可短按锁定、长按当组合键。</div>
+      <div class="drawer__note">提示符固定为「当前路径&gt; 」，路径里的 <code>@</code> 表示当前目录。Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出；F5 刷新、F11 全屏、F12 开发者工具都交给浏览器。</div>
     </section>
 
     <section class="drawer__section">
@@ -171,12 +154,12 @@
         <label class="sw" title="浏览器直接请求模型服务，跳过本地后端"><input type="checkbox" id="setAgentDirect"><i></i></label>
       </div>
       <div class="drawer__note" data-when="direct" hidden>
-        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连模式下 API Key 以明文存在本机
-        localStorage 和 <code>.config.settings</code> 里，任何能打开这个页面、或用过这台设备的人都能读走；
-        请求也直接从你的浏览器发出。请只用临时/低额度密钥测试。在意安全就把开关关掉，用下面后端模式——密钥只留在服务端。
+        <b style="color:var(--amber)">⚠ 密钥风险</b>：直连时请求从你自己的浏览器直接发出，密钥会出现在网络面板与任何同页脚本里。
+        <b>好处是本项目不把它写进磁盘</b>——不进 localStorage、不进 <code>.config.settings</code>、不进 IndexedDB，
+        刷新或关页即消失。仍然建议只用临时 / 低额度密钥；在意安全就把开关关掉，改用后端模式：密钥只在服务端环境变量里。
       </div>
       <div class="drawer__row" data-when="direct" hidden><span>API 地址</span><input id="setAgentDirectUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com"></div>
-      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…"></div>
+      <div class="drawer__row" data-when="direct" hidden><span>API Key</span><input id="setAgentKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…（仅本次会话）"></div>
       <div class="drawer__row" data-when="direct" hidden><span>深度思考</span>
         <label class="sw" title="开启后先输出推理过程，更慢也更费 token"><input type="checkbox" id="setAgentThinking"><i></i></label>
       </div>
@@ -190,14 +173,15 @@
         </select>
       </div>
       <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" spellcheck="false" placeholder="deepseek-flash"></div>
-      <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="60" step="1"></div>
+      <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="120" step="1"></div>
       <div class="drawer__grid">
         <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
         <button class="dbtn" id="btnAgentExport">导出会话 JSONL</button>
         <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
         <button class="dbtn danger" id="btnAgentClear">清空会话</button>
       </div>
-      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
+      <div class="drawer__note">直连默认 <code>deepseek-flash</code>（DeepSeek V4.1 Flash，OpenAI 兼容格式）。<b>直连的 API Key 只存在内存里</b>：不写 localStorage、不写 <code>.config.settings</code>，刷新即消失。<br>
+      后端模式下密钥只放服务端环境变量，前端永远接触不到；后端仅监听本机，只做格式转换与转发，不保存对话。</div>
     </section>
 
     <section class="drawer__section">
@@ -210,7 +194,10 @@
       <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span></b></div>
       <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">W</span></b></div>
       <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">M</span></b></div>
-      <div class="drawer__note">Ctrl / Alt 组合被尽量接管（F 键与 Win 键除外）。终端内的 Ctrl+C / Ctrl+D 等仍按终端语义工作。</div>
+      <div class="drawer__row"><span>刷新（重载）</span><b><span class="kbd">F5</span></b></div>
+      <div class="drawer__row"><span>全屏 / 退出</span><b><span class="kbd">F11</span></b></div>
+      <div class="drawer__row"><span>开发者工具</span><b><span class="kbd">F12</span></b></div>
+      <div class="drawer__note"><b>F5 / F12 原样交给浏览器</b>（刷新、开发者工具），不拦也不转发给终端；<b>F11 由软件接管</b>，与顶栏 ⛶ 完全同一套行为和样式。其余 Ctrl / Alt 组合尽量接管。终端内的 Ctrl+C / Ctrl+D 仍按终端语义工作。</div>
     </section>
 
     <section class="drawer__section">
@@ -219,14 +206,19 @@
         <button class="dbtn danger" id="btnNuke">清除本页全部数据</button>
         <button class="dbtn" id="btnAbout">关于 / 许可证</button>
       </div>
-      <div class="drawer__note">会清空 IndexedDB、localStorage 与缓存，然后重新加载页面。不可撤销。</div>
+      <div class="drawer__row"><span>依赖缓存</span><b id="stDeps">—</b></div>
+      <div class="drawer__grid">
+        <button class="dbtn" id="btnClearDeps">只清依赖缓存</button>
+      </div>
+      <div class="drawer__note">「清除本页全部数据」会逐个删掉<b>所有</b> IndexedDB 库、清空 localStorage / sessionStorage、删掉全部 Cache Storage，注销 Service Worker，最后强制重载页面——什么都不留。依赖缓存只占几 MB，单独清掉不影响你的文件与会话。</div>
     </section>
-  </div>
 
-  <footer class="drawer__foot">
-    Apache-2.0 OR MIT 双许可 · 本项目由 AI 智能体生成并维护<br>
-    xterm.js (MIT) · Pyodide (MPL-2.0) · 经 CDN 引用
-  </footer>
+    <footer class="drawer__foot">
+      Apache-2.0 OR MIT 双许可 · 本项目由 AI 智能体生成并维护<br>
+      xterm.js (MIT) · @xterm/addon-fit (MIT) · @xterm/addon-unicode11 (MIT)<br>
+      Pyodide (MPL-2.0) · marked (MIT) · html2canvas (MIT) · 经 CDN 引用并缓存到 IndexedDB
+    </footer>
+  </div>
 </aside>
 
 <div id="modal-root"></div>

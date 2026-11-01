@@ -11,7 +11,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.1';
+let HT_VERSION = '0.0.0.2';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
@@ -205,7 +205,7 @@ class LineEditor {
   }
   async submit() {
     const line = this.buf;
-    this.buf = ''; this.cur = 0; this.histIdx = this.history.length; this.draft = '';
+    this.buf = ''; this.cur = 0; this.draft = '';
     out('\r\n');
     if (line.trim()) {
       if (this.history[this.history.length - 1] !== line) {
@@ -214,6 +214,10 @@ class LineEditor {
         if (this.o.onHistory) { try { this.o.onHistory(this.history); } catch (e) {} }
       }
     }
+    /* 关键：histIdx 必须在这之后再对齐。
+     * 原来在 push 之前就把 histIdx 设成旧 length，push 之后 length 又 +1，
+     * 于是第一次按 ↑ 直接落到 length-2 —— 用户看到的就是「跳到上上条」。 */
+    this.histIdx = this.history.length;
     this.busy = true;
     try {
       await this.o.onSubmit(line);
@@ -248,8 +252,14 @@ class LineEditor {
     if (this.closed) return;
     this.queue = this.queue.then(() => this.submitText(text)).catch(() => {});
   }
+  /* 原始模式：把按键原样交给外部（vim/nano 这类全屏 TUI 用），不走行编辑。 */
+  setRaw(fn) {
+    this.raw = fn || null;
+    if (!fn) { this.redraw(); }
+  }
   feed(data) {
     if (this.closed) return;
+    if (this.raw) { try { this.raw(data); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); } return; }
     if (this.busy) {
       if (data.includes('\x03')) { this.interrupted = true; out('^C\r\n'); writeErr('（同步执行无法中断；若是异步任务，请等待其检查 hterm.interrupted）\r\n'); }
       return;
@@ -457,7 +467,10 @@ function makeShell(ctx) {
     running: true,
     history: ctx.history || [],
     last: undefined,
-    lastError: null
+    lastError: null,
+    mode: 'jshel',          // jshel | zsh（zsh 时整行交给兼容层）
+    cols: ctx.cols || 80,
+    rows: ctx.rows || 24
   };
 
   /* ---- 输出与 console ---- */
@@ -921,14 +934,163 @@ function makeShell(ctx) {
   return api;
 }
 
+
+/* ============================================================================
+ * Worker 侧的 DOM / window 代理
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * Worker 里天生没有 DOM：`document` 是 undefined，`window` 只是 globalThis。
+ * 以前在控制台敲 `document.title` 直接 ReferenceError，智能体也会误以为
+ * 「这个环境没有页面」。这里补一层代理，把常用的那部分接回主线程。
+ *
+ * 重要的取舍：**跨线程只能异步**。所以
+ *   - 属性读取用方法：await page.title()
+ *   - 元素操作返回句柄，句柄的方法是 async 的；不 await 也会照样发出请求
+ *   - localStorage 用「启动时拉一份快照」实现同步读，写回是异步的
+ * 想拿到 100% 原生的同步 DOM，请用智能体窗口里的 js 工具——那段代码本来就在主线程。
+ * ==========================================================================*/
+
+function makeElHandle(sel, c) {
+  const op = (name, ...args) => c('dom.op', name, [sel, ...args]);
+  const h = {
+    __sel: sel,
+    get: () => op('query'),
+    text: () => op('text'),
+    html: () => op('html'),
+    attr: (n) => op('attr', n),
+    rect: () => op('rect'),
+    css: (props) => op('computed', props),
+    exists: () => op('exists'),
+    setText: (v) => op('setText', v),
+    setValue: (v) => op('setValue', v),
+    setAttr: (n, v) => op('setAttr', n, v),
+    click: () => op('click'),
+    /* 让 el.classList.add('x') 这种最常见写法不用改 */
+    classList: {
+      add: (...cs) => { /* 逐个累加 */ let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('addClass', c2)); return p; },
+      remove: (...cs) => { let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('removeClass', c2)); return p; },
+      toggle: (c2, on) => op('toggleClass', c2, on),
+      contains: (c2) => op('hasClass', c2)
+    },
+    toString() { return '[Element ' + sel + ']'; }
+  };
+  return h;
+}
+
+function installDomProxy(call) {
+  const c = (op, ...args) => call('dom.op', op, args);
+
+  const page = {
+    /* 元信息 */
+    title: () => c('title'),
+    url: () => c('url'),
+    ready: () => c('readyState'),
+    /* 查询 */
+    q: (sel) => c('query', sel),
+    all: (sel, n) => c('all', sel, n),
+    text: (sel) => c('text', sel),
+    html: (sel) => c('html', sel),
+    attr: (sel, n) => c('attr', sel, n),
+    rect: (sel) => c('rect', sel),
+    css: (sel, props) => c('computed', sel, props),
+    exists: (sel) => c('exists', sel),
+    /* 改 */
+    click: (sel) => c('click', sel),
+    setText: (sel, v) => c('setText', sel, v),
+    setValue: (sel, v) => c('setValue', sel, v),
+    setAttr: (sel, n, v) => c('setAttr', sel, n, v),
+    /* 界面 */
+    toast: (t) => c('toast', t),
+    ask: (title, body) => c('dialog', title, body),
+    wins: () => c('wins'),
+    win: (opts) => c('openWindow', opts),
+    shot: (sel, opts) => call('shot.page', sel || null, opts || {}),
+    /* 常用组合：把一段 HTML 直接开成窗口 */
+    show: (title, html, opts) => c('openWindow', Object.assign({ type:'browser', title, html }, opts || {}))
+  };
+
+  /* document 外壳：querySelector 返回句柄；title/readyState 走 async 方法，
+   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。 */
+  const document = {
+    get title() { return page._titleCache || ''; },
+    set title(v) { page._titleCache = String(v); c('setTitle', String(v)); },
+    get readyState() { return 'interactive'; },
+    querySelector: (sel) => makeElHandle(sel, call),
+    querySelectorAll: (sel) => ({ length:null, async items() { const r = await c('all', sel); return r.items; } }),
+    getElementById: (id) => makeElHandle('#' + id, call),
+    createElement: (tag) => ({ __virtual:true, tag, textContent:'', innerHTML:'', appendChild(){ return this; } }),
+    get body() { return makeElHandle('body', call); },
+    get head() { return makeElHandle('head', call); },
+    addEventListener: () => { /* worker 里监听 DOM 事件没有意义，静默吞掉 */ },
+    removeEventListener: () => {},
+    location: {
+      get href() { return page._urlCache || ''; },
+      reload: () => call('page.reload').catch(() => {})
+    }
+  };
+
+  /* localStorage：同步读快照，异步写回。第一次访问时后台刷新一次快照。 */
+  let snap = Object.create(null);
+  let snapAt = 0;
+  const refresh = () => c('ls.all').then(o => { snap = Object.assign(Object.create(null), o || {}); snapAt = Date.now(); }).catch(() => {});
+  refresh();
+  const localStorage = {
+    getItem: (k) => (k in snap ? snap[k] : null),
+    setItem: (k, v) => { snap[k] = String(v); c('ls.set', k, String(v)).catch(() => {}); },
+    removeItem: (k) => { delete snap[k]; c('ls.set', k, '').catch(() => {}); },
+    key: (i) => Object.keys(snap)[i] || null,
+    get length() { return Object.keys(snap).length; },
+    clear: () => { for (const k of Object.keys(snap)) delete snap[k]; c('ls.clear').catch(() => {}); },
+    __refresh: refresh,
+    __snapshot: () => ({ ...snap, __at:snapAt })
+  };
+
+  const windowShim = {
+    document, localStorage, page,
+    get location() { return { href: page._urlCache || '', reload: () => call('page.reload').catch(() => {}) }; },
+    alert: (m) => c('toast', String(m)),
+    confirm: (m) => c('dialog', '请确认', String(m)),
+    prompt: (m, d) => c('dialog', String(m), String(d || '')),
+    open: (url) => c('openWindow', { type:'browser', url:String(url) }),
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    matchMedia: (q) => ({ matches:/dark/.test(String(q)) ? document.body : false, addEventListener:()=>{}, addListener:()=>{} }),
+    devicePixelRatio: 1,
+    innerWidth: 1280, innerHeight: 800,
+    navigator: { userAgent:'hterminal-worker', language:'zh-CN', vibrate:()=>{} }
+  };
+
+  return { page, document, localStorage, windowShim };
+}
+
 /* ---------------------------------------------------------------- Shell 启动 */
 async function bootShell(init) {
   const history = init.history || (await call('history.get').catch(() => [])) || [];
   historyCache = history;
   let cwd = init.cwd || '.home';
 
-  // 注入 console
-  globalThis.window = globalThis;
+  /* 先把主线程的 DOM 接过来：之后 window / document / page / localStorage 都能用 */
+  let DOMX = null;
+  try {
+    DOMX = installDomProxy(call);
+    /* 逐个挂，不要 Object.assign(globalThis, …)：Worker 里的 location 是只读的
+     * WorkerLocation，赋值会抛 TypeError，整个 try 就白做了（表现为 page 为 null）。 */
+    globalThis.document = DOMX.document;
+    globalThis.localStorage = DOMX.localStorage;
+    globalThis.page = DOMX.page;
+    globalThis.window = globalThis;
+    for (const k of ['document', 'localStorage', 'page', 'alert', 'confirm', 'prompt', 'open', 'getComputedStyle', 'matchMedia']) {
+      try { Object.defineProperty(globalThis, k, { value: DOMX.windowShim[k], writable:true, configurable:true }); } catch (e) {}
+    }
+    try { globalThis.navigator = DOMX.windowShim.navigator; } catch (e) {}
+    /* 缓存一份元信息，让 document.title / location.href 读起来像真的 */
+    call('dom.op', 'title', []).then(t => { globalThis.page._titleCache = t; }).catch(() => {});
+    call('dom.op', 'url', []).then(u => { globalThis.page._urlCache = u; }).catch(() => {});
+  } catch (e) {
+    globalThis.window = globalThis;
+    globalThis.page = null;
+  }
   globalThis.console = {
     log: (...a) => out(fmtArgs(a) + '\r\n'),
     info: (...a) => out(ANSI.blue + fmtArgs(a) + ANSI.reset + '\r\n'),
@@ -950,12 +1112,18 @@ async function bootShell(init) {
   Object.assign(globalThis, api);
 
   const editor = new LineEditor({
-    prompt: () => (init.prompt || '> '),
+    prompt: () => (api.__state.mode === 'zsh' ? api.__state.cwd + '% ' : api.__state.cwd + '> '),
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
     onSubmit: async (line) => {
       if (!line.trim()) return;
+      const zsh = api.__state.mode === 'zsh';
+      if (zsh || COMPAT.isShellLine(line)) {
+        const r = await COMPAT.execLine(line);
+        if (r && r.exit) throw EXIT;
+        return;
+      }
       try { await api.run(line); }
       catch (e) {
         if (e === EXIT) throw e;
@@ -964,6 +1132,125 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
+  /* ---------------------------------------------------------------- Linux 兼容层
+   * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
+   * 这样 `ls -la | grep txt > out.txt` 这类写法能直接用，并且 `zsh` 之后
+   * 整个行编辑器进入原生模式（提示符变成 `路径% `）。
+   */
+
+  /* ---------------------------------------------------------------- TUI 智能体
+   * 在终端里用智能体：不占窗口，直接打字。
+   *
+   * 故意拆成几个函数而不是塞进一个大方法：
+   *   agentTui.open()    进入（打印横幅）
+   *   agentTui.send(t)   发一条，等它跑完（可 await）
+   *   agentTui.queue(t)  排队；忙的时候自动串行，返回的 Promise 在这一条跑完时 resolve
+   *   agentTui.stop()    立刻中断当前轮，并清空队列
+   *   agentTui.close()   退出
+   * 另外给了短名字 agent(t)，等价于 send——AI 自己写起来更短。
+   */
+  const agentTui = {
+    on: false,
+    _q: [],
+    _busy: false,
+    open() {
+      if (!this.on) {
+        this.on = true;
+        out('\r\n' + ANSI.cyan + '┌─ agent（TUI）' + ANSI.reset + '\r\n');
+        out(ANSI.gray + '│  直接输入任务，Enter 发送\r\n');
+        out(ANSI.gray + '│  agentTui.stop() 中断 · agentTui.queue("…") 排队 · agentTui.close() 退出\r\n');
+        out(ANSI.cyan + '└─' + ANSI.reset + '\r\n');
+      }
+      /* 返回短字符串而不是 this：JSHeL 会把表达式值打印出来，
+       * 返回对象会刷一整屏方法签名，看着像报错。 */
+      return 'agent TUI 已就绪';
+    },
+    async _run(text) {
+      const t = String(text == null ? '' : text).trim();
+      if (!t) return '';
+      out(ANSI.gray + 'you ' + ANSI.reset + t + '\r\n');
+      out(ANSI.gray + '… 思考中' + ANSI.reset);
+      let r;
+      try {
+        r = await call('agent.turn', t);
+      } catch (e) {
+        out('\r\x1b[K' + ANSI.red + '! ' + (e && e.message || e) + ANSI.reset + '\r\n');
+        return '';
+      }
+      out('\r\x1b[K');
+      for (const m of (r && r.messages) || []) {
+        if (m.role === 'assistant' && m.content) out(String(m.content).replace(/\r?\n/g, '\r\n') + '\r\n');
+        if (m.role === 'tool') out(ANSI.gray + '  ← ' + m.name + ': ' + String(m.content || '').replace(/\r?\n/g, ' ⏎ ').slice(0, 400) + ANSI.reset + '\r\n');
+      }
+      out('\r\n');
+      return (r && r.text) || '';
+    },
+    async send(text) {
+      if (!this.on) this.open();
+      if (this._busy) return await this.queue(text);
+      return await this._run(text);
+    },
+    queue(text) {
+      if (!this.on) this.open();
+      return new Promise((resolve) => {
+        this._q.push({ text: String(text == null ? '' : text), resolve });
+        this._drain();
+      });
+    },
+    async _drain() {
+      if (this._busy) return;
+      this._busy = true;
+      while (this._q.length) {
+        const item = this._q.shift();
+        try { item.resolve(await this._run(item.text)); }
+        catch (e) { item.resolve(''); }
+      }
+      this._busy = false;
+    },
+    async stop() {
+      this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
+      try { await call('agent.stop'); } catch (e) {}
+      out(ANSI.yellow + '■ 已请求停止' + ANSI.reset + '\r\n');
+      return true;
+    },
+    status() { return call('agent.status'); },
+    close() {
+      this.on = false;
+      this._q.length = 0;
+      out(ANSI.gray + '已退出 agent（会话仍在 .agent.session）' + ANSI.reset + '\r\n');
+      return true;
+    }
+  };
+  globalThis.agentTui = agentTui;
+  globalThis.agent = (text) => agentTui.send(text);
+
+  /* ---------------------------------------------------------------- 嵌套 shell
+   * 「JSHeL 打开它自己」：新开一个终端窗口，cwd 默认继承当前目录。
+   */
+  const shell = {
+    open(cwd) { return call('shell.open', cwd || api.__state.cwd, true); },
+    here() { return api.__state.cwd; },
+    cd: (p) => api.cd(p),
+    exec: (code) => api.run(code),
+    term: api
+  };
+  globalThis.shell = shell;
+  globalThis.jshel = shell.open;
+
+  COMPAT.attach({
+    out: (t) => out(t),
+    call,
+    state: api.__state,
+    api,
+    editor,
+    version: HT_VERSION,
+    getCwd: () => api.__state.cwd,
+    setCwd: (p) => { api.__state.cwd = p; post({ t:'cwd', path:p }); },
+    get cols() { return api.__state.cols || 80; },
+    get rows() { return api.__state.rows || 24; },
+    kick: () => { editor.promptStr = editor.promptText(); }
+  });
+
   out('\x1b[?2004h');
 
   // 启动横幅必须在提示符之前
@@ -1100,8 +1387,13 @@ self.onmessage = async (ev) => {
     return;
   }
   if (m.t === 'resize') {
+    if (self.__shell) {
+      self.__shell.state.cols = m.cols || self.__shell.state.cols;
+      self.__shell.state.rows = m.rows || self.__shell.state.rows;
+    }
     const ed = self.__shell && self.__shell.editor || self.__py && self.__py.editor;
-    if (ed) { ed.promptStr = ed.promptText(); ed.redraw(); }
+    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉 */
+    if (ed && !ed.raw) { ed.promptStr = ed.promptText(); ed.redraw(); }
     return;
   }
   if (m.t === 'terminate') {
