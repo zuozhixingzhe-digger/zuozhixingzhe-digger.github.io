@@ -3027,8 +3027,9 @@ const WindowManager = {
     const defW = Math.min(opts.w || base[0], vw - 40);
     const defH = Math.min(opts.h || base[1], vh - 90);
     const n = this.cascade++ % 6;
-    const x = opts.x != null ? opts.x : clamp(72 + n * 34, 8, Math.max(8, vw - defW - 8));
-    const y = opts.y != null ? opts.y : clamp(54 + n * 30, 8, Math.max(8, vh - defH - 56));
+    // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
+    const x = opts.x != null ? opts.x : clamp(72 + n * 46, 8, Math.max(8, vw - defW - 8));
+    const y = opts.y != null ? opts.y : clamp(54 + n * 42, 8, Math.max(8, vh - defH - 56));
 
     const el = document.createElement('section');
     el.className = 'win focus';
