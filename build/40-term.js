@@ -55,9 +55,17 @@ function termTheme() {
     magenta: cssVar('--violet') || '#c4b5fd',
     cyan: cssVar('--accent') || '#5eead4',
     white: light ? '#e9f1ef' : '#d6e7e3',
-    brightBlack: light ? '#7b918d' : '#5b7570',
-    brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde68a',
-    brightBlue: '#bae6fd', brightMagenta: '#ddd6fe', brightCyan: '#99f6e4', brightWhite: '#ffffff'
+    // 亮色版必须跟着主题走：xterm 默认 drawBoldTextInBrightColors 为真，
+    // 于是 ANSI 的「粗体+颜色」实际取的是 bright*。浅色主题下若沿用深色主题那套
+    // 淡彩色（#99f6e4 之类），粗体标题会糊在白底上几乎看不见。
+    brightBlack: light ? '#64748b' : '#5b7570',
+    brightRed: light ? '#b91c1c' : '#fca5a5',
+    brightGreen: light ? '#15803d' : '#86efac',
+    brightYellow: light ? '#a16207' : '#fde68a',
+    brightBlue: light ? '#1d4ed8' : '#bae6fd',
+    brightMagenta: light ? '#6d28d9' : '#ddd6fe',
+    brightCyan: light ? '#0f766e' : '#99f6e4',
+    brightWhite: light ? '#1f2937' : '#ffffff'
   };
 }
 
@@ -70,6 +78,134 @@ function getWorkerURL() {
   const blob = new Blob([el.textContent], { type:'text/javascript' });
   WORKER_URL = URL.createObjectURL(blob);
   return WORKER_URL;
+}
+
+/* ---------------------------------------------------------------- 顶栏控制键
+ * 规则抄自参考项目 draw-http-terminal，手感一致：
+ *   · 按住期间修饰键立刻生效（可与随后输入组合）；
+ *   · 松手时：按住期间有输入 → 解锁；按住 ≥0.8s → 解锁；否则（短按无输入）→ 切换锁定；
+ *   · 视觉：锁定＝实心强调色（.k--active）；被按住＝浅强调色（.k--pressing）。
+ */
+const MOD_HOLD_MS = 800;
+const Keys = {
+  sticky: { ctrl:false, alt:false, shift:false },
+  held:   { ctrl:false, alt:false, shift:false },
+  typed:  { ctrl:false, alt:false, shift:false },
+
+  active(m) { return this.sticky[m] || this.held[m]; },
+  anyActive() { return this.active('ctrl') || this.active('alt') || this.active('shift'); },
+
+  refresh() {
+    $$('#ctrlRow [data-mod]').forEach(b => {
+      const m = b.dataset.mod;
+      b.classList.toggle('k--active', !!this.sticky[m]);
+      b.classList.toggle('k--pressing', !!this.held[m]);
+    });
+  },
+  markInput() {
+    for (const m of ['ctrl', 'alt', 'shift']) if (this.held[m]) this.typed[m] = true;
+  },
+  reset() {
+    this.sticky = { ctrl:false, alt:false, shift:false };
+    this.held = { ctrl:false, alt:false, shift:false };
+    this.refresh();
+  },
+
+  /** 按当前修饰键改写终端输入（标准终端键编码）。Shift 只影响字符大小写，不改写。 */
+  shape(str) {
+    this.markInput();
+    const c = this.active('ctrl'), a = this.active('alt');
+    if (!c && !a) return str;
+    let out = '';
+    for (const ch of String(str)) {
+      const code = ch.codePointAt(0);
+      let ctl = null;
+      // 只对拉丁字母做 Ctrl 改写；控制字符（Enter=13、Backspace=127、Esc=27）原样送出，
+      // 否则修饰键会把回车/退格一起吃掉，表现为「按了没反应」。
+      if ((code >= 64 && code <= 90) || (code >= 97 && code <= 122)) ctl = code <= 90 ? code - 64 : code - 96;
+      if (c && !a) out += ctl != null ? String.fromCharCode(ctl) : ch;
+      else if (a && !c) out += '\x1b' + ch;
+      else out += ctl != null ? '\x1b' + String.fromCharCode(ctl) : '\x1b' + ch;
+    }
+    return out;
+  },
+
+  /** 顶栏的 Esc / Tab / 方向键 → 终端序列 */
+  seq(key) {
+    const map = {
+      Escape: '\x1b', Tab: '\t', Enter: '\r', Backspace: '\x7f',
+      ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D',
+      Home: '\x1b[H', End: '\x1b[F', Delete: '\x1b[3~', PageUp: '\x1b[5~', PageDown: '\x1b[6~'
+    };
+    return map[key] || '';
+  }
+};
+
+/** 当前该接收按键的会话：有聚焦的终端窗口就用它，否则用桌面终端。 */
+function activeSession() {
+  const w = (typeof WindowManager !== 'undefined') ? WindowManager.focused() : null;
+  if (w && w.content && w.content.term && !w.content.disposed) return w.content;
+  return TerminalManager.desktop;
+}
+function keepTermFocus() {
+  const s = activeSession();
+  if (s && s.term) { try { s.term.focus(); } catch (e) {} }
+}
+function sendKeyToTerm(text) {
+  const s = activeSession();
+  if (!s) return;
+  if (text) s._post({ t:'in', data:text });
+  if (s.term) { try { s.term.focus(); } catch (e) {} }
+}
+
+function initTopbarKeys() {
+  $$('#ctrlRow [data-mod]').forEach(btn => {
+    const mod = btn.dataset.mod;
+    let pressStart = 0;
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+      pressStart = Date.now();
+      Keys.typed[mod] = false;
+      Keys.held[mod] = true;
+      Keys.refresh();
+    });
+    const finish = () => {
+      if (!pressStart) return;
+      const dur = Date.now() - pressStart;
+      Keys.held[mod] = false;
+      if (Keys.typed[mod] || dur >= MOD_HOLD_MS) Keys.sticky[mod] = false;
+      else Keys.sticky[mod] = !Keys.sticky[mod];
+      Keys.typed[mod] = false;
+      pressStart = 0;
+      Keys.refresh();
+      keepTermFocus();
+    };
+    btn.addEventListener('pointerup', finish);
+    btn.addEventListener('pointercancel', () => {
+      Keys.held[mod] = false; Keys.typed[mod] = false; pressStart = 0;
+      Keys.refresh(); keepTermFocus();
+    });
+  });
+
+  $$('#ctrlRow [data-key]').forEach(btn => {
+    btn.addEventListener('pointerdown', e => e.preventDefault());
+    btn.addEventListener('click', e => { e.preventDefault(); sendKeyToTerm(Keys.shape(Keys.seq(btn.dataset.key))); });
+  });
+
+  // 实体键盘按住 Ctrl/Alt/Shift：只做浅色提示（组合键本身由浏览器/终端原生处理）
+  const physOf = (k) => k === 'Control' ? 'ctrl' : k === 'Alt' ? 'alt' : k === 'Shift' ? 'shift' : null;
+  window.addEventListener('keydown', e => { const m = physOf(e.key); if (m) { Keys.held[m] = true; Keys.refresh(); } }, true);
+  window.addEventListener('keyup',   e => { const m = physOf(e.key); if (m) { Keys.held[m] = false; Keys.refresh(); } }, true);
+  window.addEventListener('blur', () => { Keys.held = { ctrl:false, alt:false, shift:false }; Keys.refresh(); });
+}
+
+/** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
+function deskBox() {
+  const d = document.getElementById('desk');
+  if (!d) return { w: window.innerWidth, h: window.innerHeight };
+  const r = d.getBoundingClientRect();
+  return { w: Math.max(120, Math.round(r.width)), h: Math.max(120, Math.round(r.height)) };
 }
 
 /* ---------------------------------------------------------------- 终端实例 */
@@ -128,7 +264,7 @@ class TerminalSession {
       this.term.loadAddon(this.fit);
       this.fit.fit();
     } catch (e) { console.warn('fit 失败', e); }
-    this.term.onData(d => this._post({ t:'in', data:d }));
+    this.term.onData(d => { this._post({ t:'in', data:Keys.shape(d) }); });
     this.term.onResize(({ cols, rows }) => this._post({ t:'resize', cols, rows }));
     this._ro = new ResizeObserver(() => this.fitNow());
     this._ro.observe(this.container);
@@ -170,7 +306,7 @@ class TerminalSession {
     };
     const dims = this.term && this.term.cols ? { cols:this.term.cols, rows:this.term.rows } : { cols:80, rows:24 };
     this._post({
-      t:'init', role, cwd:this.cwd, prompt:this.role === 'shell' ? (Settings.get('prompt') || '> ') : '>>> ',
+      t:'init', role, cwd:this.cwd, version:HT_VERSION, prompt:this.role === 'shell' ? (Settings.get('prompt') || '> ') : '>>> ',
       cols:dims.cols, rows:dims.rows, history:this.opts.history || [], code:this.opts.code || '',
       banner:this.opts.banner !== false
     });
@@ -254,7 +390,10 @@ const TerminalManager = {
       id: 'desktop',
       pid: 100,
       history: loadHistory(),
-      onCwd: (p) => { const el = document.getElementById('hudWhere'); if (el) el.textContent = p; },
+      onCwd: (p) => {
+        const a = document.getElementById('tbWhere'); if (a) a.textContent = p;
+        const b = document.getElementById('drSub'); if (b) b.textContent = 'jshel · ' + p;
+      },
       onExit: () => exitDesktop(),
     });
     this.sessions.add(this.desktop);
@@ -337,14 +476,14 @@ const WindowManager = {
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'智能体', editor:'编辑器', about:'关于', html:'窗口' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
-    const vw = window.innerWidth, vh = window.innerHeight;
+    const { w:vw, h:vh } = deskBox();
     const base = TYPE_SIZE[opts.type] || [780, 500];
-    const defW = Math.min(opts.w || base[0], vw - 40);
-    const defH = Math.min(opts.h || base[1], vh - 90);
+    const defW = Math.min(opts.w || base[0], vw - 24);
+    const defH = Math.min(opts.h || base[1], vh - 32);
     const n = this.cascade++ % 6;
     // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
-    const x = opts.x != null ? opts.x : clamp(72 + n * 46, 8, Math.max(8, vw - defW - 8));
-    const y = opts.y != null ? opts.y : clamp(54 + n * 42, 8, Math.max(8, vh - defH - 56));
+    const x = opts.x != null ? opts.x : clamp(24 + n * 46, 8, Math.max(8, vw - defW - 8));
+    const y = opts.y != null ? opts.y : clamp(12 + n * 42, 8, Math.max(8, vh - defH - 12));
 
     const el = document.createElement('section');
     el.className = 'win focus';
@@ -438,16 +577,20 @@ const WindowManager = {
     this.focus(win.id);
     const startX = e.clientX, startY = e.clientY;
     const r = win.el.getBoundingClientRect();
-    const ox = r.left, oy = r.top;
+    const dbox = document.getElementById('desk').getBoundingClientRect();
+    // style.left/top 是相对 #desk 的，getBoundingClientRect 是相对视口的——必须先换算，
+    // 否则顶栏高度会被重复计进位移（表现为每次拖动都往下/右多跳一截）。
+    const ox = r.left - dbox.left, oy = r.top - dbox.top;
     let snap = null;
     const snapEl = document.getElementById('winSnap');
     const move = (ev) => {
       const nx = ox + ev.clientX - startX;
       const ny = oy + ev.clientY - startY;
-      win.el.style.left = clamp(nx, -win.el.offsetWidth + 80, window.innerWidth - 80) + 'px';
-      win.el.style.top = clamp(ny, 0, window.innerHeight - 40) + 'px';
+      const box = deskBox();
+      win.el.style.left = clamp(nx, -win.el.offsetWidth + 80, box.w - 80) + 'px';
+      win.el.style.top = clamp(ny, 0, box.h - 40) + 'px';
       win.el.classList.add('dragging');
-      const vw = window.innerWidth, vh = window.innerHeight;
+      const vw = box.w, vh = box.h;
       if (ev.clientY <= 6) snap = { x:0, y:0, w:vw, h:vh };
       else if (ev.clientX <= 6) snap = { x:0, y:0, w:vw / 2, h:vh };
       else if (ev.clientX >= vw - 6) snap = { x:vw / 2, y:0, w:vw / 2, h:vh };
@@ -467,7 +610,8 @@ const WindowManager = {
         win.restoreRect = { x:parseFloat(win.el.style.left), y:parseFloat(win.el.style.top), w:r.width, h:r.height };
         win.el.style.left = snap.x + 'px'; win.el.style.top = snap.y + 'px';
         win.el.style.width = snap.w + 'px'; win.el.style.height = snap.h + 'px';
-        win.maximized = snap.w === window.innerWidth && snap.h === window.innerHeight;
+        const box = deskBox();
+        win.maximized = snap.w === box.w && snap.h === box.h;
         win.el.classList.toggle('max', win.maximized);
         win.content && win.content.onResize && win.content.onResize();
       }
@@ -550,14 +694,15 @@ const WindowManager = {
     const w = this.windows.get(id);
     if (!w) return;
     if (w.maximized) {
-      const r = w.restoreRect || { x:60, y:60, w:760, h:480 };
+      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
       w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px';
       w.el.style.width = r.w + 'px'; w.el.style.height = r.h + 'px';
       w.maximized = false;
       w.el.classList.remove('max');
     } else {
       const rect = w.el.getBoundingClientRect();
-      w.restoreRect = { x:rect.left, y:rect.top, w:rect.width, h:rect.height };
+      const dbox = document.getElementById('desk').getBoundingClientRect();
+      w.restoreRect = { x:rect.left - dbox.left, y:rect.top - dbox.top, w:rect.width, h:rect.height };
       w.el.style.left = '0px'; w.el.style.top = '0px';
       w.el.style.width = '100%'; w.el.style.height = '100%';
       w.maximized = true;

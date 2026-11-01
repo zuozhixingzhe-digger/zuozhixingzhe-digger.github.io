@@ -94,18 +94,78 @@ async function loadPackageMain(spec) {
   throw new Error('加载失败：' + (lastErr && lastErr.message || lastErr));
 }
 
+/* ---------------------------------------------------------------- 应用启动器 / 全屏 */
+const AppMenu = {
+  el: null,
+  toggle(btn) {
+    if (this.el) { this.close(); return; }
+    const el = document.getElementById('launcher');
+    if (!el) return;
+    el.hidden = false;
+    this.el = el;
+    // 点空白处关闭（延迟半拍，避免与本次点击同归于尽）
+    setTimeout(() => {
+      document.addEventListener('pointerdown', this._outside, true);
+    }, 0);
+    document.addEventListener('keydown', this._esc, true);
+  },
+  _outside(e) {
+    if (AppMenu.el && !AppMenu.el.contains(e.target) && !e.target.closest('[data-act="apps"]')) AppMenu.close();
+  },
+  _esc(e) { if (e.key === 'Escape') { AppMenu.close(); } },
+  close() {
+    if (!this.el) return;
+    this.el.hidden = true;
+    this.el = null;
+    document.removeEventListener('pointerdown', this._outside, true);
+    document.removeEventListener('keydown', this._esc, true);
+    keepTermFocus();
+  }
+};
+
+function toggleFullscreen() {
+  const el = document.documentElement;
+  const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (isFs) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) {
+        const p = req.call(el);
+        if (p && p.catch) p.catch(() => toast('当前环境不允许全屏', true));
+      } else { toast('当前环境不支持全屏', true); }
+    }
+  } catch (e) { toast('全屏切换失败：' + (e.message || e), true); }
+  setTimeout(() => {
+    const btn = document.querySelector('[data-act="fullscreen"]');
+    if (btn) btn.classList.toggle('k--active', !!(document.fullscreenElement || document.webkitFullscreenElement));
+    TerminalManager.applyAll();
+  }, 320);
+}
+
 /* ---------------------------------------------------------------- 抽屉 */
 const Drawer = {
   opened: false,
   init() {
-    $$('#hud [data-act]').forEach(b => b.onclick = () => {
-      const a = b.dataset.act;
-      if (a === 'more') { this.opened ? this.close() : this.open(); }
-      else if (a === 'term') WindowManager.open({ type:'shell' });
-      else if (a === 'browser') WindowManager.open({ type:'browser' });
-      else if (a === 'files') WindowManager.open({ type:'files' });
-      else if (a === 'agent') WindowManager.open({ type:'agent' });
+    // 顶栏右侧：▦ 应用启动器 / ⛶ 全屏 / ☰ 更多
+    $$('#topbar [data-act]').forEach(b => {
+      b.onclick = () => {
+        const a = b.dataset.act;
+        if (a === 'more') { this.opened ? this.close() : this.open(); }
+        else if (a === 'apps') AppMenu.toggle(b);
+        else if (a === 'fullscreen') toggleFullscreen();
+      };
     });
+    // 启动器里的应用项
+    $$('#launcher [data-app]').forEach(b => {
+      b.onclick = () => { AppMenu.close(); WindowManager.open({ type:b.dataset.app }); };
+    });
+    const launcherMore = $('#launcher [data-act="more"]');
+    if (launcherMore) launcherMore.onclick = () => { AppMenu.close(); this.open(); };
+    // 品牌 → 关于
+    const brand = $('#tbBrand');
+    if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
     $('#drawerClose').onclick = () => this.close();
     $('#drawer-overlay').onclick = () => this.close();
     const bindRange = (id, key, fmt) => {
@@ -162,6 +222,7 @@ const Drawer = {
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
     $('#stVersion').textContent = 'v' + HT_VERSION;
+    ['#tbVer', '#drVersion', '#bootVer'].forEach(sel => { const el = $(sel); if (el) el.textContent = HT_VERSION; });
     if (this.opened) this.refresh();
   },
   open(section) {
@@ -174,7 +235,7 @@ const Drawer = {
     this.checkBackend();
     if (section) {
       setTimeout(() => {
-        const secs = $$('.dsec', $('#drawer'));
+        const secs = $$('.drawer__section', $('#drawer'));
         const map = { agent:'智能体', fs:'文件系统', pkg:'软件包', term:'终端', ui:'外观' };
         const key = map[section] || section;
         const el = secs.find(s => s.textContent.includes(key));
@@ -258,8 +319,8 @@ const Drawer = {
     const list = Pkg.list();
     const el = $('#pkgList');
     if (!el) return;
-    if (!list.length) { el.innerHTML = '<div class="dnote" style="padding:2px 0">还没有安装包。试试 lodash、dayjs、marked。</div>'; return; }
-    el.innerHTML = list.map(p => `<div class="ditem">
+    if (!list.length) { el.innerHTML = '<div class="drawer__note" style="padding:2px 0">还没有安装包。试试 lodash、dayjs、marked。</div>'; return; }
+    el.innerHTML = list.map(p => `<div class="drawer__item">
       <span class="grow" title="${esc(p.url)}">${esc(p.spec)}</span>
       <span class="tag">${esc(p.name || '')}</span>
       <button data-pkg="${esc(p.spec)}" title="卸载">✕</button></div>`).join('');
@@ -416,6 +477,7 @@ function installKeys() {
     if (isTypingTarget(e.target) && !e.shiftKey && ['a', 'c', 'v', 'x', 'z', 'y'].includes(k)) return;
     // 给开发者工具留门
     if (e.shiftKey && ['i', 'j', 'c'].includes(k)) return;
+    if (e.shiftKey && (e.key === 'Enter')) { e.preventDefault(); toggleFullscreen(); return; }
     if (e.shiftKey) {
       const map = { t:'term', b:'browser', a:'agent', f:'files', p:'python', e:'editor', w:'close', m:'max', d:'desk' };
       if (map[k]) {
@@ -478,6 +540,7 @@ async function boot() {
     WindowManager.init();
     Drawer.init();
     installWindowAPI();
+    initTopbarKeys();
     installKeys();
 
     step('启动底层终端', 12);

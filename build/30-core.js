@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.1.0';
+const HT_VERSION = '0.0.0.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -68,8 +68,7 @@ function applyTheme(t) {
   TerminalManager.applyTheme(t);
 }
 function applyGrid(on) {
-  const s = document.getElementById('screen');
-  if (s) s.style.setProperty('--grid-op', on === '1' ? '.30' : '0');
+  document.body.classList.toggle('nogrid', on !== '1');
 }
 
 /* ---------------------------------------------------------------- Toast */
@@ -276,7 +275,7 @@ return 'done';`
     kind:'func', mime:'application/javascript',
     meta:{ hint:'打印环境信息', interpreter:'js' },
     content:`const u = await navigator.storage.estimate().catch(()=>({}));
-print('hterminal', '0.1.0');
+print('hterminal', '${HT_VERSION}');
 print('UA       ', navigator.userAgent);
 print('CPU      ', navigator.hardwareConcurrency, 'threads');
 print('内存     ', navigator.deviceMemory || '?', 'GB');
@@ -292,7 +291,7 @@ const r = await fs.read(p);
 const lines = String(r.content || '').split('\\n').length;
 print('已放入', p, '，共', lines, '行');`
   },
-  '.sys.version': { kind:'file', mime:'text/plain', content:'hterminal 0.1.0\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
+  '.sys.version': { kind:'file', mime:'text/plain', content:'hterminal ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
   '.sys.license': { kind:'file', mime:'text/plain', content:`Apache License 2.0 OR MIT（双许可，任选其一）
 
 Copyright (c) 2026 hterminal contributors

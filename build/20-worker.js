@@ -9,6 +9,10 @@
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
+/** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
+ *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
+let HT_VERSION = '0.0.0.0';
+
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
   red:'\x1b[31m', green:'\x1b[32m', yellow:'\x1b[33m', blue:'\x1b[34m',
@@ -714,7 +718,7 @@ function makeShell(ctx) {
 
   async function whoami() { out(state.user + '\r\n'); }
   async function uname() {
-    const s = 'hterminal 0.1.0 (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
+    const s = 'hterminal ' + HT_VERSION + ' (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
     out(s + '\r\n');
   }
   async function date() { out(new Date().toString() + '\r\n'); }
@@ -1081,6 +1085,7 @@ self.onmessage = async (ev) => {
   }
   if (m.t === 'init') {
     try {
+      HT_VERSION = m.version || HT_VERSION;
       if (m.role === 'python') await bootPython(m);
       else await bootShell(m);
     } catch (e) {
