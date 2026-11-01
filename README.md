@@ -448,6 +448,7 @@ build/
 modelserver.py             ← 后端（Python）
 modelserver.js             ← 后端（Node）
 modelserver.go             ← 后端（Go）
+LICENSE                    ← 双许可声明（简短）
 LICENSE-APACHE             ← Apache-2.0 全文
 LICENSE-MIT                ← MIT 全文
 licenses/                  ← 第三方许可见 licenses/README.md
@@ -576,6 +577,7 @@ Node 版把请求头写成 `x-htem-client`——少了个 `r`，且 Node 的 hea
 SPDX-License-Identifier: Apache-2.0 OR MIT
 ```
 
+- [LICENSE](LICENSE) —— 简短的双许可声明（推荐从这里开始读）
 - [LICENSE-APACHE](LICENSE-APACHE) —— Apache License 2.0 全文
 - [LICENSE-MIT](LICENSE-MIT) —— MIT 全文
 
