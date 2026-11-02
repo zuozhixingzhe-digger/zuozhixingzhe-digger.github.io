@@ -1,5 +1,5 @@
 /* ============================================================================
- * hterminal · 依赖缓存 / 振动 / 截图 / TUI 智能体 / 嵌套 shell
+ * HTerMinaL · 依赖缓存 / 振动 / 截图 / TUI 智能体 / 嵌套 shell
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -343,7 +343,9 @@ const AgentTuiHost = {
     return true;
   },
   status() {
-    const a = HeadlessAgent.app;
+    /* 用 ensure 而不是读 app：没开过 TUI 的时候也要能看到「历史里有几条」，
+     * 否则用户会以为对话没了。ensure 只建一个 display:none 的宿主。 */
+    const a = HeadlessAgent.ensure();
     return { running: !!(a && a.running), messages: a ? a.messages.length : 0 };
   }
 };
@@ -812,7 +814,7 @@ const DomRpc = {
         return o;
       }
 
-      /* ------------------------------------------------ 宿主能力（hterminal 自己的） */
+      /* ------------------------------------------------ 宿主能力（HTerMinaL 自己的） */
       case 'toast': { toast(String(args[0] || '')); return true; }
       case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
       case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }

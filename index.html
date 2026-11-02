@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
-  hterminal — 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
-  Copyright (c) 2026 hterminal contributors
+  HTerMinaL — 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
+  Copyright (c) 2026 HTerMinaL contributors
   SPDX-License-Identifier: Apache-2.0 OR MIT  （双许可，任选其一）
   本文件由 AI 智能体（WorkBuddy）生成并维护。第三方组件经 CDN 引用：
   xterm.js、@xterm/addon-fit、@xterm/addon-unicode11、marked、html2canvas（均 MIT），
@@ -21,13 +21,13 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="hterminal">
-<meta name="description" content="hterminal：在浏览器里运行的 JS 终端，带一切皆文件文件系统、窗口管理、包管理器、Python 与智能体。">
-<title>hterminal · JS in the browser</title>
+<meta name="apple-mobile-web-app-title" content="HTerMinaL">
+<meta name="description" content="HTerMinaL：在浏览器里运行的 JS 终端，带一切皆文件文件系统、窗口管理、包管理器、Python 与智能体。">
+<title>HTerMinaL · JS in the browser</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23070b0b'/%3E%3Cpath d='M14 20l12 12-12 12' stroke='%235eead4' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M32 44h18' stroke='%23fbbf24' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
 /* =====================================================================
- * hterminal · 设计样式
+ * HTerMinaL · 设计样式
  * 结构沿用参考项目 draw-http-terminal 的「顶部控制栏 + 占满画布的终端 +
  * 右侧更多抽屉」三段式；颜色 token 与 xterm 主题共用同一套变量。
  * 符号字体单独一条 --mono-sym 栈：⌃⌥⇧␛⇥☰⛶ 在缺字体设备上会退化成
@@ -836,12 +836,12 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 </head>
 <body class="term-body">
 <!--
-  hterminal — DOM 骨架片段（由 build.sh 拼进 index.html）
-  Copyright (c) 2026 hterminal contributors
+  HTerMinaL — DOM 骨架片段（由 build.sh 拼进 index.html）
+  Copyright (c) 2026 HTerMinaL contributors
   SPDX-License-Identifier: Apache-2.0 OR MIT  （双许可，任选其一）
   本文件由 AI 智能体（WorkBuddy）生成并维护。
 -->
-<noscript><div class="noscript">hterminal 需要 JavaScript：请启用后重新打开本页。</div></noscript>
+<noscript><div class="noscript">HTerMinaL 需要 JavaScript：请启用后重新打开本页。</div></noscript>
 
 <div class="app" id="app">
   <!-- 顶部控制栏：只有按键。品牌 / 版本 / 路径都不占位置，顶栏从 ⌃ 开始 -->
@@ -878,7 +878,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 
   <!-- 桌面：底层终端永远在最底下 -->
   <main class="desk" id="desk">
-    <div id="term-view"><div id="term" aria-label="hterminal 终端"></div></div>
+    <div id="term-view"><div id="term" aria-label="HTerMinaL 终端"></div></div>
     <div id="window-layer"></div>
     <div class="win-snap" id="winSnap"></div>
     <div id="dock" hidden></div>
@@ -892,7 +892,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">—</span></div>
+      <div class="boot-title">HTerMinaL <span id="bootVer">—</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -919,7 +919,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">—</span></div>
+      <div class="drawer__uname">HTerMinaL <span class="drawer__ver" id="drVersion">—</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -930,6 +930,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
       <div class="drawer__title">状态</div>
       <div class="drawer__row"><span>版本</span><b id="stVersion">—</b></div>
       <div class="drawer__row"><span>会话</span><b id="stSession">—</b></div>
+      <div class="drawer__row"><span>对话</span><b id="stAgent">—</b></div>
       <div class="drawer__row"><span>存储</span><b id="stUsage">—</b></div>
       <div class="drawer__row"><span>后端</span><b id="stBackend">未连接</b></div>
     </section>
@@ -1061,7 +1062,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 
 <script id="worker-src" type="text/js-worker">
 /* ============================================================================
- * hterminal · worker runtime
+ * HTerMinaL · worker runtime
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。此文件被内联进 index.html，作为 Blob Worker 运行。
  * 职责：JS shell 执行、行编辑、历史、补全、包加载、Python(Pyodide) REPL。
@@ -1296,7 +1297,10 @@ class LineEditor {
       out('\r\n');
     } finally {
       this.busy = false;
-      if (!this.closed) { this.promptStr = this.promptText(); out(this.promptStr); }
+      /* 全屏应用（vim/nano）接管期间**绝对不能**补提示符：
+       * 它们把画面画在自己算好的坐标上，这里再 out 一个 ".home $ " 会正好盖在
+       * 正文第一行上（nano 的标题栏和第二行内容就是这么糊掉的）。 */
+      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
     }
   }
   async submitText(text) {
@@ -1310,7 +1314,7 @@ class LineEditor {
       out('\r\n');
     } finally {
       this.busy = false;
-      if (!this.closed) { this.promptStr = this.promptText(); out(this.promptStr); }
+      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
     }
   }
   enqueueSubmit() {
@@ -1526,7 +1530,7 @@ function fmtRows(rows, long) {
 let shellCtx = null;
 
 const EXIT = Symbol('exit');
-const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py']);
+const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','nuke']);
 
 function makeShell(ctx) {
   const state = {
@@ -1537,7 +1541,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | zsh（zsh 时整行交给兼容层）
+    mode: 'jshel',          // jshel | hsl（hsl 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -1806,13 +1810,13 @@ function makeShell(ctx) {
 
   async function whoami() { out(state.user + '\r\n'); }
   async function uname() {
-    const s = 'hterminal ' + HT_VERSION + ' (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
+    const s = 'HTerMinaL ' + HT_VERSION + ' (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
     out(s + '\r\n');
   }
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'jshel', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -1847,7 +1851,7 @@ function makeShell(ctx) {
 
   async function help() {
     const lines = [
-      ['', 'hterminal · JSHeL 快速参考'],
+      ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
@@ -1855,22 +1859,13 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
+      ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
       ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
-      ['提示', '表达式直接回车即可；多行用反斜杠续行；Ctrl+C 取消行；Ctrl+D 退出。'],
+      ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
       out(ANSI.yellow + k.padEnd(6, ' ') + ANSI.reset + v + '\r\n');
-    }
-    /* 兼容层命令单独一段。以前这里被 compat 的 help 整个顶掉，
-     * 敲 help 只看到 40 个命令名，会以为 JSHeL 的函数没了。 */
-    const cc = (typeof COMPAT !== 'undefined' && COMPAT.commands) ? Object.keys(COMPAT.commands).sort() : [];
-    if (cc.length) {
-      out('\r\n' + ANSI.bold + ANSI.cyan + 'Linux 兼容层' + ANSI.reset + ANSI.gray + '（可直接敲，也可 `zsh` 进原生模式）' + ANSI.reset + '\r\n');
-      for (let i = 0; i < cc.length; i += 6) {
-        out('  ' + cc.slice(i, i + 6).map(n => n.padEnd(11)).join('') + '\r\n');
-      }
-      out(ANSI.gray + '  管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd) 均可用' + ANSI.reset + '\r\n');
     }
   }
 
@@ -1948,6 +1943,18 @@ function makeShell(ctx) {
       state.lastError = e;
       const msg = e && e.message || String(e);
       writeErr((e && e.name ? e.name + ': ' : '') + msg + '\r\n');
+      /* 只加一句指路的话，不改变「这一行是按 JS 求值的」这个事实。
+       * 以前这里是偷偷把 `ls -la` 当 shell 跑掉，那才叫不可预测。 */
+      /* 敲了 shell 命令却没进 shell：SyntaxError（`ls -la`）和 ReferenceError
+       * （`nano x`）都会发生。这里只补一句指路，不改变求值方式。 */
+      if (e instanceof SyntaxError || e instanceof ReferenceError) {
+        const first = String(code).trim().split(/[\s|;>]+/)[0] || '';
+        const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
+        const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
+        if (first && (gone || known)) {
+          out(ANSI.gray + '提示：' + first + ' 是 HSL 命令。hsl() 进 shell，或 hsl(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+        }
+      }
       if (e && e.stack) {
         const st = String(e.stack).split('\n').slice(1, 5).filter(l => !/^\s*at (new AsyncFunction|execute|LineEditor)/.test(l));
         if (st.length) out(ANSI.gray + st.join('\r\n') + ANSI.reset + '\r\n');
@@ -2536,7 +2543,7 @@ function makeDocument() {
     removeEventListener: (type, fn) => { removeWorkerListener(fn); },
     dispatchEvent: (ev) => { call('dom.op', 'dispatch', [docRef, (ev && ev.type) || 'click', ev && ev.detail]).catch(() => {}); return true; },
 
-    /* ---- hterminal 扩展（不是 DOM 标准，但保留兼容） ---- */
+    /* ---- HTerMinaL 扩展（不是 DOM 标准，但保留兼容） ---- */
     __snap: () => DOMC.root,
     get __html() { return (DOMC.root && DOMC.root.html && DOMC.root.html.text) || ''; }
   };
@@ -2587,6 +2594,8 @@ function dispatchWorkerEvent(msg) {
 /* ---------------------------------------------------------------- 安装 */
 function installDomProxy(call_) {
   const c = (op, ...args) => call_('dom.op', op, args);
+  /* 原生 API 不走 dom.op（那一层只认 DOM 操作，也不该认识 window 方法） */
+  const nat = (name, args) => call_('native', name, args);
   const document = makeDocument();
 
   /* localStorage：同步读快照、异步写回。和真的一样，写立刻能读到。 */
@@ -2604,7 +2613,7 @@ function installDomProxy(call_) {
     __snapshot: () => ({ ...lsSnap })
   };
 
-  /* page：hterminal 给智能体 / 脚本用的高层封装。不是 DOM 标准，但好用。 */
+  /* page：HTerMinaL 给智能体 / 脚本用的高层封装。不是 DOM 标准，但好用。 */
   const page = {
     title: () => c('title'),
     url: () => c('url'),
@@ -2727,19 +2736,32 @@ function installDomProxy(call_) {
     get scrollY() { return (DOMC.root && DOMC.root.sy) || 0; },
     get pageXOffset() { return this.scrollX; },
     get pageYOffset() { return this.scrollY; },
-    scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return c('scrollTo', n.left || 0, n.top || 0); },
-    scrollBy(dx, dy) { return c('scrollTo', this.scrollX + (Number(dx) || 0), this.scrollY + (Number(dy) || 0)); },
+    scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return nat('scrollTo', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
+    scrollBy(dx, dy) { const n = typeof dx === 'object' && dx ? dx : { left: dx, top: dy }; return nat('scrollBy', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     getComputedStyle, matchMedia,
-    alert: (m) => c('toast', String(m == null ? '' : m)),
-    confirm: (m) => c('dialog', '请确认', String(m == null ? '' : m)),
-    prompt: (m, d) => c('dialog', String(m == null ? '' : m), String(d == null ? '' : d)),
-    open: (u) => { c('openWindow', { type:'browser', url:String(u) }).catch(() => {}); return null; },
-    close: () => {},
-    focus: () => {}, blur: () => {},
+    /* ---- 原生 API：一律转回主线程调真的，不在 Worker 里另造一个 ----
+     *
+     * 以前 alert 变成一条 toast、confirm 变成自绘对话框、open 变成内部窗口，
+     * 那是「设计行为」，不是浏览器行为。现在全部走 native.* RPC，
+     * 主线程直接执行 window.alert / window.confirm / window.prompt / window.open，
+     * 连文案、按钮、焦点、拦截规则都由浏览器自己决定。
+     *
+     * 唯一的硬限制：Worker 里没有同步跨线程通道（要 SharedArrayBuffer，
+     * 那需要 COOP/COEP，file:// 打开时必然没有）。所以 alert / print / close 这类
+     * 「没有返回值」的调用语义完全一致；confirm / prompt 的返回值只能是 Promise，
+     * 必须 await —— 这是物理限制，不是我们在替你设计。 */
+    alert: (m) => { nat('alert', [m == null ? '' : String(m)]).catch(() => {}); },
+    confirm: (m) => nat('confirm', [m == null ? '' : String(m)]),
+    prompt: (m, d) => nat('prompt', [m == null ? '' : String(m), d == null ? '' : String(d)]),
+    print: () => { nat('print', []).catch(() => {}); },
+    open: (u, target, feat) => nat('open', [String(u == null ? '' : u), target == null ? '_blank' : String(target), feat == null ? '' : String(feat)]),
+    close: () => { nat('close', []).catch(() => {}); },
+    focus: () => { nat('focus', []).catch(() => {}); },
+    blur: () => { nat('blur', []).catch(() => {}); },
+    stop: () => { nat('stop', []).catch(() => {}); },
     addEventListener: (t, fn) => { if (typeof fn === 'function') addWorkerListener('\u0001win', String(t), fn); },
     removeEventListener: (t, fn) => removeWorkerListener(fn),
     dispatchEvent: () => true,
-    getSelection: () => null,
     history,
     get screen() { return { width: this.innerWidth, height: this.innerHeight, availWidth: this.innerWidth, availHeight: this.innerHeight, colorDepth: 24, pixelDepth: 24 }; },
     requestAnimationFrame, cancelAnimationFrame,
@@ -2770,8 +2792,8 @@ async function bootShell(init) {
      * 一次性 value 拷贝会让它们永远停在启动那一刻。 */
     globalThis.window = globalThis;
     const KEYS = ['document','localStorage','page','location','history',
-      'alert','confirm','prompt','open','close','focus','blur',
-      'getComputedStyle','matchMedia','getSelection',
+      'alert','confirm','prompt','print','open','close','focus','blur','stop',
+      'getComputedStyle','matchMedia',
       'innerWidth','innerHeight','outerWidth','outerHeight','devicePixelRatio',
       'scrollX','scrollY','pageXOffset','pageYOffset','scrollTo','scrollBy','screen',
       'requestAnimationFrame','cancelAnimationFrame',
@@ -2802,7 +2824,8 @@ async function bootShell(init) {
     trace: (...a) => out(ANSI.gray + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
     time: () => {}, timeEnd: () => {}, assert: () => {}
   };
-  globalThis.print = (...a) => out(fmtArgs(a) + '\r\n');
+  /* print 不是「往终端打印」的别名：浏览器里 window.print() 是打印对话框。
+   * 以前这里把它改成了终端输出，属于抢注。要往终端输出请用 console.log。 */
   globalThis.exit = (code) => { post({ t:'exit', code:code || 0 }); throw EXIT; };
 
   let ctx;
@@ -2825,30 +2848,30 @@ async function bootShell(init) {
   } catch (e) {}
 
   const editor = new LineEditor({
-    prompt: () => (api.__state.mode === 'zsh' ? api.__state.cwd + '% ' : api.__state.cwd + '> '),
+    prompt: () => (api.__state.mode === 'hsl' ? api.__state.cwd + ' $ ' : api.__state.cwd + '> '),
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
     onSubmit: async (line) => {
       if (!line.trim()) return;
-      const zsh = api.__state.mode === 'zsh';
-      if (zsh || COMPAT.isShellLine(line)) {
+      /* 两种模式，两条完全分开的路，中间没有「猜一下这行是什么」：
+       *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
+       *   hsl   → 只当 shell 命令行（不认 JS 语法，`1+1` 是「命令未找到」）
+       * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
+       * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
+      if (api.__state.mode === 'hsl') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
       }
-      try { await api.run(line); }
-      catch (e) {
-        if (e === EXIT) throw e;
-        throw e;
-      }
+      await api.run(line);
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- Linux 兼容层
+  /* ---------------------------------------------------------------- HSL（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 这样 `ls -la | grep txt > out.txt` 这类写法能直接用，并且 `zsh` 之后
-   * 整个行编辑器进入原生模式（提示符变成 `路径% `）。
+   * 只有 mode === 'hsl' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
   /* ---------------------------------------------------------------- TUI 智能体
@@ -2873,6 +2896,10 @@ async function bootShell(init) {
         out(ANSI.gray + '│  直接输入任务，Enter 发送\r\n');
         out(ANSI.gray + '│  agentTui.stop() 中断 · agentTui.queue("…") 排队 · agentTui.close() 退出\r\n');
         out(ANSI.cyan + '└─' + ANSI.reset + '\r\n');
+        /* 接上历史，并明说接上了——否则刷新后一片空白，用户会以为对话丢了 */
+        call('agent.status').then(st => {
+          if (st && st.messages) out(ANSI.gray + '│  已接上历史会话：' + st.messages + ' 条消息' + ANSI.reset + '\r\n');
+        }).catch(() => {});
       }
       /* 返回短字符串而不是 this：JSHeL 会把表达式值打印出来，
        * 返回对象会刷一整屏方法签名，看着像报错。 */
@@ -2950,6 +2977,28 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
+  /* hsl —— JSHeL 里唯一通往 Linux 风格命令的入口。
+   *
+   *   hsl()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsl('ls -la')    跑一行，输出直接进终端，返回退出码
+   *   await hsl.run(x) 跑一行但不打印，返回 { code, out, err }
+   *
+   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell，
+   * 也不会因为你写了 `mkdir("a")` 就被当成命令。 */
+  function hsl(cmd) {
+    if (cmd === undefined || cmd === null) {
+      /* 只打印横幅，不返回值：`hsl` 单独一行时不该在下面多出一个 "1" */
+      const d = COMPAT.hslPush();
+      out(ANSI.gray + 'hsl · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      return undefined;
+    }
+    /* 返回 undefined：输出已经直接进终端了，再回显一个退出码只是噪音。
+     * 要退出码用 `(await hsl.run('…')).code`。 */
+    return COMPAT.execLine(String(cmd)).then(() => undefined);
+  }
+  hsl.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsl = hsl;
+
   COMPAT.attach({
     out: (t) => out(t),
     call,
@@ -2961,15 +3010,20 @@ async function bootShell(init) {
     setCwd: (p) => { api.__state.cwd = p; post({ t:'cwd', path:p }); },
     get cols() { return api.__state.cols || 80; },
     get rows() { return api.__state.rows || 24; },
-    kick: () => { editor.promptStr = editor.promptText(); }
+    /* 模式切换只改 state.mode + 重画提示符。真实的「第几层」在 COMPAT 的栈里，
+     * 这里不存第二份状态——两份状态一定会不同步。 */
+    setMode: (m) => { api.__state.mode = m; },
+    kick: () => { editor.promptStr = editor.promptText(); },
+    get onEditorResize() { return editor._onResize || null; },
+    set onEditorResize(fn) { editor._onResize = fn || null; }
   });
 
   out('\x1b[?2004h');
 
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
-    out(ANSI.gray + 'hterminal · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl()。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 
@@ -3116,8 +3170,10 @@ self.onmessage = async (ev) => {
       self.__shell.state.rows = m.rows || self.__shell.state.rows;
     }
     const ed = self.__shell && self.__shell.editor || self.__py && self.__py.editor;
-    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉 */
-    if (ed && !ed.raw) { ed.promptStr = ed.promptText(); ed.redraw(); }
+    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉；
+     * 但全屏应用自己需要重画（否则终端一改尺寸，画面就被拉歪）。 */
+    if (ed && ed.raw) { if (ed._onResize) { try { ed._onResize(); } catch (e) {} } }
+    else if (ed) { ed.promptStr = ed.promptText(); ed.redraw(); }
     return;
   }
   if (m.t === 'terminate') {
@@ -3137,7 +3193,7 @@ self.onmessage = async (ev) => {
 
 
 /* ============================================================================
- * hterminal · Linux 兼容层（迷你 shell + coreutils 子集 + vim/nano）
+ * HTerMinaL · HSL（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -3145,8 +3201,11 @@ self.onmessage = async (ev) => {
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：`zsh` 进入原生模式（提示符变成 `.home% `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里直接敲 `ls -la`、`cat a.txt | grep x`。
+ * 用法：JSHeL 里敲 `hsl` 进入（提示符变成 `.home $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsl('ls -la')` 跑一行。
+ *
+ * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
+ * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
  * ==========================================================================*/
 
 const COMPAT = (function () {
@@ -3227,7 +3286,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel';
+    if (name === 'SHELL') return 'hsl';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -3269,10 +3328,23 @@ const COMPAT = (function () {
     return String(p).replace(/\/+/g, '/').replace(/(^|\/)\.(\/|$)/g, '$1');
   }
 
-  /* ---------------------------------------------------------------- 路径 */
+  /* ---------------------------------------------------------------- 路径
+   *
+   * shell 里 `ls` 列的是**当前目录**，`cat notes` 读的是**当前目录下**的 notes。
+   * 但 JSHeL 的路径方言是「点分绝对路径」（.home.readme 就是根下的 home.readme），
+   * 两者直接混用会出现 `cd .home.bin` 之后 `ls` 还在列根目录这种事。
+   *
+   * 所以这里显式分流：
+   *   /  ~  @  开头        → 绝对（交给主线程 normPath）
+   *   .home.xxx 这种点分    → 绝对
+   *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
+   */
+  const ABS_DOT = /^\.[A-Za-z\u4e00-\u9fff_]/;
   async function realPath(p) {
-    // 交给主线程的 normPath（同一套 . / ~ / @ 规则）
-    return IO.call('fs.resolve', p);
+    const s = String(p == null ? '' : p).trim();
+    if (!s || s === '.') return IO.getCwd();
+    if (s[0] === '/' || s[0] === '~' || s[0] === '@' || ABS_DOT.test(s)) return IO.call('fs.resolve', s);
+    return IO.call('fs.resolve', '@/' + s.replace(/^\.\//, ''));
   }
 
   async function readText(p) {
@@ -3317,21 +3389,30 @@ const COMPAT = (function () {
   def('pwd', async () => ({ out: IO.getCwd() + '\n' }), '当前目录');
 
   def('cd', async (a) => {
-    const t = a[0] || '.home';
+    /* 不带参数回 HOME（和真 shell 一样）；带参数走 realPath，所以 `cd ..` `cd bin`
+     * 都是相对当前目录，而不是相对根。 */
+    const raw = a[0] === undefined ? '~' : a[0];
+    const t = await realPath(raw);
     const s = await IO.call('fs.stat', t).catch(() => null);
-    if (!s) return { code: 1, err: 'cd: 没有这个目录: ' + t + '\n' };
-    if (s.kind !== 'dir') return { code: 1, err: 'cd: 不是目录: ' + t + '\n' };
+    if (!s) return { code: 1, err: 'cd: 没有这个目录: ' + raw + '\n' };
+    if (s.kind !== 'dir') return { code: 1, err: 'cd: 不是目录: ' + raw + '\n' };
     IO.setCwd(s.path);
     return {};
   }, '切换目录');
 
+  /* ls -l 的排版。**故意不是 POSIX 的 `-rw-r--r--`**：
+   * 这个文件系统没有 mode 位、没有属主、没有组，也不是 ext4。
+   * 画一排 rwx 只会让用户以为 chmod/chown 有意义（我们没有这些命令）。
+   * 所以这里印的是真实存在的信息：类型 + 字节数 + 修改时间 + 名字。 */
   function longFmt(rows) {
-    return rows.map(r => {
-      const k = ({ dir:'d', file:'-', func:'x', app:'a', device:'v', package:'p', grant:'!', proc:'&', link:'l', object:'o', blob:'b' })[r.kind] || '?';
-      const size = String(r.size || 0).padStart(7);
+    const KIND = { dir:'dir', file:'file', func:'func', app:'app', device:'dev', package:'pkg', grant:'grant', proc:'proc', link:'link', object:'obj', blob:'blob' };
+    const hdr = 'kind'.padEnd(6) + 'size'.padStart(8) + '  ' + 'mtime'.padEnd(11) + '  name';
+    return DIM + hdr + R + '\n' + rows.map(r => {
+      const k = (KIND[r.kind] || r.kind || '?').padEnd(6);
+      const size = String(r.size || 0).padStart(8);
       const mt = new Date(r.mtime || Date.now()).toISOString().slice(5, 16).replace('T', ' ');
       const color = ({ dir:CYAN, func:YELLOW, app:MAGENTA, device:BLUE, package:GREEN })[r.kind] || '';
-      return `${k}rw-r--r--  ${size}  ${mt}  ${color}${r.name}${color ? R : ''}`;
+      return `${k}${size}  ${mt}  ${color}${r.name}${color ? R : ''}`;
     }).join('\n') + '\n';
   }
 
@@ -3661,12 +3742,12 @@ const COMPAT = (function () {
   def('hostname', async () => ({ out: 'browser\n' }), '主机名');
 
   def('uname', async (a) => {
-    if (a.includes('-a')) return { out: 'hterminal ' + IO.version + ' browser jshel xterm\n' };
-    return { out: 'hterminal\n' };
+    if (a.includes('-a')) return { out: 'HTerMinaL ' + IO.version + ' browser jshel xterm\n' };
+    return { out: 'HTerMinaL\n' };
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -3730,7 +3811,7 @@ const COMPAT = (function () {
     if (!n) return { code: 1, err: 'man: 要看哪个命令？例如 man ls\n' };
     const c = CMDS[n];
     if (!c) return { code: 1, err: 'man: 没有 ' + n + ' 的手册\n' };
-    return { out: `${YELLOW}${n}${R}\n\n  ${c.desc || '（无说明）'}\n\n  ${DIM}这是 hterminal 内置的同名精简实现，不是 GNU coreutils 原版。${R}\n` };
+    return { out: `${YELLOW}${n}${R}\n\n  ${c.desc || '（无说明）'}\n\n  ${DIM}这是 HTerMinaL 内置的同名精简实现，不是 GNU coreutils 原版。${R}\n` };
   }, '内置手册');
 
   def('less', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
@@ -3781,31 +3862,6 @@ const COMPAT = (function () {
     return { code };
   }, '把 stdin 的每行当参数执行命令');
 
-  /* chmod 在真 Linux 上改的是权限位，这里只有一位有意义：x（可执行）。
-   * 可执行 = 文件的 kind 是 'func'，exec() 会把 content 编译成 AsyncFunction。
-   * 写内容不会改 kind（见 30-core.js 的 FS.write），所以 +x 之后再用 vim 改代码，
-   * 存盘也不会把可执行位弄丢。 */
-  def('chmod', async (a) => {
-    const spec = a.find(x => /^[+-][rwxXst]+$/.test(x)) || '';
-    const files = a.filter(x => !/^[+-][rwxXst]+$/.test(x));
-    if (!spec || !files.length) {
-      return { code: 1, err: 'chmod: 用法 chmod +x <文件>（本文件系统只有「可执行」这一位，支持 +x / -x）\n' };
-    }
-    const add = spec[0] === '+';
-    for (const f of files) {
-      const p = await realPath(f);
-      const st = await IO.call('fs.stat', p).catch(() => null);
-      if (!st) return { code: 1, err: 'chmod: ' + f + ': 不存在\n' };
-      if (st.kind === 'dir') return { code: 1, err: 'chmod: ' + f + ': 是目录\n' };
-      const r = await IO.call('fs.read', p);
-      const meta = Object.assign({}, r.meta || {}, add
-        ? { kind: 'func', interpreter: 'js' }
-        : { kind: 'file' });
-      await IO.call('fs.write', p, r.content, meta);
-    }
-    return { code: 0, out: '' };
-  }, '改可执行位（chmod +x / -x）');
-
   def('diff', async (a) => {
     if (a.length < 2) return { code: 1, err: 'diff: 需要两个文件\n' };
     /* 不存在就报错：以前两个 readText 都 .catch(()=>'')，两个不存在的文件「没有差异」，
@@ -3837,35 +3893,190 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* ---------------------------------------------------------------- 编辑器 */
+  /* help 只属于 HSL。JSHeL 里的 help() 是另一个东西（列 JS API），
+   * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
+  def('help', async () => {
+    const names = Object.keys(CMDS).sort();
+    const w = 78;
+    let s = CYAN + 'HSL 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let line = '  ';
+    for (const n of names) {
+      const seg = n + '  ';
+      if (line.length + seg.length > w) { s += line + '\n'; line = '  '; }
+      line += seg;
+    }
+    s += line + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl 再进一层' + R + '\n';
+    return { out: s };
+  }, '命令表');
+
+  /* ---------------------------------------------------------------- 系统信息 */
+  /* fastfetch / neofetch：不是移植，是同名精简版。信息全部是真的，
+   * 一个字段都不编（拿不到就写 n/a）。 */
+  async function sysFacts() {
+    let info = {};
+    try { info = await IO.call('sys.info') || {}; } catch (e) {}
+    let usage = { usage:0, quota:0, files:0 };
+    try { usage = await IO.call('fs.usage') || usage; } catch (e) {}
+    let pkgs = 0, procs = 1;
+    try { pkgs = (await listRows('.pkg')).length; } catch (e) {}
+    try { procs = (await IO.call('proc.list') || []).length || 1; } catch (e) {}
+    const up = Math.max(0, Math.floor((Date.now() - (IO.state.started || Date.now())) / 1000));
+    const upStr = up < 60 ? up + 's' : (up < 3600 ? Math.floor(up / 60) + 'm ' + (up % 60) + 's' : Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm');
+    return {
+      version: IO.version || '0.0.0.0',
+      engine: info.engine || 'n/a',
+      os: info.os || 'n/a',
+      shell: 'JSHeL + HSL',
+      term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
+      res: info.screen || 'n/a',
+      dpr: info.dpr || 1,
+      theme: info.theme || 'n/a',
+      lang: info.lang || 'n/a',
+      uptime: upStr,
+      pkgs, procs,
+      files: usage.files || 0,
+      disk: ((usage.usage || 0) / 1048576).toFixed(2) + ' MB / ' + ((usage.quota || 0) / 1048576).toFixed(0) + ' MB',
+      mem: info.mem || 'n/a',
+      cpu: info.cores ? info.cores + ' threads' : 'n/a'
+    };
+  }
+
+  const LOGO = [
+    '██╗  ██╗████████╗',
+    '██║  ██║╚══██╔══╝',
+    '███████║   ██║   ',
+    '██╔══██║   ██║   ',
+    '██║  ██║   ██║   ',
+    '╚═╝  ╚═╝   ╚═╝   '
+  ];
+
+  def('fastfetch', async (a) => {
+    const f = await sysFacts();
+    const noLogo = a.includes('--no-logo') || a.includes('-n');
+    const rows = [
+      ['OS', f.os],
+      ['Host', 'browser · ' + f.engine],
+      ['Kernel', 'JSHeL ' + f.version],
+      ['Shell', f.shell],
+      ['Terminal', f.term],
+      ['Resolution', f.res + (f.dpr !== 1 ? ' @' + f.dpr + 'x' : '')],
+      ['CPU', f.cpu],
+      ['Memory', f.mem],
+      ['Disk', f.disk],
+      ['Files', String(f.files) + ' · ' + f.pkgs + ' pkg'],
+      ['Workers', String(f.procs)],
+      ['Locale', f.lang],
+      ['Theme', f.theme],
+      ['Uptime', f.uptime]
+    ];
+    const name = CYAN + 'HTerMinaL' + R + DIM + ' ' + f.version + R;
+    const sep = DIM + '─'.repeat(26) + R;
+    const info = [name, sep].concat(rows.map(([k, v]) => DIM + k.padEnd(10) + R + ' ' + v));
+    let s = '';
+    if (noLogo) {
+      s = info.join('\n') + '\n';
+    } else {
+      const h = Math.max(LOGO.length, info.length);
+      for (let i = 0; i < h; i++) {
+        const left = (LOGO[i] || '').padEnd(19);
+        s += YELLOW + left + R + '  ' + (info[i] || '') + '\n';
+      }
+    }
+    return { out: s };
+  }, '系统信息');
+  def('neofetch', async (a) => CMDS.fastfetch.fn(a), '系统信息（别名）');
+
+  /* ---------------------------------------------------------------- 编辑器
+   *
+   * 全屏应用（vim / nano）用的是终端自己的备用屏（DECSET 1049），
+   * 画面完全靠「绝对定位」画出来：每一行都 `\x1b[{n};1H` 定点写，**不发换行符**。
+   * 之前是拼一段带 \r\n 的字符串再从 [H 开始刷，只要内容高度等于终端高度，
+   * 末尾那个 \r\n 就会把整屏顶上去一行——这就是 nano「显示不正常」的根因：
+   * 标题栏被顶出屏幕、正文整体上移、光标落在错误的位置。
+   *
+   * 中文宽度也必须按显示宽度算（一个汉字占 2 列）：按 code unit 切片会让
+   * 满屏中文的 readme 一行行错位、右边界参差。
+   */
+  const CW = (cp) => {
+    if (cp === 0x200b || (cp >= 0x0300 && cp <= 0x036f) || cp === 0xfeff) return 0;
+    if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe10 && cp <= 0xfe19) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) ||
+        (cp >= 0x1f300 && cp <= 0x1f64f) || (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+        (cp >= 0x20000 && cp <= 0x3fffd)) return 2;
+    return 1;
+  };
+  const dw = (s) => { let n = 0; for (const ch of String(s)) n += CW(ch.codePointAt(0)); return n; };
+  function sliceW(s, max) {
+    let n = 0, out = '';
+    for (const ch of String(s)) { const w = CW(ch.codePointAt(0)); if (n + w > max) break; n += w; out += ch; }
+    return out;
+  }
+  function padW(s, max) { const t = sliceW(s, max); return t + ' '.repeat(Math.max(0, max - dw(t))); }
+  function skipW(s, cols) {
+    let n = 0, i = 0;
+    for (const ch of String(s)) { const w = CW(ch.codePointAt(0)); if (n + w > cols) break; n += w; i += ch.length; }
+    return { rest: String(s).slice(i), skipped: n };
+  }
+  function xToCol(line, x) {
+    let n = 0, i = 0;
+    for (const ch of String(line)) { const w = CW(ch.codePointAt(0)); if (n + w > x) break; n += w; i += ch.length; }
+    return i;
+  }
+
   function makeEditor(filePath, mode) {
     const isVim = mode === 'vim' || mode === 'vi';
     const st = {
       lines: [''], row: 0, col: 0, top: 0, left: 0,
       dirty: false, mode: isVim ? 'normal' : 'edit',
       msg: '', cmd: '', quit: false, path: filePath, pend: null,
-      clipboard: '', undo: [], search: ''
+      clipboard: '', undo: [], search: '', forceQuit: false
     };
     const W = () => Math.max(20, (IO.cols || 80));
-    const H = () => Math.max(4, (IO.rows || 24) - 2);
+    const ROWS = () => Math.max(6, (IO.rows || 24));
+    /* 顶栏 1 行；nano 底部两行（状态 + 快捷键），vim 一行（状态） */
+    const CHROME = () => (isVim ? 2 : 3);
+    const H = () => Math.max(1, ROWS() - CHROME());
 
+    /* 反显（SGR 7）在自定义主题里不可靠：它换的是「默认前景/背景」，
+     * 而默认前景在浅色主题下是纯黑，换完就是黑字压在深色条上——看不见。
+     * 所以顶栏和状态栏用显式配色：灰底 + 亮白字，深浅主题都清楚。 */
+    const BAR = ESC + '[100;97m';
     function render() {
-      const w = W(), h = H();
-      let s = ESC + '[?25l' + ESC + '[H';
-      // 顶部留一行给状态
-      s += ESC + '[2m' + (' ' + (st.path || '[No Name]') + (st.dirty ? ' [+]' : '') + '   ' + (isVim ? st.mode.toUpperCase() : 'NANO')).padEnd(w - 1) + ESC + '[0m' + '\r\n';
+      const w = W(), rows = ROWS(), h = H();
+      let s = ESC + '[?25l';
+      /* 顶栏 */
+      const title = (isVim ? ' VIM ' : ' NANO ') + (st.path || '[No Name]') + (st.dirty ? '  [+]' : '');
+      s += ESC + '[1;1H' + BAR + padW(title, w) + ESC + '[0m';
+      /* 正文 */
       for (let i = 0; i < h; i++) {
         const ln = st.top + i;
-        const text = st.lines[ln] === undefined ? (ln === st.lines.length ? '~' : '') : st.lines[ln];
-        const vis = text.slice(st.left, st.left + w - 1);
-        s += vis + ESC + '[K';
-        if (i < h - 1) s += '\r\n';
+        let vis;
+        if (ln >= st.lines.length) vis = (ln === st.lines.length ? DIM + '~' + R : '');
+        else {
+          const { rest } = skipW(st.lines[ln], st.left);
+          vis = sliceW(rest, w - 1);
+        }
+        s += ESC + '[' + (i + 2) + ';1H' + ESC + '[2K' + vis;
       }
-      // 状态栏
-      s += '\r\n' + ESC + '[7m' + (st.msg || (isVim ? '  -- ' + (st.mode === 'insert' ? '插入' : '普通') + ' --' : '  ^O 保存  ^X 退出')) .slice(0, w - 1).padEnd(w - 1) + ESC + '[0m';
-      // 光标
-      const cy = st.row - st.top, cx = Math.min(st.col - st.left, w - 1);
-      s += ESC + `[${cy + 2};${cx + 1}H` + ESC + '[?25h';
+      /* 状态栏 */
+      const stat = st.msg || (isVim
+        ? '  -- ' + (st.mode === 'insert' ? '插入' : st.mode === 'command' ? ':' + st.cmd : '普通') + ' --   ' + (st.row + 1) + ',' + (st.col + 1)
+        : '  ' + (st.row + 1) + '/' + st.lines.length + ' 行 · ' + (st.col + 1) + ' 列');
+      s += ESC + '[' + (rows - (isVim ? 0 : 1)) + ';1H' + BAR + padW(stat, w) + ESC + '[0m';
+      if (!isVim) {
+        /* 必须绝对定位：上一行写满了 w 列，光标处于「待换行」状态，
+         * 直接接着写会先滚屏一行——这正是之前 nano 底部错位的原因。 */
+        s += ESC + '[' + rows + ';1H' + BAR
+          + padW('  ^O 保存   ^X 退出   ^K 剪切行   ^U 粘贴   ^G 位置', w) + ESC + '[0m';
+      }
+      /* 光标：按显示宽度定位，中文才不会偏 */
+      const line = st.lines[st.row] || '';
+      const cx = Math.max(0, Math.min(dw(line.slice(0, st.col)) - st.left, w - 1));
+      const cy = st.row - st.top;
+      s += ESC + '[' + (cy + 2) + ';' + (cx + 1) + 'H' + ESC + '[?25h';
       IO.out(s);
     }
 
@@ -3875,8 +4086,9 @@ const COMPAT = (function () {
       const h = H();
       if (st.row < st.top) st.top = st.row;
       if (st.row >= st.top + h) st.top = st.row - h + 1;
-      if (st.col < st.left) st.left = st.col;
-      if (st.col > st.left + W() - 2) st.left = st.col - W() + 2;
+      const colW = dw(st.lines[st.row].slice(0, st.col));
+      if (colW < st.left) st.left = colW;
+      if (colW > st.left + W() - 2) st.left = colW - W() + 2;
     }
 
     function insert(text) {
@@ -3895,11 +4107,35 @@ const COMPAT = (function () {
       st.msg = '"' + st.path + '" 已写入 ' + st.lines.join('\n').length + ' 字节';
     }
 
+    /* 鼠标：xterm 在 DECSET 1000 + 1006 下把点击发成 \x1b[<b;x;yM。
+     * 点正文就把光标移过去（点哪写哪），滚轮上下滚三行。 */
+    function onMouse(btn, x, y, down) {
+      const h = H();
+      if (btn === 64 || btn === 65) {
+        st.top += (btn === 64 ? -3 : 3);
+        st.top = Math.max(0, Math.min(st.top, Math.max(0, st.lines.length - 1)));
+        return;
+      }
+      if (!down) return;
+      if (y < 2 || y > 1 + h) return;
+      const row = Math.min(st.lines.length - 1, st.top + (y - 2));
+      st.row = row;
+      st.col = xToCol(st.lines[row] || '', Math.max(0, x - 1 + st.left));
+    }
+
     async function handle(data) {
       let i = 0;
       while (i < data.length) {
-        const seq = data.slice(i, i + 6);
+        const seq = data.slice(i, i + 20);
         let key = null, step = 1;
+        const mouse = seq.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+        if (mouse) {
+          step = mouse[0].length;
+          onMouse(Number(mouse[1]) & 0x7f, Number(mouse[2]), Number(mouse[3]), mouse[4] === 'M');
+          i += step;
+          clamp(); render();
+          continue;
+        }
         if (seq.startsWith('\x1b[A') || seq.startsWith('\x1bOA')) { key = 'UP'; step = 3; }
         else if (seq.startsWith('\x1b[B') || seq.startsWith('\x1bOB')) { key = 'DOWN'; step = 3; }
         else if (seq.startsWith('\x1b[C') || seq.startsWith('\x1bOC')) { key = 'RIGHT'; step = 3; }
@@ -3914,7 +4150,7 @@ const COMPAT = (function () {
           const txt = end > 0 ? data.slice(i + 6, end) : data.slice(i + 6);
           txt.split('\n').forEach((t, k) => { if (k) { st.lines.splice(st.row + 1, 0, ''); st.row++; st.col = 0; } insert(t); });
           i = end > 0 ? end + 6 : data.length;
-          render(); continue;
+          clamp(); render(); continue;
         }
         else if (data[i] === '\x1b') { key = 'ESC'; step = 1; }
         else if (data[i] === '\r' || data[i] === '\n') { key = 'ENTER'; step = 1; }
@@ -3935,6 +4171,7 @@ const COMPAT = (function () {
 
     async function onKey(key) {
       st.msg = '';
+      if (key === 'C-Q') return quitNow();
       if (st.mode === 'command') {
         if (key === 'ESC') { st.mode = 'normal'; st.cmd = ''; return false; }
         if (key === 'ENTER') {
@@ -3955,12 +4192,14 @@ const COMPAT = (function () {
       if (!isVim && key === 'C-X') { if (st.dirty && !st.forceQuit) { st.msg = '未保存！再按一次 ^X 放弃修改'; st.forceQuit = true; return false; } return quitNow(); }
       if (!isVim && key === 'C-K') { st.clipboard = st.lines.splice(st.row, 1)[0] || ''; if (!st.lines.length) st.lines = ['']; clamp(); st.dirty = true; return false; }
       if (!isVim && key === 'C-U') { st.lines.splice(st.row, 0, st.clipboard); st.dirty = true; return false; }
+      /* nano 里方向键直接能移动（本来就是 edit 模式），这里只补一个 ^G 位置提示 */
+      if (!isVim && key === 'C-G') { st.msg = '第 ' + (st.row + 1) + '/' + st.lines.length + ' 行 · 第 ' + (st.col + 1) + ' 列 · ' + (st.path || '[No Name]'); return false; }
 
       const editing = !isVim || st.mode === 'insert';
 
       if (key === 'ESC') { if (isVim) { st.mode = 'normal'; st.col = Math.max(0, st.col - 1); } return false; }
-      if (key === 'UP') { st.row--; return false; }
-      if (key === 'DOWN') { st.row++; return false; }
+      if (key === 'UP' || key === 'C-UP') { st.row--; return false; }
+      if (key === 'DOWN' || key === 'C-DOWN') { st.row++; return false; }
       if (key === 'LEFT') { st.col--; return false; }
       if (key === 'RIGHT') { st.col++; return false; }
       if (key === 'PGUP') { st.row -= H(); return false; }
@@ -4000,7 +4239,6 @@ const COMPAT = (function () {
       if (key.startsWith('C-')) {
         const k = key.slice(2);
         if (k === 'S') { await save(); return false; }
-        if (k === 'Q') return quitNow();
         if (k === 'G') { st.msg = '行 ' + (st.row + 1) + '/' + st.lines.length + ' · 列 ' + (st.col + 1) + (st.path ? ' · ' + st.path : ''); return false; }
         return false;
       }
@@ -4054,8 +4292,11 @@ const COMPAT = (function () {
 
     function quitNow() {
       st.quit = true;
-      IO.out(ESC + '[?25h' + ESC + '[?1049l');
+      /* 关鼠标报告 → 离开备用屏 → 恢复光标。顺序不能反：
+       * 先切回主屏再关鼠标，主屏会残留一段随鼠标移动的高亮。 */
+      IO.out(ESC + '[?1000l' + ESC + '[?1006l' + ESC + '[?25h' + ESC + '[?1049l');
       if (IO.editor) IO.editor.setRaw(null);
+      if (IO.onEditorResize) IO.onEditorResize = null;
       return true;
     }
 
@@ -4067,9 +4308,12 @@ const COMPAT = (function () {
           st.lines = txt.replace(/\n$/, '').split('\n');
           if (!st.lines.length) st.lines = [''];
           st.path = filePath;
-        } catch (e) { st.lines = ['']; }
-        IO.out(ESC + '[?1049h' + ESC + '[2J');
+        } catch (e) { st.lines = [''], st.path = filePath; }
+        /* 备用屏 + 清屏 + 开启鼠标报告（1000 点击 / 1006 SGR 坐标） */
+        IO.out(ESC + '[?1049h' + ESC + '[2J' + ESC + '[?1000h' + ESC + '[?1006h' + ESC + '[1;1H');
         if (IO.editor) IO.editor.setRaw((d) => { handle(d); });
+        /* 终端尺寸变了就重画：以前只有 shell 提示符会重画，全屏应用会被拉歪 */
+        IO.onEditorResize = () => { if (!st.quit) { clamp(); render(); } };
         clamp(); render();
       }
     };
@@ -4088,37 +4332,40 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  def('zsh', async () => {
-    IO.state.mode = 'zsh';
+  /* HSL 是一个**可嵌套**的交互层：每敲一次 hsl 压一层，exit 弹一层。
+   * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
+   * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
+  const HSL = [];
+  function hslDepth() { return HSL.length; }
+  function hslPush() {
+    HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
+    IO.setMode('hsl');
     IO.kick();
-    return { out: DIM + '已进入 zsh 兼容模式：支持管道、重定向、通配符、变量、alias。exit 回到 JSHeL。' + R + '\n' };
-  }, '进入 zsh 兼容模式');
-  def('bash', async () => CMDS.zsh.fn(), '同 zsh');
-  def('sh', async () => CMDS.zsh.fn(), '同 zsh');
+    return HSL.length;
+  }
+  function hslPop() {
+    const f = HSL.pop();
+    if (!f) return false;
+    ENV = Object.assign(Object.create(null), f.env);
+    IO.setCwd(f.cwd);
+    IO.setMode(HSL.length ? 'hsl' : 'jshel');
+    IO.kick();
+    return true;
+  }
+
+  def('hsl', async () => {
+    const d = hslPush();
+    return { out: DIM + 'hsl: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 HSL（可嵌套）');
 
   def('exit', async () => {
-    if (IO.state.mode === 'zsh') { IO.state.mode = 'jshel'; IO.kick(); return { out: DIM + '已退出 zsh，回到 JSHeL。' + R + '\n' }; }
+    if (hslDepth()) {
+      const d = HSL.length;
+      hslPop();
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 HSL' : 'exit: 回到 JSHeL') + R + '\n' };
+    }
     return { exit: true };
-  }, '退出当前 shell');
-
-  def('logout', async () => CMDS.exit.fn(), '退出');
-  def('su', async () => ({ err: 'su: 单用户环境\n', code: 1 }), '');
-  def('sudo', async (a) => {
-    if (!a.length) return { code: 1, err: 'sudo: 需要命令\n' };
-    /* 嵌套执行：被包裹的命令自己在最后一节就把 stdout 打出去了，
-     * 这里只把退出码往上带。以前直接 `return execCommandTokens(...)`，
-     * 外层又按 res.out 打一遍，于是 `sudo ls` 会打印两次。 */
-    const r = await execCommandTokens(lex(a.join(' ')), '', { sudo:true });
-    return { code:(r && r.code) || 0, hold: r && r.hold };
-  }, '以当前用户执行（本环境无权限模型）');
-
-  def('apt', async () => ({ err: 'apt: 本终端用 npm 生态，请用 `install <包名>` 或 install_pkg\n', code: 1 }), '');
-  def('npm', async (a) => {
-    if (a[0] === 'install' || a[0] === 'i') return { out: '用 hterm.pkg.install("' + (a[1] || '') + '")\n' };
-    return { err: 'npm: 只支持 install <pkg>（走 CDN）\n', code: 1 };
-  }, '');
-  def('pip', async () => ({ err: 'pip: 请在 python() 里用 pyodide 的 micropip\n', code: 1 }), '');
-  def('ping', async () => ({ err: 'ping: 浏览器不允许 ICMP\n', code: 1 }), '');
+  }, '退出这一层（最外层退出终端）');
   def('curl', async (a) => {
     const url = a.find(x => !x.startsWith('-'));
     if (!url) return { code: 1, err: 'curl: 需要 URL\n' };
@@ -4218,16 +4465,20 @@ const COMPAT = (function () {
     return last;
   }
 
-  /* 不认识的名字：先看是不是 JS 全局函数（保持 JSHeL 的能力） */
-  async function tryExternal(name, args, stdin) {
-    const fn = IO.api && IO.api[name];
-    if (typeof fn === 'function') {
-      try {
-        const v = await fn(...args);
-        return { code: 0, out: v === undefined ? '' : String(v) + '\n' };
-      } catch (e) { return { code: 1, err: name + ': ' + (e.message || e) + '\n' }; }
+  /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
+   * 以前这里会去 IO.api[name] 找同名函数，于是 HSL 里敲 `write` 就真去写文件了，
+   * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
+  async function tryExternal(name, args) {
+    for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
+      const st = await IO.call('fs.stat', cand).catch(() => null);
+      if (st && st.kind === 'func') {
+        try {
+          const v = await IO.api.exec(cand, ...args);
+          return { code: 0, out: v === undefined ? '' : String(v) + '\n' };
+        } catch (e) { return { code: 1, err: name + ': ' + (e.message || e) + '\n' }; }
+      }
     }
-    return { code: 127, err: name + ': 命令未找到（试 `help` 看内置命令）\n' };
+    return { code: 127, err: name + ': 命令未找到（help 看命令表）\n' };
   }
 
   async function execLine(line, opts) {
@@ -4243,43 +4494,17 @@ const COMPAT = (function () {
     return res;
   }
 
-  /* 判断这一行是不是 shell 命令（而不是 JS 表达式） */
-  /* 一行到底是「shell 命令」还是「JS 表达式」？
-   *
-   * 判定顺序很重要：**先看第一个词是不是命令**，再看有没有 shell 语法。
-   * 早期版本优先看 `| ; >`，结果 `mkdir("a"); write("b")` 这种一句里带分号的 JS
-   * 被整行当成 shell，报「命令未找到」——这就是用户看到的那个 bug。
-   */
-  function isShellLine(line) {
-    const s = String(line || '').trim();
-    if (!s) return false;
-    const m = s.match(/^([A-Za-z_][\w.-]*)/);
-    if (!m) return false;
-    const name = m[1];
-    if (!CMDS[name]) return false;
-    const rest = s.slice(name.length);
-
-    /* 函数调用、成员访问、赋值、比较：都是 JS，别抢。
-     * 注意成员访问必须**紧贴**（ls.home / ls[0]），不能允许空格——
-     * `ls .home` 里的 `.home` 是点分路径参数，不是属性访问。
-     * 早期写成 /^\s*\./ 就把所有 `cmd .path` 都判成 JS 了，
-     * 于是 `ls .home` 变成求值 `ls.home`（undefined），一行输出都没有。 */
-    if (/^\s*\(/.test(rest)) return false;
-    if (/^\./.test(rest) || /^\[/.test(rest)) return false;
-    if (/^\s*=[^=]/.test(rest)) return false;
-    if (/^\s*([+\-*/%]<|\?\?|\|\||&&)\s/.test(rest)) return false;
-    return true;
-  }
-
   function attach(io) {
     IO = io;
+    HSL.length = 0;
     ENV.PATH = '/bin:/usr/bin';
     ENV.TERM = 'xterm-256color';
     ENV.HOME = '.home';
   }
 
   return {
-    attach, execLine, isShellLine, commands: CMDS, lex,
+    attach, execLine, commands: CMDS, lex,
+    hslPush, hslPop, hslDepth,
     editor: makeEditor,
     get ENV() { return ENV; }
   };
@@ -4290,13 +4515,13 @@ const COMPAT = (function () {
 
 <script>
 /* ============================================================================
- * hterminal · core
+ * HTerMinaL · core
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。设置、IndexedDB 文件系统、虚拟目录、UI 原子件。
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.0';
+const HT_VERSION = '0.0.1.2';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -4583,7 +4808,7 @@ const PERM_DEFS = [
 const SEED_FILES = {
   '.home.welcome': {
     kind:'file', mime:'text/plain',
-    content:`欢迎来到 hterminal。
+    content:`欢迎来到 HTerMinaL。
 
 这是一个跑在浏览器里的 JS 终端。你看到的每一行都是 JavaScript：
 
@@ -4593,17 +4818,22 @@ const SEED_FILES = {
   > python()          // 在当前终端开一个 Python
   > winOpen({type:'browser', url:'https://example.com'})
   > agentOpen()       // 轻量智能体（需要本地后端）
+  > hsl()             // 进 HSL：Linux 风格的交互 shell
+
+这一层是 JS 控制台，不是 shell：ls -la 这种写法不会执行，会报语法错误。
+要敲 Linux 命令，用 hsl() 进去，或者 hsl('ls -la') 跑一行。
+两边是彻底分开的：JSHeL 只认 JS，HSL 只认命令。
 
 路径用点分隔，根是 "."。例如：
   .home.notes       根下的 home 目录里的 notes
   .bin.hello        一个可执行函数
   .localstorage.x   浏览器 localStorage 里的 x
 
-输入 help 看完整命令表。`
+输入 help() 看 JS 侧的 API；进 HSL 之后 help 看命令表。`
   },
   '.home.readme': {
     kind:'file', mime:'text/plain',
-    content:`hterminal 的几条“世界观”：
+    content:`HTerMinaL 的几条“世界观”：
 
 1. 一切皆文件。文件可以是文本、函数、应用、设备、权限、包、线程、会话。
 2. 文件系统尽量扁平。所有目录都挂在根 "." 下，路径用 "." 分隔。
@@ -4622,7 +4852,7 @@ const SEED_FILES = {
   .config       设置
   .agent        智能体会话
   .sys          系统信息（只读）
-  .perm         权限
+  .perm         授权（摄像头 / 通知等）
   .temp         临时文件（刷新即失）
   .queryfile    你通过“询问文件”交进来的文件
   .localstorage localStorage 的镜像
@@ -4631,7 +4861,10 @@ const SEED_FILES = {
   > await ls('.bin')
   > await exec('.bin.hello')
   > cat('.home.readme')
-`
+  > hsl()                 然后   ls -la | head      或者   fastfetch
+
+HSL 可以嵌套：再敲一次 hsl 就是下一层，exit 回到上一层，
+每一层的当前目录互不影响（和真的子 shell 一样）。`
   },
   '.bin.hello': {
     kind:'func', mime:'application/javascript',
@@ -4645,7 +4878,7 @@ return 'done';`
     kind:'func', mime:'application/javascript',
     meta:{ hint:'打印环境信息', interpreter:'js' },
     content:`const u = await navigator.storage.estimate().catch(()=>({}));
-print('hterminal', '${HT_VERSION}');
+print('HTerMinaL', '${HT_VERSION}');
 print('UA       ', navigator.userAgent);
 print('CPU      ', navigator.hardwareConcurrency, 'threads');
 print('内存     ', navigator.deviceMemory || '?', 'GB');
@@ -4661,10 +4894,10 @@ const r = await fs.read(p);
 const lines = String(r.content || '').split('\\n').length;
 print('已放入', p, '，共', lines, '行');`
   },
-  '.sys.version': { kind:'file', mime:'text/plain', content:'hterminal ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
+  '.sys.version': { kind:'file', mime:'text/plain', content:'HTerMinaL ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
   '.sys.license': { kind:'file', mime:'text/plain', content:`Apache License 2.0 OR MIT（双许可，任选其一）
 
-Copyright (c) 2026 hterminal contributors
+Copyright (c) 2026 HTerMinaL contributors
 
 本项目由 AI 智能体生成并维护。第三方组件：
   xterm.js                   MIT
@@ -4674,7 +4907,7 @@ Copyright (c) 2026 hterminal contributors
   html2canvas                MIT
   Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
-  '.sys.about': { kind:'file', mime:'text/plain', content:`hterminal
+  '.sys.about': { kind:'file', mime:'text/plain', content:`HTerMinaL
 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
 
 一个自包含的 index.html，加上三个可选的单文件模型转发后端。
@@ -5092,11 +5325,11 @@ const FS = {
     for (const [path, v] of this.temp) temp.push({ path, content:await packContent(v.content), meta:v.meta });
     const ls = {};
     for (const k of lsKeys()) ls[k] = localStorage.getItem('ht.ls.' + k);
-    return { format:'hterminal-fs', version:1, at:nowISO(), files, temp, localstorage:ls, settings:Settings.all() };
+    return { format:'HTerMinaL-fs', version:1, at:nowISO(), files, temp, localstorage:ls, settings:Settings.all() };
   },
 
   async importAll(obj) {
-    if (!obj || obj.format !== 'hterminal-fs') throw new Error('不是 hterminal 导出的文件');
+    if (!obj || obj.format !== 'HTerMinaL-fs') throw new Error('不是 HTerMinaL 导出的文件');
     if (Array.isArray(obj.files)) {
       for (const r of obj.files) {
         if (!r || !r.path) continue;
@@ -5404,7 +5637,7 @@ function isTypingTarget(el) {
 /* ---------------------------------------------------------------- 关于 */
 function aboutHtml() {
   return `<div style="line-height:1.8">
-    <p><b style="color:var(--accent);font-family:var(--mono)">hterminal ${HT_VERSION}</b><br>
+    <p><b style="color:var(--accent);font-family:var(--mono)">HTerMinaL ${HT_VERSION}</b><br>
     浏览器里的 JS 终端、一切皆文件桌面、轻量智能体宿主。</p>
     <p>一个自包含的 <span class="code">index.html</span>，加上三个可选的单文件模型转发后端
     （<span class="code">modelserver.py / .js / .go</span>）。没有构建步骤，没有账号，没有云端。</p>
@@ -5416,7 +5649,7 @@ function aboutHtml() {
 }
 
 /* ============================================================================
- * hterminal · terminal + windows
+ * HTerMinaL · terminal + windows
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * ==========================================================================*/
@@ -6621,7 +6854,7 @@ const WindowManager = {
 };
 
 /* ============================================================================
- * hterminal · apps: browser / files / editor
+ * HTerMinaL · apps: browser / files / editor
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * ==========================================================================*/
@@ -7236,13 +7469,13 @@ class EditorApp {
 }
 
 /* ============================================================================
- * hterminal · agent harness
+ * HTerMinaL · agent harness
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * 单会话、前端循环、JSONL 持久化；后端只做无状态格式转换与转发。
  * ==========================================================================*/
 
-const AGENT_SYSTEM = `你是 hterminal 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
+const AGENT_SYSTEM = `你是 HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
 
 环境事实：
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
@@ -7259,6 +7492,7 @@ const AGENT_SYSTEM = `你是 hterminal 里的智能体，运行在一个浏览�
 - 想看界面长什么样就调 screenshot，比用文字描述界面省事得多。
 - 同一个工具、同样的参数不要连着重试。失败两次就换办法，或者直接说明卡在哪。
 - 已经做过的事不要重复做，已经说过的话不要重复说。每次回答只给新增信息。
+- 若 harness 提示你“已连续 3 次重复输出并自动追问”，说明你陷入了循环：立即停止重复，换思路、改参数或总结已完成的结果，不要再把同样的动作发出来。
 - 完成后用简短中文说明做了什么、结果如何。不要输出大段无关代码。`;
 
 const AGENT_TOOLS = [
@@ -7478,12 +7712,179 @@ function fileToDataUrl(file) {
   });
 }
 
+/* ---------------------------------------------------------------- 会话持久化
+ *
+ * 独立数据库 `ht-agent`，**不**塞进 DepCache：清依赖缓存是常规操作，
+ * 顺手把用户几十轮对话删掉就是事故。
+ *
+ *   sessions  { id, title, createdAt, updatedAt, model, mode, msgCount }
+ *   messages  { sid, seq, role, content, tool_calls, tool_call_id, name, display, ts }
+ *
+ * 顺序一律用 seq，不靠时间戳——时钟会跳。
+ * 图片附件不存 dataURL：超过 40 KB 的转成 Blob 存（IDB 原生支持），读回来再转回 dataURL。
+ * 一张截图几百 KB，几十轮就顶到配额，这是唯一撑得住的做法。
+ */
+const AgentStore = {
+  DB: 'ht-agent',
+  VER: 1,
+  _db: null,
+  _p: null,
+
+  open() {
+    if (this._db) return Promise.resolve(this._db);
+    if (this._p) return this._p;
+    this._p = new Promise((res, rej) => {
+      if (typeof indexedDB === 'undefined') return rej(new Error('没有 IndexedDB'));
+      const r = indexedDB.open(this.DB, this.VER);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath:'id' });
+        if (!db.objectStoreNames.contains('messages')) {
+          const ms = db.createObjectStore('messages', { keyPath:['sid', 'seq'] });
+          ms.createIndex('sid', 'sid', { unique:false });
+        }
+      };
+      r.onsuccess = () => { this._db = r.result; res(this._db); };
+      r.onerror = () => rej(r.error || new Error('打不开 ht-agent'));
+    });
+    return this._p;
+  },
+
+  _done(tx) {
+    return new Promise((res, rej) => { tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+  },
+
+  async load(sid) {
+    const db = await this.open();
+    const tx = db.transaction(['sessions', 'messages'], 'readonly');
+    const sreq = tx.objectStore('sessions').get(sid);
+    const mreq = tx.objectStore('messages').index('sid').getAll(IDBKeyRange.only(sid));
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    const sess = sreq.result || null;
+    const rows = (mreq.result || []).sort((a, b) => a.seq - b.seq);
+    const messages = [];
+    for (const r of rows) messages.push(await unpackMsg(r));
+    return { session: sess, messages };
+  },
+
+  async save(sid, messages, meta) {
+    /* 两条 IDB 的硬规矩，踩过一次就不会再踩：
+     * ①事务一旦没有挂起的请求就会自动提交，中间 await 一下（比如 packMsg 转图片）
+     *   事务就关了，后面的 put/delete 全部 TransactionInactiveError；
+     * ②所以：**先把数据准备好，再开事务，事务里只做同步调用**。 */
+    const packed = [];
+    for (const m of messages) packed.push(await packMsg(m));
+    const db = await this.open();
+    const oldKeys = await new Promise((res, rej) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx.objectStore('messages').index('sid').getAllKeys(IDBKeyRange.only(sid));
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
+    const tx = db.transaction(['sessions', 'messages'], 'readwrite');
+    const ms = tx.objectStore('messages');
+    packed.forEach((m, i) => ms.put(Object.assign({}, m, { sid, seq:i, ts:m.ts || Date.now() })));
+    for (const k of oldKeys) if (k[1] >= packed.length) ms.delete(k);
+    const first = packed.find(m => m.role === 'user' && typeof m.content === 'string');
+    tx.objectStore('sessions').put({
+      id: sid,
+      title: (meta && meta.title) || (first ? String(first.content).slice(0, 40) : '（空会话）'),
+      createdAt: (meta && meta.createdAt) || Date.now(),
+      updatedAt: Date.now(),
+      model: (meta && meta.model) || '',
+      mode: (meta && meta.mode) || 'main',
+      msgCount: packed.length
+    });
+    await this._done(tx);
+    return packed.length;
+  },
+
+  async list() {
+    const db = await this.open();
+    const tx = db.transaction('sessions', 'readonly');
+    const req = tx.objectStore('sessions').getAll();
+    await this._done(tx);
+    return (req.result || []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  async remove(sid) {
+    const db = await this.open();
+    const oldKeys = await new Promise((res, rej) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx.objectStore('messages').index('sid').getAllKeys(IDBKeyRange.only(sid));
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
+    const tx = db.transaction(['sessions', 'messages'], 'readwrite');
+    tx.objectStore('sessions').delete(sid);
+    const ms = tx.objectStore('messages');
+    for (const k of oldKeys) ms.delete(k);
+    await this._done(tx);
+    return true;
+  },
+
+  async summary() {
+    try {
+      const rows = await this.list();
+      const total = rows.reduce((n, r) => n + (r.msgCount || 0), 0);
+      return { sessions: rows.length, messages: total, last: rows[0] || null };
+    } catch (e) { return { sessions:0, messages:0, last:null }; }
+  }
+};
+
+const dataUrlToBlob = (u) => fetch(u).then(r => r.blob());
+function blobToDataUrl(b) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.onerror = () => rej(fr.error);
+    fr.readAsDataURL(b);
+  });
+}
+
+/* 存之前：把大 dataURL 换成 Blob（结构化克隆可以直接存 Blob） */
+async function packMsg(m) {
+  const c = m && m.content;
+  if (!Array.isArray(c)) return m;
+  const parts = [];
+  for (const p of c) {
+    if (p && p.type === 'image_url' && p.image_url && /^data:/.test(String(p.image_url.url)) && String(p.image_url.url).length > 40000) {
+      try { parts.push({ type:'image_url', image_url:{ blob: await dataUrlToBlob(p.image_url.url) }, __blob:true }); continue; }
+      catch (e) { /* 转不了就照原样存，宁大勿丢 */ }
+    }
+    parts.push(p);
+  }
+  return Object.assign({}, m, { content: parts });
+}
+
+/* 读回来：Blob → dataURL。不认识的形状原样返回。 */
+async function unpackMsg(m) {
+  const c = m && m.content;
+  if (!Array.isArray(c)) return m;
+  const parts = [];
+  for (const p of c) {
+    if (p && p.__blob && p.image_url && p.image_url.blob instanceof Blob) {
+      try {
+        parts.push({ type:'image_url', image_url:{ url: await blobToDataUrl(p.image_url.blob) } });
+        continue;
+      } catch (e) {}
+    }
+    const q = Object.assign({}, p);
+    delete q.__blob;
+    parts.push(q);
+  }
+  return Object.assign({}, m, { content: parts });
+}
+
 class AgentApp {
   constructor(container, opts, win) {
     this.el = container;
     this.win = win;
     this.opts = opts || {};
     this.messages = [];
+    this.sid = this.sid || 'main';
+    this.createdAt = Date.now();
+    this._saveT = null;
     this.running = false;
     this.abort = null;
     this.onTitle = null;
@@ -7507,7 +7908,7 @@ class AgentApp {
         <textarea placeholder="给智能体一个任务…  Enter 发送，Shift+Enter 换行；可直接粘贴图片"></textarea>
         <div class="ag-actions">
           <button class="btn" data-a="attach" title="添加图片 / 文件（也可以直接粘贴或拖进来）">＋</button>
-          <span class="ag-hint">工具直接执行，不问许可 · 会话保存在 .agent.session</span>
+          <span class="ag-hint">工具直接执行，不问许可 · 对话存在 IndexedDB（ht-agent），刷新不丢</span>
           <div class="grow"></div>
           <button class="btn" data-a="stop" disabled>停止</button>
           <button class="btn primary" data-a="send">发送</button>
@@ -7607,19 +8008,36 @@ class AgentApp {
   }
 
   async loadSession() {
+    /* 会话主存是 IndexedDB 的 ht-agent 库；`.agent.session` 只是可导出的 JSONL 镜像。
+     * 老版本把数据全放在后者里，所以这里做一次单向迁移，用户不会丢历史。 */
+    this.sid = this.sid || 'main';
+    let out = [];
+    let at = 0;
     try {
-      const r = await FS.read('.agent.session');
-      const txt = String(r.content || '');
-      const lines = txt.split('\n').map(x => x.trim()).filter(Boolean);
-      const out = [];
-      for (const line of lines) {
-        try {
-          const m = JSON.parse(line);
-          if (m && (m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'system')) out.push(m);
-        } catch (e) { /* 截断的行直接忽略——这正是 JSONL 的好处 */ }
+      const r = await AgentStore.load(this.sid);
+      if (r && r.messages && r.messages.length) {
+        out = r.messages;
+        at = (r.session && r.session.updatedAt) || 0;
       }
-      this.messages = out;
-    } catch (e) { this.messages = []; }
+    } catch (e) { /* 隐私模式 / 没 IDB：退回到 JSONL 镜像 */ }
+    if (!out.length) {
+      try {
+        const r = await FS.read('.agent.session');
+        const lines = String(r.content || '').split('\n').map(x => x.trim()).filter(Boolean);
+        for (const line of lines) {
+          try {
+            const m = JSON.parse(line);
+            if (m && (m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'system')) out.push(m);
+          } catch (e) { /* 截断的行直接忽略——这正是 JSONL 的好处 */ }
+        }
+        if (out.length) {
+          at = r.mtime || Date.now();
+          AgentStore.save(this.sid, out, { createdAt:at }).catch(() => {});
+        }
+      } catch (e) { out = []; }
+    }
+    this.messages = out;
+    this.createdAt = at || Date.now();
     this.render();
     if (!this.messages.length) {
       const direct = Settings.get('agentMode') === 'direct';
@@ -7628,6 +8046,13 @@ class AgentApp {
         : `后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端`;
       this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
         <div class="msg assistant"><span class="role">agent</span>你好。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
+    } else {
+      /* 必须明说「这是恢复的」：不然用户会以为是上一次自己刚说的话，怀疑没刷新。
+       * 存成字段而不是直接插 DOM——render() 随时会被 markdown 加载完再调一次，
+       * 插进去的那行会被整块 innerHTML 冲掉（第一版就是这么消失的）。 */
+      const when = at ? new Date(at).toLocaleString('zh-CN') : '未知时间';
+      this.restoreNote = `已恢复 ${this.messages.length} 条消息（最后更新 ${when}）· 存在 IndexedDB「ht-agent」`;
+      this.render();
     }
   }
 
@@ -7635,7 +8060,24 @@ class AgentApp {
     return this.messages.map(m => JSON.stringify(m)).join('\n') + (this.messages.length ? '\n' : '');
   }
 
-  async saveSession() {
+  /* 写盘分两种时机：
+   *   流式输出/每步工具调用 → saveSession() 只排一个 800ms 的防抖
+   *   一轮结束 / 清空 / 导入  → flushSession() 立即写
+   * 以前每个 token 都全量重写一遍 JSONL，主线程能被拖到掉帧。 */
+  saveSession() {
+    clearTimeout(this._saveT);
+    this._saveT = setTimeout(() => { this.flushSession(); }, 800);
+  }
+
+  async flushSession() {
+    clearTimeout(this._saveT);
+    const snapshot = this.messages.slice();
+    try {
+      await AgentStore.save(this.sid || 'main', snapshot, {
+        createdAt: this.createdAt,
+        model: Settings.get('agentModel') || ''
+      });
+    } catch (e) { /* 配额满 / 隐私模式：会话照常能用，只是不落盘 */ }
     try {
       await FS.write('.agent.session', this.sessionJsonl(), { mime:'application/x-ndjson', hint:'智能体会话' });
     } catch (e) {}
@@ -7644,7 +8086,7 @@ class AgentApp {
   render() {
     if (!this.logEl) return;
     const msgs = this.messages.slice(-200);
-    let html = '';
+    let html = this.restoreNote ? `<div class="msg sys">${esc(this.restoreNote)}</div>` : '';
     for (const m of msgs) {
       if (m.role === 'user') {
         /* content 可能是多模态数组：渲染时优先用 display 字段（发送前已拍平） */
@@ -7659,6 +8101,8 @@ class AgentApp {
           return `<div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-top:4px">→ ${esc(t.function && t.function.name || '?')} ${esc(String(args).slice(0, 300))}</div>`;
         }).join('');
         if (body || tc) html += `<div class="msg assistant"><span class="role">agent</span>${body}${tc}</div>`;
+      } else if (m.role === 'system') {
+        html += `<div class="msg sys">${esc(m.content || '')}</div>`;
       } else if (m.role === 'tool') {
         const raw = Array.isArray(m.content)
           ? m.content.map(p => p.type === 'text' ? p.text : '[图片 ' + Math.round(String(p.image_url && p.image_url.url || '').length * 0.75 / 1024) + ' KB]').join('\n')
@@ -7695,9 +8139,10 @@ class AgentApp {
       this.renderStatus('idle', 'stopped');
       toast('已请求停止');
     } else if (a === 'clear') {
-      if (!(await confirmDlg('清空会话', '会删除当前会话与 <span class="code">.agent.session</span>，不可撤销。', true))) return;
+      if (!(await confirmDlg('清空会话', '会删除这个会话的全部消息（IndexedDB「ht-agent」）与 <span class="code">.agent.session</span> 镜像，不可撤销。', true))) return;
       this.messages = [];
-      await this.saveSession();
+      try { await AgentStore.remove(this.sid || 'main'); } catch (e) {}
+      await this.flushSession();
       this.render();
       this.renderStatus('idle');
       toast('会话已清空');
@@ -7719,7 +8164,7 @@ class AgentApp {
       }
       if (!out.length) { toast('没有可导入的消息', true); return; }
       this.messages = out;
-      await this.saveSession();
+      await this.flushSession();
       this.render();
       toast('已导入 ' + out.length + ' 条消息');
     } else if (a === 'settings') {
@@ -7751,10 +8196,10 @@ class AgentApp {
     this.messages.push({ role:'user', content, display:shown || '[图片]' });
     this.attachments = [];
     this.renderAttachments();
-    this.render(); await this.saveSession();
+    this.render(); await this.flushSession();
     try { await this.run(); }
     catch (e) { this.pushError(e); }
-    finally { this.running = false; this.renderStatus('idle'); }
+    finally { this.running = false; this.renderStatus('idle'); await this.flushSession(); }
   }
 
   /* 把内部消息列表转成 OpenAI 能接受的形状。
@@ -7779,7 +8224,7 @@ class AgentApp {
     const usedCalls = new Set();
 
     for (const m of this.messages) {
-      if (m.role === 'error' || m.role === 'tool') continue;   // tool 在下面跟着 assistant 一起发
+      if (m.role === 'error' || m.role === 'tool' || m.role === 'system') continue;   // tool 在下面跟着 assistant 一起发；system 备注只给用户看，不进请求
 
       if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
         const calls = m.tool_calls.filter(t => t && t.function && t.function.name);
@@ -7851,7 +8296,7 @@ class AgentApp {
       headers = {
         'Content-Type':'application/json',
         'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
-        'X-HTerm-Client':'hterminal'
+        'X-HTerm-Client':'HTerMinaL'
       };
       payload = {
         model, provider: Settings.get('agentProvider') || 'openai',
@@ -7911,6 +8356,10 @@ class AgentApp {
      * 指纹只在这一轮有效，用户下次提问会重来。 */
     const calls = new Map();
     let steps = 0;
+    /* 重复生成防护：连续 N 次输出相同签名（工具调用或文本）→ 卡断本轮并自动追问。
+     * 见 _injectRepeatNudge()。阈值取 3：前两次视为正常重试，第三次才判定“卡住”。 */
+    const REPEAT_LIMIT = 3;
+    let lastSig = null, repeatCount = 0;
 
     while (this.running && steps < maxSteps) {
       steps++;
@@ -7919,6 +8368,20 @@ class AgentApp {
       if (!this.running) { this._pushAssistant(msg, true); break; }
       this._pushAssistant(msg, false);
       this.render(); await this.saveSession();
+
+      /* —— 重复生成防护 ——
+       * 算这一轮“输出签名”：连续三次签名相同，判定智能体陷入重复循环。
+       * 这时不再执行这一轮的动作，而是自动向它追问一句“是否卡住、请检查”，
+       * 然后让它继续（带追问再跑一轮，而不是硬停）。reset 后从 0 重数，避免每轮都追问。 */
+      const sig = this._turnSig(msg);
+      if (sig && sig === lastSig) repeatCount++;
+      else { lastSig = sig; repeatCount = 1; }
+      if (repeatCount >= REPEAT_LIMIT) {
+        this._injectRepeatNudge(sig);
+        lastSig = null; repeatCount = 0;
+        this.render(); await this.saveSession();
+        continue;
+      }
 
       if (msg.tool_calls && msg.tool_calls.length) {
         for (const tc of msg.tool_calls) {
@@ -7967,6 +8430,36 @@ class AgentApp {
     }
     this.running = false;
     this.renderStatus('idle');
+  }
+
+  /* 输出签名：把“这一轮智能体到底干了什么”压成一个可比较的字符串。
+   * 带工具调用 → 工具名+参数指纹；纯文本 → 正文前若干字符（长输出只比前缀，
+   * 末尾差异极少见，且真要判重也该比整体结构）。两次签名相同即视为“同一输出”。 */
+  _turnSig(msg) {
+    if (msg && msg.tool_calls && msg.tool_calls.length) {
+      const tc = msg.tool_calls
+        .filter(t => t && t.function && t.function.name)
+        .map(t => {
+          let a = '{}';
+          try { a = stableKey(JSON.parse(t.function.arguments || '{}')); }
+          catch (e) { a = stableKey(String(t.function.arguments || '')); }
+          return t.function.name + '(' + a + ')';
+        }).join('|');
+      return 'TC:' + tc;
+    }
+    return 'TX:' + String((msg && msg.content) || '').slice(0, 400);
+  }
+
+  /* 重复循环触发：在日志里记一条系统备注，并自动以“用户”身份向智能体追问一句，
+   * 让它自行检查是否卡住。追问以 user 角色进会话（apiMessages 会正常发送）；
+   * system 备注只给用户看（渲染成 sys 样式，但不进发给模型的请求）。 */
+  _injectRepeatNudge(sig) {
+    const note = '⚠ 检测到连续 3 次输出相同内容（工具调用或文本），已自动向智能体追问以检查是否卡住。';
+    this.messages.push({ role:'system', content:note });
+    const prompt = '【自动检查】你已连续 3 次输出基本相同的内容（同一工具相同参数，或同一段文本），'
+      + '疑似陷入重复循环。请先停下：对照已有结果，确认任务是否已完成、是否忽略了某些报错或缺失信息。'
+      + '若已完成，请用简短中文总结结果；若仍需要新信息，请改用不同的参数或换一个工具，不要重复刚才完全相同的动作。';
+    this.messages.push({ role:'user', content:prompt, display:'[自动追问] ' + prompt.slice(0, 60) + '…' });
   }
 
   /* 收下一条 assistant 消息。两个小动作都在治「重复输出」：
@@ -8075,12 +8568,13 @@ class AgentApp {
     this._disposed = true;
     this.running = false;
     try { this.abort && this.abort.abort(); } catch (e) {}
-    this.saveSession();
+    /* 关窗就是「这一轮到此为止」：必须立刻落盘，不能等防抖（页面可能马上就关了） */
+    this.flushSession().catch(() => {});
   }
 }
 
 /* ============================================================================
- * hterminal · 依赖缓存 / 振动 / 截图 / TUI 智能体 / 嵌套 shell
+ * HTerMinaL · 依赖缓存 / 振动 / 截图 / TUI 智能体 / 嵌套 shell
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -8424,7 +8918,9 @@ const AgentTuiHost = {
     return true;
   },
   status() {
-    const a = HeadlessAgent.app;
+    /* 用 ensure 而不是读 app：没开过 TUI 的时候也要能看到「历史里有几条」，
+     * 否则用户会以为对话没了。ensure 只建一个 display:none 的宿主。 */
+    const a = HeadlessAgent.ensure();
     return { running: !!(a && a.running), messages: a ? a.messages.length : 0 };
   }
 };
@@ -8893,7 +9389,7 @@ const DomRpc = {
         return o;
       }
 
-      /* ------------------------------------------------ 宿主能力（hterminal 自己的） */
+      /* ------------------------------------------------ 宿主能力（HTerMinaL 自己的） */
       case 'toast': { toast(String(args[0] || '')); return true; }
       case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
       case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }
@@ -8904,10 +9400,55 @@ const DomRpc = {
 };
 
 /* ============================================================================
- * hterminal · boot / RPC / window API / drawer
+ * HTerMinaL · boot / RPC / window API / drawer
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 原生 API 转发
+ *
+ * Worker 里没有 window.alert / confirm / prompt / open / print …，而它们**只能**
+ * 由页面线程执行。所以这里原样转发：不换文案、不换按钮、不换返回值类型，
+ * 你在屏幕上看到的就是浏览器自己的对话框、自己的弹窗拦截、自己的焦点处理。
+ *
+ * 两个必须写明的物理限制：
+ *   1. 同步返回做不到。跨线程没有同步通道（要 SharedArrayBuffer，需要 COOP/COEP，
+ *      双击 index.html 打开时必然没有）。所以 confirm / prompt 的返回值是 Promise。
+ *   2. window.open 返回的是 WindowProxy，结构化克隆传不回来，只能回 null。
+ */
+const NATIVE_ALLOWED = new Set(['alert','confirm','prompt','print','open','close','focus','blur','stop','scrollTo','scrollBy']);
+
+function nativeCall(name, args) {
+  if (!NATIVE_ALLOWED.has(String(name))) throw new Error('native: 不允许转发 ' + name);
+  const fn = window[name];
+  if (typeof fn !== 'function') throw new Error('native: 浏览器没有 ' + name);
+  const r = fn.apply(window, Array.isArray(args) ? args : []);
+  if (name === 'open') return null;
+  return r === undefined ? null : r;
+}
+
+/* fastfetch 要的真实信息。拿不到就返回空字符串，由命令那边显示 n/a——
+ * 不编数字。 */
+function sysInfo() {
+  const ua = navigator.userAgent || '';
+  const m = ua.match(/(Edg|Chrome|Firefox)\/([\d.]+)/);
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS'
+    : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS'
+    : /Linux/.test(ua) ? 'Linux' : '';
+  let mem = '';
+  if (navigator.deviceMemory) mem = navigator.deviceMemory + ' GB';
+  else if (performance.memory) mem = Math.round(performance.memory.usedJSHeapSize / 1048576) + ' MB heap';
+  return {
+    engine: m ? m[1] + ' ' + m[2] : '',
+    os,
+    screen: screen.width + 'x' + screen.height,
+    dpr: window.devicePixelRatio || 1,
+    theme: window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    lang: navigator.language || '',
+    cores: navigator.hardwareConcurrency || 0,
+    mem
+  };
+}
 
 /* ---------------------------------------------------------------- RPC（worker → 主线程） */
 const RPC = {
@@ -8970,7 +9511,7 @@ const RPC = {
       case 'notify': {
         const msg = String(a[0] || '');
         if ('Notification' in window && Notification.permission === 'granted') {
-          try { new Notification('hterminal', { body:msg }); return true; } catch (e) {}
+          try { new Notification('HTerMinaL', { body:msg }); return true; } catch (e) {}
         }
         toast(msg);
         return true;
@@ -8993,6 +9534,10 @@ const RPC = {
       case 'deps.load': await loadScriptCached(a[0]); return true;
       /* ---- DOM：worker 摸页面的唯一通道 ---- */
       case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
+      /* ---- 原生 API：Worker 里没有，转回主线程调真的 ----
+       * 白名单是「浏览器真实存在的 window 方法」，不做任何替换或包装。 */
+      case 'native': return nativeCall(a[0], a[1] || []);
+      case 'sys.info': return sysInfo();
       default: throw new Error('未知 RPC：' + op);
     }
   }
@@ -9124,7 +9669,7 @@ const Drawer = {
     if (launcherMore) launcherMore.onclick = () => { AppMenu.close(); this.open(); };
     // 品牌 → 关于
     const brand = $('#tbBrand');
-    if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
+    if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
     $('#drawerClose').onclick = () => this.close();
     $('#drawer-overlay').onclick = () => this.close();
     const bindRange = (id, key, fmt) => {
@@ -9176,7 +9721,7 @@ const Drawer = {
       toast('依赖缓存已清空，下次打开会重新下载');
       try { this.refresh(); } catch (e) {}
     };
-    $('#btnAbout').onclick = () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
+    $('#btnAbout').onclick = () => modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
 
     this.syncControls();
     this.refreshPkgList();
@@ -9253,6 +9798,13 @@ const Drawer = {
     } catch (e) {}
     set('#stSession', (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
     set('#stHist', String(loadHistory().length));
+    /* 对话条数直接问 IndexedDB（ht-agent），不要问内存里的 harness——
+     * 刷新之后 harness 还没建，但历史已经在库里了。
+     * AgentStore 自己吞异常，库打不开就回 0。 */
+    try {
+      const s = await AgentStore.summary();
+      set('#stAgent', s.messages ? (s.sessions + ' 段 · ' + s.messages + ' 条') : '空');
+    } catch (e) { set('#stAgent', '空'); }
     try {
       const d = await DepCache.usage();
       set('#stDeps', d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空');
@@ -9295,7 +9847,7 @@ const Drawer = {
   async exportFs() {
     try {
       const obj = await FS.exportAll();
-      await saveFile('hterminal-fs-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(obj, null, 2), 'application/json');
+      await saveFile('HTerMinaL-fs-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(obj, null, 2), 'application/json');
     } catch (e) { toast('导出失败：' + e.message, true); }
   },
   async importFs() {
@@ -9313,7 +9865,7 @@ const Drawer = {
   async exportLs() {
     const o = {};
     for (const k of lsKeys()) o[k] = localStorage.getItem('ht.ls.' + k);
-    await saveFile('hterminal-localstorage.json', JSON.stringify(o, null, 2), 'application/json');
+    await saveFile('HTerMinaL-localstorage.json', JSON.stringify(o, null, 2), 'application/json');
   },
   async installPkg() {
     const inp = $('#pkgInput');
@@ -9475,7 +10027,7 @@ function installWindowAPI() {
     openURL: (url) => WindowManager.open({ type:'browser', url:String(url) }),
     requestPermission,
     notify: (msg) => {
-      if ('Notification' in window && Notification.permission === 'granted') { try { new Notification('hterminal', { body:String(msg) }); return; } catch (e) {} }
+      if ('Notification' in window && Notification.permission === 'granted') { try { new Notification('HTerMinaL', { body:String(msg) }); return; } catch (e) {} }
       toast(String(msg));
     },
     // 设置 / 包 / 智能体
@@ -9501,7 +10053,7 @@ function installWindowAPI() {
     },
     clearData: nuke,
     nuke,
-    about: () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }),
+    about: () => modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }),
     sleep,
     uuid: uid,
     storage: IDB,
@@ -9636,12 +10188,12 @@ async function boot() {
 }
 
 window.addEventListener('error', (e) => {
-  if (e.message && !/ResizeObserver/.test(e.message)) console.error('[hterminal]', e.message);
+  if (e.message && !/ResizeObserver/.test(e.message)) console.error('[HTerMinaL]', e.message);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const r = e.reason;
   if (r && r.name === 'AbortError') return;
-  console.warn('[hterminal] unhandled', r);
+  console.warn('[HTerMinaL] unhandled', r);
 });
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

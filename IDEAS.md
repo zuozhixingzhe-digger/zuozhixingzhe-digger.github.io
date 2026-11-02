@@ -5,15 +5,20 @@
 
 ---
 
-## HSL —— HTML Subsystem for Linux
+## 在浏览器里跑 Linux 程序（原名 HSL，**名字已被 shell 占用，待改名**）
 
 > 提出：2026-11-01　状态：**仅记录，未开工**
 > 一句话：在 `index.html` 里跑 Linux 程序，像 WSL 之于 Windows。
+>
+> ⚠️ **重名提醒**：`HSL` 这三个字母自 0.0.1.1 起已经是**交互 shell 的名字**
+> （用户明确要求把 Linux 命令分到 `hsl` 命令里，见 README 5.1）。本条目说的是另一件事
+> （WSL 那个意思），只是当年先占了这三个字母。真开工前必须先另起一个名字，
+> 候选：`HTL`（HTML Translation Layer）、`wsl.js`、`fext4`。**别在文档里混着叫 HSL。**
 
 ### 想做什么
 
 现在 `build/25-compat.js` 里的 `ls / cat / grep / vim / nano` 都是**用 JS 重写**的命令，
-长得像 Linux，骨子里是 JavaScript。HSL 要把这层「像」换成「是」：
+长得像 Linux，骨子里是 JavaScript。这一层要把「像」换成「是」：
 
 1. **真的能 `exec` 一个可执行文件** —— `./hello`、`/usr/bin/wc`，走 `execve` 语义，不是 switch-case 分发。
 2. **fext4（fake ext4）** —— 一个能被 `mount` 的文件系统：superblock、inode 表、目录项、权限位、
@@ -39,7 +44,7 @@
 - **原生 x86-64 ELF 这条路，单文件里走不通**。要跑就得塞一个用户态指令翻译器
   （v86 / qemu-wasm 量级，几 MB 到几十 MB），和「单文件 300 KB」的定位直接冲突。
   真要支持，只能是**可选重型模式**：用户点一下，从 CDN 拉、缓存进 IndexedDB，
-  并且明说「这不是 HSL 的核心，是外挂」。
+  并且明说「这不是本项目的核心，是外挂」。
 - **ext4 全量实现不现实**。extent 树、journal、64bit、metadata_csum 全做等于重写 e2fsprogs。
   现实目标是「**只读挂载真镜像 + 可写挂载自建卷**」：给一个 `mke2fs` 出来的镜像能 `ls -l`、
   `cat`、`stat`，写操作只在自己创建的卷上开放，并且不做 journal 恢复。
@@ -58,7 +63,7 @@
 | **busybox** | GPL-2.0 | ❌ 同上 |
 | 任何 GPL 程序的 wasm | 继承 GPL | ⚠️ 只能**运行时由用户自备**，仓库里连 URL 都不该写死 |
 
-结论：**HSL 的默认用户态必须是自研 + MIT/Apache 的**，GPL 世界的东西走「用户自己拖进来」。
+结论：**这个想法的默认用户态必须是自研 + MIT/Apache 的**，GPL 世界的东西走「用户自己拖进来」。
 这跟现在 `licenses/` 里那份清单的口径一致。
 
 ### 里程碑
@@ -67,7 +72,7 @@
 - **M1 · execve**：`exec('/bin/echo.wasm', ['echo','hi'])`，WASI 的 `fd_write` 打到 xterm。
 - **M2 · 管子**：`cat a.txt | wc -l`，两个 wasm 模块通过 fd 表接起来，不再靠 JS 管道字符串拼接。
 - **M3 · 进程表**：`ps` 有真 pid，`/proc/<pid>/cmdline` 可读，`&` 能后台，`kill` 能停。
-- **M4 · 工具链**：给出「怎么把一个 C 程序编成能在 HSL 里跑的 wasm」的三行说明。
+- **M4 · 工具链**：给出「怎么把一个 C 程序编成能在这层里跑的 wasm」的三行说明。
 
 ### 第一步（等真开工时）
 
@@ -77,31 +82,35 @@
 
 ### 提醒我
 
-> 下次开新版本时，如果用户没提 HSL，**主动问一句**：「HSL 那条还做吗？先迈 M0 还是 M1？」
+> 下次开新版本时，如果用户没提这个想法，**主动问一句**：「浏览器里跑 Linux 程序那条还做吗？先迈 M0 还是 M1？」
 > 这条别丢。
 
 ---
 
-## 待办 · 移植应用的许可证（2026-11-02 记）
+## 待办 · 移植应用的许可证（2026-11-02 记，0.0.1.1 已收敛）
 
-用户要求：**把 zsh 等移植应用的许可证补进仓库，避免侵权。**
+用户要求：**把移植应用的许可证补进仓库，避免侵权。**
 
 现状与规则：
 
-- 现在 `25-compat.js` 里的 `ls`/`grep`/`zsh` 模式全部是自研代码，**没有**打包任何外部二进制，
-  所以目前不存在侵权，只是「名字撞了」。
-- 一旦真的把 zsh / bash / busybox / coreutils 之类移植进来（不管是 wasm、还是 eio 翻译层），
-  就必须在 `licenses/` 下补齐对应的许可证全文，并在 `licenses/README.md` 里登记
+- `25-compat.js` 里的 `ls` / `grep` / `vim` / `nano` 全部是自研代码，**没有**打包任何外部二进制，
+  所以不存在侵权，历史上的问题只是「名字撞了」。
+- **0.0.1.1 起名字也还回去了**：`zsh` / `bash` / `sh` 三条命令彻底删除（含许可证段落），
+  交互 shell 改名 `HSL`；`vim` / `nano` 只是「像」，实现是本项目的 MIT 代码。
+  也就是说**当前没有任何第三方移植物**，本待办只剩「将来真的移植时」的规则价值。
+- 一旦真把 busybox / coreutils / dash 之类移植进来（不管 wasm 还是翻译层），
+  必须先在 `licenses/` 下补齐许可证全文，并在 `licenses/README.md` 登记
   「哪个文件、哪个版本、什么许可证、从哪来」。
 - 红线：
-  - **GPL-2.0 / GPL-3.0**（bash、coreutils、busybox、zsh 是 MIT 但链接的库不一定）
-    不能静态链进发布物；只能「用户运行时自备」，仓库里连下载地址都不写死。
-  - **zsh** 本体是 MIT-like（zsh License，类 BSD），可以移植，但必须随附许可证全文。
+  - **GPL-2.0 / GPL-3.0**（bash、coreutils、busybox）不能静态链进发布物；
+    只能「用户运行时自备」，仓库里连下载地址都不写死。
+  - **zsh** 本体是 MIT-like，但既然已经删了就不必再记这条；哪天重开也走同样流程。
   - **dash / mksh** 是 BSD/Apache 系，相对安全。
-  - **vim** 是 Vim License（GPL 兼容的自由许可证，但不是 GPL），分发要带 `:help license` 文本。
-  - **nano** 是 GPL-3.0，**不能**打包，只能自己实现一个「像 nano 的编辑器」。
+  - **vim** 是 Vim License（自由许可、非 GPL），分发要带 `:help license` 文本。
+  - **nano** 是 GPL-3.0，**不能**打包，只能自己实现一个「像 nano 的编辑器」——现在就是这么做的。
 - 落地位置：`licenses/` 下一程序一个文件，命名 `<name>-<version>.txt`；
-  `licenses/README.md` 维护一张表（程序 / 版本 / 许可证 / 来源 URL / 是否随发布物分发）。
+  `licenses/README.md` 维护一张表（程序 / 版本 / 许可证 / 来源 URL / 是否随发布物分发）；
+  `check-licenses.sh` 在构建前做机器校验，漏登记直接构建失败。
 
 > 提醒我：真开始移植任何第三方程序时，**先加许可证，再提代码**。
 

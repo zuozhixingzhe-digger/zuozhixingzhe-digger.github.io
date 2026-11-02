@@ -1,9 +1,9 @@
-# hterminal
+# HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.0**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.1**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 430 KB，无构建依赖、可直接双击打开）。
+`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 465 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
 依赖（xterm / Pyodide / marked / html2canvas）走 CDN，**首次加载后统一进 IndexedDB**，
@@ -60,7 +60,8 @@ readme     welcome
 11. [许可证](#11-许可证)
 12. [AI 生成内容声明](#12-ai-生成内容声明)
 
-**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子（目前一条：**HSL · HTML Subsystem for Linux**）。
+**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子（目前一条：**在浏览器里跑 Linux 程序**，原名 HSL，
+但 HSL 这三个字母现在已经是本项目的交互 shell 名字，真开工前得先改名）。
 
 ---
 
@@ -86,8 +87,9 @@ readme     welcome
    也可以 `python3 -m http.server` 起个静态服务再访问——两种都行，没有后端也能跑全部功能。
 2. 等启动进度条走完（首次会从 CDN 拉 xterm.js，之后走缓存）。
 3. 直接敲 JS：`1 + 1`、`document.title`、`await fetch('/')`。
-4. 敲 `help` 看命令表，敲 `ls('.home')` 看家目录，点顶栏 `▦` 开个窗口。
-5. 想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Ctrl+Shift+A` 开智能体。
+4. 敲 `help()` 看 JS 侧 API，敲 `ls('.home')` 看家目录，点顶栏 `▦` 开个窗口。
+5. 想敲 Linux 命令：敲 `hsl` 进 shell（`ls -la`、`cat readme`、`fastfetch`），`exit` 回来。
+   想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Ctrl+Shift+A` 开智能体。
 
 > **双击打开 ≠ 能用后端**。`file://` 页面的 Origin 是 `null`，和恶意网页里的
 > `<iframe sandbox>` 一模一样，浏览器给不出区别（连 `Sec-Fetch-Site` 都是 `cross-site`）。
@@ -147,14 +149,16 @@ readme     welcome
 **提示符**固定是「当前路径 + `> ` + 一个空格」，没有设置项：
 
 ```text
-.home> ls
-.bin>  zsh
-~>     cd /
-/>
+.home>  1 + 1              ← JSHeL：只认 JavaScript
+.home $  ls -la            ← HSL：只认命令（提示符多一个 $）
+. $      cd /              ← 嵌套的第二层，自己记自己的目录
 ```
 
 路径里的 `@` 表示当前目录（`cd @` 原地不动、`cat @.notes` 读当前目录下的文件），
-`~` 是 `.home`，`..` 是上一级，`/` 与 `.` 等价。zsh 模式下提示符换成 `%`，这是唯一的例外。
+`~` 是 `.home`，`..` 是上一级，`/` 与 `.` 在 JSHeL 里等价。
+
+在 **HSL** 里规则换成 shell 那一套：路径相对当前目录（`ls` 列 cwd、`cd ..` 上一级），
+`.` 开头的点分路径仍按根解析。提示符末尾的 `$` 就是「我在 shell 里」的唯一标志。
 
 **光标**照参考项目的做法，不给任何设置项：一个 `div` 叠在 xterm 上（xterm 自己的光标设成全透明），
 用 `requestAnimationFrame` 每帧向目标点逼近 22%，所以移动是滑过去的、不是跳过去的。
@@ -226,15 +230,20 @@ JSHeL = **JS HTML shell**。它不是一个语法，就是一个 REPL：**你敲
 ```js
 1 + 1                       // 表达式：回显结果
 const x = await ls('.home') // 声明：提升到全局，后续可用
-help                        // 裸命令名自动调用（白名单内）
+help                        // 裸名字自动调用（白名单内）
+hsl                         // 同上：进 HSL 交互 shell
 ```
+
+> 这一层**不认 shell 语法**。`ls -la`、`cat a | grep b`、`mkdir x && cd x` 都是语法错误，
+> 请用 `hsl()` 进去敲，或者 `hsl('ls -la')`。见 [5.1](#51-hslbuild25-compatjs)。
 
 | 分类 | 命令 |
 | --- | --- |
 | 文件 | `ls(p)` `ll(p)` `cd(p)` `pwd()` `cat(p)` `write(p, data)` `mkdir(p)` `rm(p,{r})` `mv(a,b)` `cp(a,b)` `stat(p)` `tree(p)` `find(pat)` `grep(pat)` `head(p,n)` `tail(p,n)` `du(p)` `df()` `mount()` |
 | 执行 | `exec(p, ...args)` `open(p)` `run(code)` `require('pkg')` `python()` `exit()` |
 | 窗口 | `winOpen({type,title,url,code})` `spawn(code)` `winList()` `winClose(id)` `agentOpen()` |
-| 系统 | `saveFile(name, body)` `askFile()` `fetchText(url)` `openUrl(url)` `notify(msg)` `perm(name)` `ps()` `kill(pid)` `clear()` `history()` |
+| 系统 | `saveFile(name, body)` `askFile()` `fetchText(url)` `openUrl(url)` `notify(msg)` `perm(name)` `ps()` `kill(pid)` `clear()` `history()` `nuke()` |
+| HSL | `hsl()` 进交互 shell、`hsl('ls -la')` 跑一行、`hsl.run(cmd)` 拿 `{code,out,err}` |
 
 几个容易误解的点：
 
@@ -242,18 +251,73 @@ help                        // 裸命令名自动调用（白名单内）
 - **`pwd()` 只返回路径**，由 REPL 负责回显，不会打印两遍。
 - **`exec` 执行的是「可执行文件」**：`.bin` 里的 content 被编译成 `AsyncFunction`，`args` 是实参数组。
   **写进 `.bin` 就是函数**（`write('.bin.hi','return 42')` 之后 `exec('.bin.hi')` 直接得 42），
-  之后用 `vim` 改它也不会丢掉可执行位；反过来 `chmod -x` 才会把它降回普通文本。
-  别的地方想加这一位，就用 `chmod +x <文件>`（只有这一位有意义，`+r`/`+w` 会被忽略）。
+  之后用 `vim` 改它也不会变成普通文本。这是**文件类型**（`kind: 'func'`），不是权限位——
+  这个文件系统没有 rwx，也没有 `chmod`。
 - **`rm` 默认不递归**，删目录要 `rm(p, {r:true})`。
 - **多行**：行尾反斜杠续行；粘贴多行文本会被识别成一次提交（括号粘贴协议）。
 
-### 5.1 Linux 兼容层（`build/25-compat.js`）
+### 5.1 HSL（`build/25-compat.js`）
 
-`ls`、`cat`、`grep` 这些名字**既可以是 JS 函数，也可以是命令**。裸打字（`ls -la .home`）
-走兼容层，函数调用（`ls('.home')`）走 JSHeL——判断依据是「第一个词是不是已知命令」，
-不是「有没有括号」，所以 `mkdir("a"); write("b")` 仍然按 JS 执行。
+**HSL = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
 
-支持的东西（都是**自己写的**，不是搬 busybox）：
+| | JSHeL | HSL |
+| --- | --- | --- |
+| 提示符 | `.home> ` | `.home $ ` |
+| 认什么 | 只认 JavaScript | 只认命令、管道、重定向、变量、通配符 |
+| `ls -la` | **语法错误**（不会执行） | 正常列目录 |
+| `1+1` | `2` | `1+1: 命令未找到` |
+| `write(p,d)` | 真的写文件 | 命令未找到（shell 不认 JS） |
+
+以前是靠「第一个词是不是命令」去猜一行是 JS 还是 shell。猜错的代价是行为不可预测：
+同一行代码的结果取决于命令表里恰好有没有同名命令。现在按提示符就能确定自己在哪一层。
+
+```js
+hsl()                    // 进交互 shell（可嵌套），返回 undefined
+hsl('ls -la | head')     // 跑一行，输出直接进终端；返回 Promise<void>，REPL 不回显
+await hsl.run('false')   // { code: 1 }——跑一行但不打印
+await hsl.run('echo hi') // { code: 0, out: "hi\n" }
+```
+
+`hsl('…')` 故意返回 `Promise<void>` 而不是退出码：直接回车时 REPL 会把返回值回显出来，
+返回层数或 `{code}` 都会在屏幕上多出一行噪音；要退出码就用 `hsl.run()`。
+`hsl.run()` 的返回是 `{ code, out?, err? }`——没有输出时 `out`/`err` 这两个键**不存在**，
+不是空字符串，这样 `if (r.err)` 才写得对。
+
+**cwd 只有一份**：在 `hsl('cd ..')` 里 `cd` 了，回到 JSHeL 提示符也跟着变（`.> `）。
+这不是 bug——`hsl()` 只是「用 shell 语法跑一行」，不是开一个隔离的 subshell；
+要隔离就真进去 `hsl()`，那一层有自己的栈帧。
+
+在 JSHeL 里敲命令会得到一句指路提示，但**不会被偷偷执行**：
+
+```text
+.home> nano readme
+ReferenceError: nano is not defined
+提示：nano 是 HSL 命令。hsl() 进 shell，或 hsl("nano readme")。
+```
+
+#### 嵌套：用栈，不用开关
+
+`hsl` 可以一层层套进去，`exit` 一层层退出来：
+
+```text
+.home> hsl            → hsl · 第 1 层 · help 看命令，exit 退出这一层
+.home $ cd .bin       → 第 1 层进 .bin
+.bin $ hsl            → hsl: 第 2 层（exit 退出这一层）
+.bin $ cd ..          → 第 2 层退到根，第 1 层还在 .bin
+. $ exit              → exit: 回到第 1 层 HSL
+.bin $                → 目录回到 .bin（第 1 层自己的 cwd）
+.bin $ exit           → exit: 回到 JSHeL
+.home>                → 目录回到 .home（JSHeL 的 cwd）
+```
+
+**每一层记自己的 cwd 和环境变量**——退回来时你还在离开的那一层，不会被弹回 `~`。
+
+老版本把模式存成一个布尔量（`mode = 'zsh'`），于是「第二次进入」只是把同一个标记又设了一遍：
+提示符不变、`exit` 一次就退到底、进去之前改过的目录也回不来。
+**布尔量表达不了「第几层」**，现在每一层是一个栈帧（`{cwd, env}`），
+退栈时 cwd 和环境变量一起恢复——这就是真 shell 里 subshell 的语义。
+
+#### 支持的东西（全部自研，不是搬 busybox）
 
 | 能力 | 说明 |
 | --- | --- |
@@ -261,20 +325,73 @@ help                        // 裸命令名自动调用（白名单内）
 | 变量 | `X=1`、`echo $X`、`${X}`、`$?`（上一条的退出码） |
 | 管道 | `cat a \| grep x \| head -3`，逐级传字符串 |
 | 重定向 | `> file`、`>> file`、`< file`、`2>` |
-| 通配符 | `*`、`?`，在 `realPath` 之后按当前目录展开 |
+| 通配符 | `*`、`?`，按**当前目录**展开 |
 | 分号 / `&&` / `\|\|` | 顺序执行与短路 |
 
-命令表：`ls ll cd pwd cat echo printf mkdir touch rm cp mv head tail wc sort uniq grep find
-sed awk chmod stat du df tree which whoami uname date env export history clear exit true false
-sleep seq basename dirname xargs tee cut tr rev`。
+命令表（`help` 随时可看）：
 
-两个**全屏 TUI**也在里面：`vim`（普通/插入/命令三种模式，`hjkl`、`i`、`:` 写盘退出）和
-`nano`（`^O` 保存、`^X` 退出），都直接画在 xterm 上，用备用屏，不污染滚动历史。
-敲 `zsh` 进入 zsh 模式：提示符变 `%`，命令表不变——因为真正的 zsh 是 GPL 的 C 程序，
-这里只是「让它像 zsh 一样可用的壳」。
+```text
+cat cd clear cp curl cut date df diff dir dirname du echo env exit export false
+fastfetch find grep head help history hostname hsl kill less ll ln ls man mkdir
+more mv nano neofetch printf ps pwd rev rm rmdir sed seq sleep sort source stat
+tail tee touch tr tree true type uname uniq unlink unset vi vim wc wget which
+whoami xargs yes
+```
 
-> **许可证**：兼容层全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
-> GNU coreutils / busybox 都是 GPL，把它们的 wasm 打进单文件会传染整个发布物，
+**路径按当前目录解析**：`ls` 列的是 cwd，`cat notes` 读的是 cwd 下的 notes，
+`cd ..` 是上一级。想用绝对点分路径就写 `.home.readme`（`.` 开头仍按根解析），
+`/`、`~`、`@` 也都认识。
+
+#### 全屏应用
+
+`vim`（普通/插入/命令三种模式）和 `nano`（`^O` 保存、`^X` 退出，`^K`/`^U` 剪切粘贴）
+都画在终端的备用屏上，退出时回到原来的滚动历史。
+
+它们**支持鼠标**（应用开着的时候）：点正文哪里，光标就到哪里；滚轮上下滚三行。
+实现上开了 DECSET 1000 + 1006（SGR 坐标），退出时先关鼠标报告再离开备用屏。
+
+画面是按**绝对坐标逐行重画**的，不是拼一大段带换行符的字符串：
+内容高度等于终端高度时，末尾那个换行会把整屏顶上去一行——nano 之前「显示不正常」
+（标题栏消失、正文整体上移、光标偏移）就是这个原因。中文按显示宽度（双宽）排版，
+所以中英混排的 readme 不会一行行错开。
+
+#### `fastfetch` / `neofetch`
+
+```text
+██╗  ██╗████████╗    HTerMinaL 0.0.1.1
+██║  ██║╚══██╔══╝    ──────────────────────────
+███████║   ██║       OS         Linux
+██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.1
+╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
+```
+
+信息全是现场问出来的（`sys.info` + `fs.usage` + `proc.list`），
+拿不到的字段写 `n/a`，不编。`fastfetch --no-logo` 只要文字。
+
+#### 没有 rwx
+
+这个文件系统**没有** mode 位、没有属主、没有组，也不是 ext4。所以：
+
+- `ls -l` 印的是 `kind  size  mtime  name`（`dir`/`file`/`func`/`app`/`dev`/`pkg`），
+  不是 `-rw-r--r--`——画一排 rwx 只会让人以为 `chmod` 有用
+- `chmod` 命令已删除；`.bin` 里的东西就是可执行文件（`kind: 'func'`），
+  这是文件类型，不是权限位
+- `su` / `sudo` 已删除：只有你一个用户，而且本来就是最高权限
+
+#### 删掉的「没意义移植」
+
+| 命令 | 为什么删 |
+| --- | --- |
+| `apt` | 这里不是 Debian，装包是 `await require('lodash-es@4')` |
+| `ping` | 浏览器不发 ICMP，做不到就是做不到 |
+| `bash` / `sh` / `zsh` | 学不像就别学。zsh 本体是 MIT-like，但这里从来没打包它，只是借了个名字——现在名字也还回去了，交互层叫 HSL |
+| `su` / `sudo` | 单用户、最高权限，没有「切换」这回事 |
+| `npm` / `pip` | 只打印一行错误提示的桩，留着只会让人以为能用 |
+| `chmod` | 见上：没有权限位可改 |
+
+> **许可证**：HSL 全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
+> GNU coreutils / busybox / bash 都是 GPL，把它们的 wasm 打进单文件会传染整个发布物，
 > 所以宁可自己重写。第三方清单见 `licenses/`。
 
 ### 5.2 内建 TUI 智能体
@@ -291,7 +408,8 @@ sleep seq basename dirname xargs tee cut tr rev`。
 ```
 
 没有 id、没有多实例：**一个终端一个 TUI 会话**，这是刻意的——多实例会让「当前会话」这个概念
-在 `.agent.session` 上打架（文件只有一份）。要并行就用窗口版开第二个智能体窗口。
+打架（窗口版和 TUI 共用 `ht-agent` 里的 `sid = 'main'`，一个 `sid` 只能有一份消息流）。
+要并行就用窗口版开第二个智能体窗口。
 
 ### 5.3 `document` / `window` / `page`
 
@@ -361,13 +479,41 @@ await page.eval('document.querySelectorAll("button").length')   // 30
 `window` 挂的是同一套东西：`window === globalThis`、`document.location === location`、
 `innerWidth/innerHeight/devicePixelRatio/scrollX/scrollY` 来自快照，
 `requestAnimationFrame`（Worker 原生没有，用 16ms 定时器实现）、`matchMedia`、
-`getComputedStyle`、`alert/confirm/prompt`、`history`（既是 JSHeL 的命令历史函数，
-也带 `length/back/pushState`）。`top/parent/frames` 等于 `window` 自己。
+`getComputedStyle`、`history`（既是 JSHeL 的命令历史函数，也带 `length/back/pushState`）。
+`top/parent/frames` 等于 `window` 自己。
 `navigator` **不覆盖**——WorkerNavigator 的 `userAgent`/`language` 本来就是真的。
+
+**原生 API：只转发，不重造**
+
+Worker 里没有 `alert` / `confirm` / `prompt` / `open` / `print` / `close` / `focus` / `blur` /
+`stop` / `scrollTo` / `scrollBy`。这些**一律转回主线程调真的**，不换文案、不换按钮、
+不换返回值类型：
+
+```js
+alert('hi')                 // 浏览器自己的弹窗（不是你画的那个 toast）
+await confirm('真的要吗？')   // 浏览器自己的确认框，返回 true / false
+await prompt('名字？', 'x')   // 浏览器自己的输入框，返回 string / null
+window.open('https://…')    // 真的开新标签页，弹窗拦截也由浏览器决定
+print()                     // 真的打开打印对话框
+```
+
+两条物理限制，写在这里免得日后当成 bug：
+
+1. **同步返回做不到**。跨线程没有同步通道（要 `SharedArrayBuffer`，那需要 COOP/COEP，
+   `file://` 打开时必然没有）。所以 `confirm` / `prompt` 的返回值是 **Promise**，必须 `await`。
+   `alert` / `print` / `close` 这类没有返回值的，语义和原生完全一致。
+2. **`window.open` 的返回值是 `WindowProxy`**，结构化克隆传不回来，只能拿到 `null`。
+
+之前这几个被「设计」过：`alert` 变成一条 toast、`confirm` 变成自绘对话框、
+`open` 变成内部浏览器窗口。那是产品行为，不是浏览器行为，全部删掉了。
 
 ## 6. 文件系统
 
-致敬 ext4 的目录树，但**路径分隔符是 `.` 而不是 `/`**。
+一个点分隔的扁平目录树，**路径分隔符是 `.` 而不是 `/`**。
+
+它**不是** ext4：没有 inode、没有权限位（rwx）、没有属主、没有硬链接、没有稀疏文件。
+文件类型（`dir` / `file` / `func` / `app` / `device` / `package` / `proc`）是真实存在的元数据，
+但那决定「怎么打开它」，不决定「谁能打开它」——这里只有一个最高权限用户。
 
 ```text
 .                          根
@@ -557,7 +703,10 @@ pkg.install(spec) / pkg.list() / pkg.remove(spec)
 agent.open() / agent.send(text) / agent.export() / agent.clear()
 agentTui.open() / agentTui.send(t) / agentTui.queue(t) / agentTui.stop() / agentTui.close()
 
-// —— Linux 兼容层 / 嵌套自己 ——
+// —— HSL / 嵌套自己 ——
+hsl()                       // 进交互式 Linux 风格 shell（可嵌套）
+hsl('ls -la')               // 跑一行，输出直接进终端
+hsl.run('cat x')            // 跑一行不打印，返回 { code, out, err }
 shell.open(cwd) / shell.here() / shell.cd(p) / shell.exec(line)
 jshel()                     // = shell.open()：在窗口里再开一个 JSHeL，可以无限套
 
@@ -574,15 +723,23 @@ about() / sleep(ms) / uuid() / storage(IDB)
 
 ## 12. AI 智能体
 
-轻量 harness，**不是**框架。它做三件事：拼 prompt、跑工具循环、把会话存成 JSONL。
+轻量 harness，**不是**框架。它做三件事：拼 prompt、跑工具循环、把会话存下来。
 
-- **只有一个会话**（不是多会话）。存在 `.agent.session`，JSONL 格式，一行一条消息
-- 会话随时可整体导入导出（JSONL，方便手工截断、去重、拼接）
+- **对话存在 IndexedDB「ht-agent」**（库名独立于文件系统与依赖缓存）：
+  `sessions` 一张表存列表，`messages` 一张表按 `sid + seq` 存正文，顺序不靠时钟
+- **刷新不丢**：打开智能体时会打一行「已恢复 N 条消息（最后更新 …）」，
+  不然用户会以为上次是自己幻觉
+- 同时保留 `.agent.session` 这份 JSONL 镜像（导入导出、手工截断都方便）
+- 图片附件超过 40 KB 存成 **Blob**（IDB 原生支持），不存 dataURL —— 一张截图几百 KB，
+  几十轮就顶到配额
+- 写盘有节流：流式输出期间 800ms 防抖，一轮结束、清空、导入、关窗时立即落盘
 - 工具集：`js`（在当前沙箱里直接执行 JS）、`read_file`、`write_file`、`list_dir`、`delete_file`、
   `open_window`、`close_window`、`fetch_url`、`save_file`、**`screenshot`**、**`window_html`**、**`ui`**
 - **不问许可**。`js` 工具直接在当前上下文执行，没有沙箱、没有审批弹窗。这是设计选择，不是遗漏
 - 停止按钮 = `AbortController.abort()`，随时掐断
 - **最大循环 120 步**（设置里可调，0–120）。到顶就停，不会无限烧 token
+- **重复生成防护**：连续 3 次输出相同签名（工具调用或文本）→ 卡断本轮、自动以「用户」身份追问
+  「是否卡住、请检查」，再带着追问继续跑，而不是硬停。阈值 `REPEAT_LIMIT = 3`
 
 `js` 工具走控制台语义（先当表达式求值，`SyntaxError` 才当语句块），所以 `1+1` 返回 `2`。
 
@@ -641,7 +798,7 @@ DeepSeek 的思考模式默认开启：直连时默认请求 `thinking.type = "d
 JSONL 会话长这样（每行一条）：
 
 ```jsonl
-{"role":"system","content":"你是 hterminal 里的助手……"}
+{"role":"system","content":"你是 HTerMinaL 里的助手……"}
 {"role":"user","content":"看看 .home 里有什么"}
 {"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".home\"}"}}]}
 {"role":"tool","tool_call_id":"c1","content":"[\"welcome\",\"notes.md\"]"}
@@ -796,7 +953,7 @@ build/
                              光标层、窗口动效 keyframes）
   10-body.html             ← DOM 骨架：顶栏、桌面、启动屏、启动器、抽屉、模态
   20-worker.js             ← Worker 内核：ANSI、行编辑器、execute()、DOM 代理、agentTui
-  25-compat.js             ← Linux 兼容层：MiniShell（管道/重定向/变量）+ coreutils + vim/nano
+  25-compat.js             ← HSL：MiniShell（管道/重定向/变量）+ coreutils + vim/nano + fastfetch
   30-core.js               ← 主线程底座：HT_VERSION / Settings / 路径规则 / FS / IDB / Pkg
   40-term.js               ← xterm 装载、Keys（顶栏控制键）、自定义光标、TerminalSession、
                              WindowManager（拖拽/缩放/窗动效）
@@ -1009,7 +1166,11 @@ xterm 自己的光标设成 **`rgba(0,0,0,0)`**（不可见），另起一个 `.
 | REPL | `1+1` → `2`；`ls('.home')` 列出文件；`page.q('#topbar')` 返回 `header/1280` |
 | 多行输出对齐 | L1/L2/L3 都从第 0 列起（`convertEol`） |
 | 历史 | 连按 ↑ 逐条回溯，不是直接跳到上上条 |
-| 兼容层 | `ls`、`cat`、`echo hi \| wc`、`pwd; cd`；`ls .home` 与 `ls('.home')` 结果一致 |
+| JSHeL 只认 JS | `1+1` → `2`；`ls -la` → `ReferenceError`，且带一句「ls 是 HSL 命令」；`hsl`/`nano readme` 同理 |
+| HSL | `hsl('ls')` 列 cwd；`hsl('cat a \| wc -l')` 管道通；`hsl('cd @ && pwd')` 目录跟着走 |
+| 原生 API | `alert` / `confirm` / `prompt` 被 Playwright 的 `dialog` 事件抓到——说明是浏览器自己的框，不是自绘的 |
+| 全屏应用 | `hsl('nano readme')` 顶栏可见、状态栏在最底行、鼠标点第 5 行第 8 列落点正确、`^X` 干净退出回滚历史 |
+| 对话持久化 | 刷新后智能体显示「已恢复 N 条消息」，`indexedDB.databases()` 里含 `ht-agent` |
 | 顶栏 `⌃` 锁定 + `c` | 捕获到 `\u0003`；再点一次解锁后 `x` 原样送出 |
 | `F5` / `F11` / `F12` | `defaultPrevented` 分别为 `false` / `true` / `false`；F11 后 `body.fs` 切换 |
 | 窗口动效 | 开窗有 `htWinIn`、关窗 `htWinOut`、最小化 `htWinMin`、最大化带 `.tween`，动画类会被清掉 |
@@ -1177,6 +1338,65 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 选择器，只对这些元素做 deep 预取（`#topbar` 这种几十个节点，微秒级）；
 ③`innerHTML`/`outerHTML` 截断到 20 万字符，超出部分带 `htmlTruncated` 标记。
 
+**30. `hsl` 定义在 `makeShell` 里，返回对象引用它就炸**
+`hsl()` 要调 `COMPAT.execLine`，而 `COMPAT` 是在 `bootShell()` 里 attach 的，所以函数写在了
+`bootShell()` 内部；可 `makeShell()` 返回的对象里又写了 `hsl,` 这个键——那个作用域里根本没有
+`hsl` 变量，整个 Worker 启动即 `ReferenceError: hsl is not defined`，表现是「终端一片空白」。
+**修法**：把 `hsl` 的定义移到 `globalThis.jshel = …` 之后、`COMPAT.attach()` 之前（此时
+`COMPAT` 已在作用域内），并从 `makeShell()` 的返回对象里删掉这个键。
+**教训**：跨闭包传函数，先确认它真的在那个闭包里定义过——`{ hsl, }` 这种简写不会报「未定义」
+而是直接炸掉整个模块。
+
+**31. 原生调用走错了 RPC 通道**
+`installDomProxy()` 里封装 `nat` 时误用了 `c`（即 `call_('dom.op', …)`），于是 `alert('x')`
+报 `dom.op 不支持：native`——主线程拿到的 op 名是 `native`，但走的是 DOM 通道。
+**修法**：单独一条 `const nat = (name, args) => call_('native', name, args);`。
+两个通道长得像（都是 `call_('<op>', …)`），形参一多就容易抓错变量，起名要能一眼区分。
+
+**32. IndexedDB 事务里 `await`，事务自己先提交了**
+`AgentStore.save()` 在事务回调里 `await packMsg()`（把大 dataURL 转 Blob），`await` 一让出
+微任务，浏览器发现事务上再没有挂起的请求，就把事务提交了；后续 `put` 立刻抛
+`TransactionInactiveError`，消息一条没写进去。
+**修法**：**先把要写的数据全部 prepare 好**（在内存里算完 Blob），再开事务；事务回调里只做
+同步的 `put` / `delete`。`remove()` 同理：先查 `oldKeys`，再开读写事务同步删。
+**结论**：IDB 事务的生命周期绑在「有没有挂起请求」上，不是绑在 JS 栈上。
+
+**33. SGR 7「反显」换的是默认前景/背景，不是颜色本身**
+全屏应用的顶栏想画一条反白条，用了 `\x1b[7m`。浅色主题下默认前景是纯黑、默认背景是纯白，
+反显之后就是「黑字压深底」——看上去和没画一样。
+**修法**：不依赖主题，用显式配色 `\x1b[100;97m`（亮灰底 + 亮白字）。凡是「必须能看清」的
+装饰条，都不要交给 `7` 号属性。
+
+**34. 全屏应用的第一行被提示符盖掉**
+`LineEditor.submitText` 的 `finally` 无条件补一个提示符，而全屏应用一开就是「定位到 1;1 重画」，
+提示符正好压在标题栏上，看起来像「nano 没有标题栏」。
+**修法**：`finally` 里加 `&& !this.raw`——进入 raw 模式（全屏应用）期间不补提示符，退出时
+`raw = false` 再由正常路径补。
+
+**35. 拼一整段带 `\r\n` 的字符串刷全屏，末尾换行会把屏幕顶上去**
+把整屏内容拼成一个字符串、每行以 `\r\n` 结尾，从 `\x1b[H` 一次性写出去：当内容高度**等于**
+终端高度时，最后那个换行符会触发一次滚动，整屏上移一行——nano 的标题栏消失、正文整体偏移，
+都是这一行换行造成的。
+**修法**：`render()` 改成逐行绝对定位——`\x1b[{row};1H\x1b[2K` + 内容，**一个换行符都不发**；
+状态栏、快捷键行分别用 `\x1b[{rows-1};1H` / `\x1b[{rows};1H` 定位。
+**结论**：全屏 TUI 里，换行符是副作用，不是排版手段。
+
+**36. 中文按 `length` 排版必然错行**
+`'中文'.length === 2`，但它在等宽字体里占 4 列；`padEnd(20)` 补出来的空格数也是错的，
+于是带中文的行一律往左缩，光标位置和鼠标点选位置全部对不上。
+**修法**：一套按显示宽度算的工具——`CW(cp)`（East Asian Width：全角/宽/半角标记记 2）、
+`dw(s)`、`sliceW(s, max)`、`padW(s, max)`、`skipW(s, cols)`、`xToCol(line, x)`；渲染、截断、
+鼠标点选反算列全部走显示宽度，`String.length` 只在纯 ASCII 分支里出现。
+
+**37. 智能体「原地打转」要卡断，而不是只拦一次**
+单轮内同工具同参数 `seen>=2` 拦一下（不重执行、把「已经做过」回给模型）能挡住大部分浪费，
+但**挡不住模型接着发第 3、第 4 次同样的调用**——它拿到「已做过」的提示后仍然原地循环。
+**修法**：在 `run()` 循环里再算一层「输出签名」（`_turnSig`：工具调用压成「名(参数指纹)」链，
+文本取正文前缀），`REPEAT_LIMIT=3`：连续三次签名相同就**直接 `continue` 跳过这一轮的动作**（卡断），
+并以 `user` 身份自动追问「【自动检查】…疑似陷入重复循环，请换思路」再让它继续。
+`reset` 后从 0 重数，避免每轮都追问。自动追问是 `user` 角色（真发），旁边那条「⚠ 已连续 3 次」是
+`system` 角色、只给用户看、`apiMessages()` 里 `continue` 跳过，**不进发给模型的请求**。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1206,6 +1426,8 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.2 | 2026-11-02 | **智能体「重复生成防护」**：①在 harness 循环里新增**输出签名**（`_turnSig`）——带工具调用时压成「工具名(参数指纹)」链，纯文本取正文前缀；连续三次签名相同判定陷入重复循环。②第 3 次重复时**卡断本轮**（不再执行这一轮的工具调用/文本），并**自动以 user 身份向模型追问一句「【自动检查】你已连续 3 次输出基本相同的内容，疑似陷入重复循环……请改用不同参数或换工具，不要重复刚才完全相同的动作」**，然后让它带着追问继续跑（reset 后从 0 重数，不每轮都追问）。③`AGENT_SYSTEM` 补一句：收到「连续 3 次重复输出」提示时立刻换思路而非继续重复。④`messages` 里插入的「⚠ 已连续 3 次输出相同内容」是 `system` 角色、只渲染给用户看（`render()` 走 `msg sys` 样式），**不进发给模型的请求**（`apiMessages()` 跳过 `system`）；追问句是 `user` 角色，正常发。⑤把过去散落的「去重」收口——单轮内同工具同参数 `seen>=2` 不重执行、连续相同正文 `_pushAssistant` 折叠、跨轮相同签名 `REPEAT_LIMIT=3` 卡断追问，三层各管一段。 |
+| 0.0.1.1 | 2026-11-02 | **把「自作聪明」的地方全部退回浏览器，把「学不像」的地方全部删掉**：①**原生 API 一律转发，不重造**——`alert`/`confirm`/`prompt`/`open`/`print`/`close`/`focus`/`blur`/`stop`/`scrollTo`/`scrollBy` 在 Worker 里都没有，现在统一走 `native` RPC 转回主线程调 `window[name]` 本人：`alert` 是浏览器弹窗（不是 toast）、`confirm` 是浏览器确认框（返回真的 `true/false`）、`prompt` 是浏览器输入框、`print()` 真的开打印对话框、`window.open` 真的开新标签。`NATIVE_ALLOWED` 白名单之外的转发直接抛错；顺手删掉 `globalThis.print = (...a) => out(...)`——那条一直在抢注打印对话框。两条物理限制写进文档：跨线程没有同步通道（要 SAB + COOP/COEP，`file://` 必然没有），所以 `confirm`/`prompt` 返回 Promise；`window.open` 返回 `WindowProxy`，克隆不回来只能给 `null`。②**JSHeL 与 HSL 彻底分家**——删掉 `isShellLine()` 那套「首词猜」：它让同一行代码的行为取决于命令表里恰好有没有同名命令。现在 `state.mode === 'hsl'` 整行交 COMPAT，否则只走 `api.run()`（纯 JS）。JSHeL 里敲 `ls -la` / `nano readme` 是 `SyntaxError` / `ReferenceError`，外加一句「X 是 HSL 命令，`hsl()` 进 shell」。③**HSL 嵌套改用栈**——`HSL: [{cwd, env}]`，`hslPush()` 压栈、`hslPop()` 弹栈并恢复 cwd + `ENV`；`exit` 弹一层，退到空才回 JSHeL。老版把模式存成布尔量，第二次进入只是把同一个标记又设一遍（提示符不变、`exit` 一次退到底、进去前改过的目录回不来）——**布尔量表达不了「第几层」**。④**删掉没有意义的移植**——`apt`（这里不是 Debian）、`ping`（浏览器不发 ICMP）、`bash`/`sh`（GPL 且学不像）、`su`/`sudo`（单用户最高权限）、`npm`/`pip`（只会打印一行的桩）、`chmod`（没有权限位）；**`zsh` 彻底删除**（含许可证段落）——「学的不像那么干脆彻底不学了」，交互层改名 **HSL** 并由 `def('hsl')` 提供。⑤**文件系统删掉 rwx**——`ls -l` 改成 `kind  size  mtime  name`（`dir`/`file`/`func`/`app`/`dev`/`pkg`），画一排 `-rw-r--r--` 只会让人以为 `chmod` 有用；`.perm` 的语义从「权限位」正名为「授权申请单」（摄像头/通知）。⑥**新增 `fastfetch` / `neofetch`**——`sysFacts()` 现场汇总 `sys.info` + `fs.usage` + `proc.list` + `.pkg`，六行 ASCII logo，拿不到的字段写 `n/a` 不编；`--no-logo` 只要文字。⑦**`vim` / `nano` 重写**——DECSET 1049 备用屏 + **按绝对坐标逐行重画**（`\x1b[{n};1H\x1b[2K`，一个换行符都不发）：内容高度等于终端高度时，末尾那个 `\r\n` 会触发滚动把整屏顶上去一行，nano「显示不正常」就是这个；顶栏/状态栏改用显式配色 `\x1b[100;97m`（SGR 7 反显换的是默认前景/背景，浅色主题下就是黑字压深底）；中文按显示宽度排版（`CW`/`dw`/`sliceW`/`padW`/`skipW`/`xToCol`），中英混排不再错行；`LineEditor` 两处 `finally` 加 `&& !this.raw`，全屏期间不再补提示符（否则 `.home $ ` 正好盖在标题栏上）；`resize` 时重画全屏应用。⑧**支持鼠标**——DECSET 1000 + 1006（SGR 坐标），正则认 `\x1b[<b;x;yM/m`：点正文哪一行哪一列光标就到哪（按显示宽度反算列），滚轮上下滚三行；退出顺序不能反：`[?1000l[?1006l[?25h[?1049l`（先关鼠标报告再离开备用屏）。⑨**对话持久化**——新增 `AgentStore`（独立库 **`ht-agent`**：`sessions` keyPath `id`、`messages` keyPath `['sid','seq']` + `sid` 索引）；> 40 KB 的 dataURL 自动转 Blob 存，读回再转回；**先 prepare 再开事务**（事务里 `await` 会让事务提前提交，抛 `TransactionInactiveError`），事务回调只做同步 `put/delete`；800 ms 防抖 + 轮末/清空/导入/关窗 `flushSession()`；首次启动从 `.agent.session` JSONL 迁移一次，之后那份只作可导出镜像；`AgentTuiHost.status()` 改走 `HeadlessAgent.ensure()`，没开过 TUI 也能看到历史条数。⑩**产品名统一为 `HTerMinaL`**——按 `\bhterminal\b(?!\s*[./])` 全仓替换，避开路径与文件名（`X-HTerm-Client` 这类 HTTP 头值不算展示文案，保留）。⑪**文档**——5.1 整节改写为 HSL（JSHeL vs HSL 对照、嵌套栈、支持能力、命令表、路径按 cwd、全屏应用、fastfetch、「没有 rwx」、「删掉的没意义移植」表）；新增 5.3「原生 API：只转发，不重造」；第 6 章开头写明「不是 ext4：没有 inode、没有 rwx、没有属主」；踩坑 `29 → 36`。⑫**实测**——`alert`/`confirm`/`prompt` 被 Playwright 的 `dialog` 事件捕获为 `alert:hello native` / `confirm:really?` / `prompt:name?`（证明是浏览器自己的框）、`1+1`→`2`、`ls -la`→`SyntaxError`+指路、`hsl('ls -la')` 正常、`hsl('uname')`→`HTerMinaL`、`hsl`→`cd /`→`hsl`→`exit` 回到第 1 层且目录回 `.home`→`exit` 回 JSHeL、10 条删掉的命令在 `help` 里全部消失、`fastfetch` 九项信息全真值、nano 点第 5 行第 8 列后输入落点正确、vim `:wq` 后 `cat` 内容正确、刷新后智能体显示「已恢复 4 条消息（最后更新 …）」。 |
 | 0.0.1.0 | 2026-11-02 | **里程碑：初步制作阶段收尾——把「说得到但做不到」的地方全补上**：①**`.bin` 里写代码就是函数**——`FS.write` 以前无条件把 kind 设成 `file`，于是 `write('.bin.hi','return 42')` 之后 `exec('.bin.hi')` 必然报「不是可执行对象」；现在新建 `.bin.*` 默认 `kind:'func'`，改写已有文件保留原 kind（用 vim 改函数不会把可执行位弄丢）。②**补 `chmod +x / -x`**——README 的兼容层命令表里一直有它，实现里没有。③**`sudo <cmd>` 输出打两遍**——内层已经把 stdout 打到终端，外层又按 `res.out` 打一次；现在只带退出码。④**终端里敲 `nuke()` 是 `nuke is not defined`**——README 让用户这么干，但 Worker 里根本没这个函数；新增 `nuke.run` RPC，确认框、清库、重载全走主线程。⑤**README 第 11 节那张「挂在 window 上的标准函数」表大面积对不上**——`remove`/`move`/`copy`/`openWindow`/`closeWindow`/`listWindows`/`openURL`/`threads`/`settings` 全是 undefined；补齐长名别名与 `settings.set/all`、`threads.list/kill` 的 RPC。⑥**兼容层补 5 条只写在文档里、没实现的命令**——`sleep`（此前落到 JS 的 `sleep(ms)`，`sleep 2` 只等 2 毫秒）、`rev`、`tee`、`stat`、`xargs`；`diff` 遇到不存在的文件不再「无差异 exit 0」。⑦**页面被 `document.write` 拆掉后的两个崩溃点**——`Drawer.refresh` 在 `await` 回来后 `$('#stUsage')` 已是 null（实测一条 `Cannot set properties of null`），`checkBackend` 同理；统一走 null 安全的 setter。⑧**`file://` 与后端的关系写清楚**——`null` Origin 和恶意 sandbox iframe 无法区分，0.0.0.5 的拒绝是对的，但前端不该再盲发请求；`checkBackend` 直接显示「file:// 下不可用」，智能体报错文案给出两条出路。⑨**版本号残留**——`build/10-body.html` 与 `build/20-worker.js` 里硬编码的 `0.0.0.2` 改成占位符 `—`，`boot()` 第一件事注入 `HT_VERSION`，启动屏第一帧就是对的号。⑩**`askFile` 保留扩展名**——`hello.txt` 以前被剁成 `hello`，`a.txt` 与 `a.md` 会撞；现在 `hello-txt`。⑪**`require` 回显不再刷屏**——ESM 命名空间对象只显示 `Module(322 exports) { … }`；README 示例改成 `const _ = await require('lodash-es@4')`（`require` 从来不会偷偷塞全局 `_`）。⑫**Python 的 `Ctrl+C` 说明改成实话**——Pyodide 与终端同 Worker、没有 SAB 就没有中断通道，`while True` 只能刷新页面，启动横幅与 README 都写明。⑬**文档对齐**——踩坑条数 `17 → 29`、页脚版本 `0.0.0.2 → 0.0.1.0`、`00-head` 与 `.sys.license` 的第三方清单补全到 6 项。⑭实测：`.bin` 写入即执行（42）、`chmod +x/-x` 可逆、`sudo echo` 只打一次、`nuke()` 确认后 `.home` 只剩种子文件、9 个长名 API 全部 exists、5 条新命令与管道组合正确、`askFile` 产出 `.queryfile.hello-txt`、`require` 回显一行、`0.0.1.0` 在启动屏与抽屉里都对、s1–s14 关键项回归无 pageerror。 |
 | —（文档/许可证） | 2026-11-02 | **第三方许可证补齐，加机器校验**：①审计出三个**一直在用却没登记**的依赖——`@xterm/addon-unicode11@0.8.0`（MIT，同 xterm 仓库）、`marked@12.0.2`（MIT）、`html2canvas@1.4.1`（MIT），补 `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`，`LICENSE.xterm.js.txt` 覆盖两个 addon；`licenses/README.md` 与本文第 11 章的表同步补齐。②新增 **`check-licenses.sh`**：扫 `build/*.js` 与 `index.html` 里所有 `npm/`、`unpkg.com/` 形式的 CDN 地址（含版本号是变量的写法），比对登记表，缺一行 exit 1；同时校验表里引用的 `LICENSE.*.txt` 文件真的存在。③修 `licenses/README.md` 里过期的「Markdown 渲染：不渲染」——现在用 `marked` 渲染 + 自研 `sanitizeHtml()` 白名单消毒，两件事分工写在表里。④页脚版本号从 `0.0.0.2` 修到 `0.0.0.5`（此前漏改）。⑤实测：真依赖 6 项全「已登记」exit 0；临时塞一个 `left-pad@1.3.0` 进去，脚本报「缺失 ✗」exit 1。 |
 | 0.0.0.5 | 2026-11-02 | **后端安全加固（三份实现同步）**：①**`Origin: null` 从「放行」改成「拒绝」**——`file://`、`data:`、sandbox iframe 的 Origin 都是 `null`，以前放行等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` 打本地端口。②**新增 `Sec-Fetch-Site: cross-site` 拒绝**——浏览器自己打的标，页面改不了，直接堵死「公网网页 → 本地端口」。③**CORS 头只在 Origin 通过校验后回显**，不再对任意 Origin 回 `Access-Control-Allow-Origin`，也不发 `Allow-Credentials`；`OPTIONS` 必须带 Origin。④**每个响应都带安全头**：`X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cross-Origin-Resource-Policy: same-origin`、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`。⑤**`POST` 要求 `Content-Type: application/json`**（否则 415），堵掉 `text/plain`/`form-urlencoded` 这类不预检的简单请求。⑥**被拒请求在 stderr 留一行 `deny origin/host/fetch-site`**。⑦实测（curl，三份后端一致）：正常 200、`Origin: https://evil.com` 403、`Origin: null` 403、本机 Origin 200 且 ACAO 回显、`Sec-Fetch-Site: cross-site` 403、`Host: evil.com` 403、`text/plain` POST 415、`/etc/passwd` 403；页面响应含全部安全头。 |
@@ -1222,6 +1444,8 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 15:30 | 0.0.1.2：智能体重复生成防护（连续 3 次相同输出 → 卡断 + 自动追问） | `build/60-agent.js`（`_turnSig` 输出签名、`_injectRepeatNudge` 自动追问、`run()` 循环内 `REPEAT_LIMIT=3` 计数与卡断、`render()` 处理 `system` 备注、`apiMessages()` 跳过 `system`、`AGENT_SYSTEM` 补一句）、`build/30-core.js`（`HT_VERSION`）、`modelserver.{py,js,go}`（版本）、`README.md`（9 章日志、10 章记录、12 章说明、踩坑 37） | 待 playwright 回归：构造一个会连续 3 次调同一工具的会话，确认第 3 次被卡断、日志出现「⚠ 已连续 3 次输出相同内容」、会话里多出一条 user 角色「【自动检查】…」、模型带着追问再跑一轮 | `main` |
+| 2026-11-02 13:50 | 0.0.1.1：原生 API 全部转发、JSHeL/HSL 彻底分家、HSL 栈嵌套、删无意义移植、fastfetch、nano/vim 重写 + 鼠标、对话持久化、产品名统一 | `build/20-worker.js`（`nativeCall` 转发 + `NATIVE_ALLOWED`、删 `globalThis.print`、`KEYS` 增删、`onSubmit` 按 mode 分流、删 `isShellLine` 与语法指路提示、`hsl()`/`hsl.run`、`setMode`/`onEditorResize`、`LineEditor` 两处 `finally` 判 `raw`、resize 重画全屏、`help()` 重写）、`build/25-compat.js`（HSL 栈 `hslPush/pop/depth`、`def('hsl')`/`exit`、删 9 条命令、`longFmt` 去 rwx、`fastfetch`/`neofetch`、`makeEditor` 重写：双宽排版 + 绝对定位 + 显式配色 + 鼠标、`realPath` 按 cwd、`tryExternal` 只认 `.bin`）、`build/70-boot.js`（`nativeCall` + `sysInfo` + `native`/`sys.info` RPC、`Drawer.refresh` 填 `#stAgent`）、`build/60-agent.js`（新增 `AgentStore`：`ht-agent` 库、Blob 打包、先 prepare 后开事务、800ms 防抖 `flushSession`、从 JSONL 迁移）、`build/65-tui.js`（`status()` 走 `HeadlessAgent.ensure()`）、`build/30-core.js`（`HT_VERSION`、种子 readme/welcome、`.perm` 措辞）、`build/10-body.html`（抽屉「对话」行）、`build/{00-head,40-term,50-apps}.js`（产品名）、`modelserver.{py,js,go}`（版本）、`README.md`（5.1 重写、5.3 新增、6 章开头、踩坑 36 条、日志）、`IDEAS.md`、`licenses/README.md` | playwright：`dialog` 事件抓到 `alert/confirm/prompt` 三条真原生框；`1+1`→`2`；`ls -la`/`nano readme` → 语法/引用错误 + 「是 HSL 命令」提示；`hsl('uname')`→`HTerMinaL`；`hsl`→`cd /`→`hsl`→`exit`（回第 1 层、目录回 `.home`）→`exit`（回 JSHeL）→`1+1`→`2`；`help` 里 10 条删掉的命令全无、`fastfetch`/`neofetch` 在；`fastfetch` 九项全真值；nano 顶栏可见、状态栏 `4/28 行 · 8 列`、鼠标点第 5 行第 8 列输入落点正确、`^X` 干净退出；vim `:wq` 后 `cat newfile` 为 `hello\nworld`；`ll` 表头无 rwx；`AgentStore.save('main',4条)`→`{sessions:1,messages:4}`、`indexedDB.databases()` 含 `ht-agent`、`reload()` 后显示「已恢复 4 条消息」 | `main` |
 | 2026-11-02 13:05 | 0.0.1.0 里程碑：一致性梳理（补 `.bin` 可执行、`chmod`、`sudo`、`nuke`、长名 API、5 条 shell 命令、file:// 说明、版本号残留） | `build/30-core.js`（`FS.write` 保留/推断 kind、`askFile` 保留扩展名、`.sys.license` 清单）、`build/25-compat.js`（`chmod`/`sleep`/`rev`/`tee`/`stat`/`xargs`、`sudo`、`diff` 报错）、`build/20-worker.js`（`nuke()`、长名别名、`settings`/`threads`、`inspect` 的 Module 分支、Python 横幅、`HT_VERSION`）、`build/70-boot.js`（`nuke.run`/`settings.set`/`settings.all` RPC、`refresh`/`checkBackend` 判空、`file://` 提示、启动即注入版本）、`build/60-agent.js`（`file://` 下的报错文案）、`build/10-body.html`（版本占位符）、`build/00-head.html`（许可注释）、`build/65-tui.js`（注释更正）、`README.md`（11 章说明、9 章 Python 说明、踩坑 29 条、日志）、`IDEAS.md`（对话持久化待办） | playwright：`.bin.hi`→42、`chmod +x/-x` 可逆、`sudo echo B` 一次、`nuke()` 确认后 `.home` 只剩 readme/welcome、`remove/move/copy/openWindow/closeWindow/listWindows/openURL/threads/settings` 全部 define、`sleep 1` 真等 1 秒、`tee/rev/xargs/stat` 正确、`askFile`→`.queryfile.hello-txt`、`require('lodash-es@4')` 回显 `Module(322 exports)` 且 `_.chunk` 可用、启动屏与抽屉显示 `0.0.1.0`、`page.q`/`page.eval`/`document.title`/`1+1` 无回归 | `main` |
 | 2026-11-02 12:35 | 第三方许可证补齐 + `check-licenses.sh` + 对话持久化立项 | `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`（新增，上游原文）、`licenses/README.md`（6 项清单、xterm 三个包共用 MIT、Markdown 渲染说明更正）、`check-licenses.sh`（新增）、`README.md`（11 章表、页脚版本、日志）、`IDEAS.md`（新增：对话持久化待办） | `./check-licenses.sh` → 6 项全「已登记」exit 0、4 个 `LICENSE.*.txt` 全存在；反向测试塞 `left-pad@1.3.0` → 「缺失 ✗」exit 1；playwright 起后端加载 `127.0.0.1:8787` 无 pageerror、`1+1`→`2`（确认 0.0.0.5 的安全头没把前端打挂） | `main` |
 | 2026-11-02 12:40 | 后端安全加固：拒绝跨域与 null Origin（0.0.0.5） | `modelserver.py`（`origin_allowed` 拒 null、`security_headers`、`_deny` 日志、`local_only` 四重校验、`Content-Type` 415、`serve_index` 带头）、`modelserver.js`（同上，`LOCAL_NAMES`/`securityHeaders`/`deny`）、`modelserver.go`（同上，`securityHeaders`/`deny`）、`build/30-core.js`（版本）、`IDEAS.md`（许可证待办）、`README.md`（13 章安全模型重写、日志） | curl 三份后端：正常 200、evil Origin 403、null Origin 403、本机 Origin 200+ACAO、cross-site 403、坏 Host 403、text/plain POST 415、任意路径 403；`X-Frame-Options`/`frame-ancestors`/`CORP`/`COOP`/`Referrer-Policy`/`Permissions-Policy` 均在。Go `go build` 通过、JS `node --check` 通过 | `main` |
@@ -1278,7 +1502,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 29 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 36 条）由 AI 与人类共同排查完成
 
 这意味着：
 
@@ -1292,5 +1516,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>hterminal 0.0.1.0 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.1 · 桌面就是终端 · 一切皆文件</sub>
 </p>

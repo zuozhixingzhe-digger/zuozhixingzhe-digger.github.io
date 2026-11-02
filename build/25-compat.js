@@ -1,5 +1,5 @@
 /* ============================================================================
- * hterminal · Linux 兼容层（迷你 shell + coreutils 子集 + vim/nano）
+ * HTerMinaL · HSL（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -7,8 +7,11 @@
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：`zsh` 进入原生模式（提示符变成 `.home% `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里直接敲 `ls -la`、`cat a.txt | grep x`。
+ * 用法：JSHeL 里敲 `hsl` 进入（提示符变成 `.home $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsl('ls -la')` 跑一行。
+ *
+ * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
+ * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
  * ==========================================================================*/
 
 const COMPAT = (function () {
@@ -89,7 +92,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel';
+    if (name === 'SHELL') return 'hsl';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -131,10 +134,23 @@ const COMPAT = (function () {
     return String(p).replace(/\/+/g, '/').replace(/(^|\/)\.(\/|$)/g, '$1');
   }
 
-  /* ---------------------------------------------------------------- 路径 */
+  /* ---------------------------------------------------------------- 路径
+   *
+   * shell 里 `ls` 列的是**当前目录**，`cat notes` 读的是**当前目录下**的 notes。
+   * 但 JSHeL 的路径方言是「点分绝对路径」（.home.readme 就是根下的 home.readme），
+   * 两者直接混用会出现 `cd .home.bin` 之后 `ls` 还在列根目录这种事。
+   *
+   * 所以这里显式分流：
+   *   /  ~  @  开头        → 绝对（交给主线程 normPath）
+   *   .home.xxx 这种点分    → 绝对
+   *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
+   */
+  const ABS_DOT = /^\.[A-Za-z\u4e00-\u9fff_]/;
   async function realPath(p) {
-    // 交给主线程的 normPath（同一套 . / ~ / @ 规则）
-    return IO.call('fs.resolve', p);
+    const s = String(p == null ? '' : p).trim();
+    if (!s || s === '.') return IO.getCwd();
+    if (s[0] === '/' || s[0] === '~' || s[0] === '@' || ABS_DOT.test(s)) return IO.call('fs.resolve', s);
+    return IO.call('fs.resolve', '@/' + s.replace(/^\.\//, ''));
   }
 
   async function readText(p) {
@@ -179,21 +195,30 @@ const COMPAT = (function () {
   def('pwd', async () => ({ out: IO.getCwd() + '\n' }), '当前目录');
 
   def('cd', async (a) => {
-    const t = a[0] || '.home';
+    /* 不带参数回 HOME（和真 shell 一样）；带参数走 realPath，所以 `cd ..` `cd bin`
+     * 都是相对当前目录，而不是相对根。 */
+    const raw = a[0] === undefined ? '~' : a[0];
+    const t = await realPath(raw);
     const s = await IO.call('fs.stat', t).catch(() => null);
-    if (!s) return { code: 1, err: 'cd: 没有这个目录: ' + t + '\n' };
-    if (s.kind !== 'dir') return { code: 1, err: 'cd: 不是目录: ' + t + '\n' };
+    if (!s) return { code: 1, err: 'cd: 没有这个目录: ' + raw + '\n' };
+    if (s.kind !== 'dir') return { code: 1, err: 'cd: 不是目录: ' + raw + '\n' };
     IO.setCwd(s.path);
     return {};
   }, '切换目录');
 
+  /* ls -l 的排版。**故意不是 POSIX 的 `-rw-r--r--`**：
+   * 这个文件系统没有 mode 位、没有属主、没有组，也不是 ext4。
+   * 画一排 rwx 只会让用户以为 chmod/chown 有意义（我们没有这些命令）。
+   * 所以这里印的是真实存在的信息：类型 + 字节数 + 修改时间 + 名字。 */
   function longFmt(rows) {
-    return rows.map(r => {
-      const k = ({ dir:'d', file:'-', func:'x', app:'a', device:'v', package:'p', grant:'!', proc:'&', link:'l', object:'o', blob:'b' })[r.kind] || '?';
-      const size = String(r.size || 0).padStart(7);
+    const KIND = { dir:'dir', file:'file', func:'func', app:'app', device:'dev', package:'pkg', grant:'grant', proc:'proc', link:'link', object:'obj', blob:'blob' };
+    const hdr = 'kind'.padEnd(6) + 'size'.padStart(8) + '  ' + 'mtime'.padEnd(11) + '  name';
+    return DIM + hdr + R + '\n' + rows.map(r => {
+      const k = (KIND[r.kind] || r.kind || '?').padEnd(6);
+      const size = String(r.size || 0).padStart(8);
       const mt = new Date(r.mtime || Date.now()).toISOString().slice(5, 16).replace('T', ' ');
       const color = ({ dir:CYAN, func:YELLOW, app:MAGENTA, device:BLUE, package:GREEN })[r.kind] || '';
-      return `${k}rw-r--r--  ${size}  ${mt}  ${color}${r.name}${color ? R : ''}`;
+      return `${k}${size}  ${mt}  ${color}${r.name}${color ? R : ''}`;
     }).join('\n') + '\n';
   }
 
@@ -523,12 +548,12 @@ const COMPAT = (function () {
   def('hostname', async () => ({ out: 'browser\n' }), '主机名');
 
   def('uname', async (a) => {
-    if (a.includes('-a')) return { out: 'hterminal ' + IO.version + ' browser jshel xterm\n' };
-    return { out: 'hterminal\n' };
+    if (a.includes('-a')) return { out: 'HTerMinaL ' + IO.version + ' browser jshel xterm\n' };
+    return { out: 'HTerMinaL\n' };
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:IO.state.mode === 'zsh' ? '/bin/zsh' : 'jshel', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -592,7 +617,7 @@ const COMPAT = (function () {
     if (!n) return { code: 1, err: 'man: 要看哪个命令？例如 man ls\n' };
     const c = CMDS[n];
     if (!c) return { code: 1, err: 'man: 没有 ' + n + ' 的手册\n' };
-    return { out: `${YELLOW}${n}${R}\n\n  ${c.desc || '（无说明）'}\n\n  ${DIM}这是 hterminal 内置的同名精简实现，不是 GNU coreutils 原版。${R}\n` };
+    return { out: `${YELLOW}${n}${R}\n\n  ${c.desc || '（无说明）'}\n\n  ${DIM}这是 HTerMinaL 内置的同名精简实现，不是 GNU coreutils 原版。${R}\n` };
   }, '内置手册');
 
   def('less', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
@@ -643,31 +668,6 @@ const COMPAT = (function () {
     return { code };
   }, '把 stdin 的每行当参数执行命令');
 
-  /* chmod 在真 Linux 上改的是权限位，这里只有一位有意义：x（可执行）。
-   * 可执行 = 文件的 kind 是 'func'，exec() 会把 content 编译成 AsyncFunction。
-   * 写内容不会改 kind（见 30-core.js 的 FS.write），所以 +x 之后再用 vim 改代码，
-   * 存盘也不会把可执行位弄丢。 */
-  def('chmod', async (a) => {
-    const spec = a.find(x => /^[+-][rwxXst]+$/.test(x)) || '';
-    const files = a.filter(x => !/^[+-][rwxXst]+$/.test(x));
-    if (!spec || !files.length) {
-      return { code: 1, err: 'chmod: 用法 chmod +x <文件>（本文件系统只有「可执行」这一位，支持 +x / -x）\n' };
-    }
-    const add = spec[0] === '+';
-    for (const f of files) {
-      const p = await realPath(f);
-      const st = await IO.call('fs.stat', p).catch(() => null);
-      if (!st) return { code: 1, err: 'chmod: ' + f + ': 不存在\n' };
-      if (st.kind === 'dir') return { code: 1, err: 'chmod: ' + f + ': 是目录\n' };
-      const r = await IO.call('fs.read', p);
-      const meta = Object.assign({}, r.meta || {}, add
-        ? { kind: 'func', interpreter: 'js' }
-        : { kind: 'file' });
-      await IO.call('fs.write', p, r.content, meta);
-    }
-    return { code: 0, out: '' };
-  }, '改可执行位（chmod +x / -x）');
-
   def('diff', async (a) => {
     if (a.length < 2) return { code: 1, err: 'diff: 需要两个文件\n' };
     /* 不存在就报错：以前两个 readText 都 .catch(()=>'')，两个不存在的文件「没有差异」，
@@ -699,35 +699,190 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* ---------------------------------------------------------------- 编辑器 */
+  /* help 只属于 HSL。JSHeL 里的 help() 是另一个东西（列 JS API），
+   * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
+  def('help', async () => {
+    const names = Object.keys(CMDS).sort();
+    const w = 78;
+    let s = CYAN + 'HSL 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let line = '  ';
+    for (const n of names) {
+      const seg = n + '  ';
+      if (line.length + seg.length > w) { s += line + '\n'; line = '  '; }
+      line += seg;
+    }
+    s += line + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl 再进一层' + R + '\n';
+    return { out: s };
+  }, '命令表');
+
+  /* ---------------------------------------------------------------- 系统信息 */
+  /* fastfetch / neofetch：不是移植，是同名精简版。信息全部是真的，
+   * 一个字段都不编（拿不到就写 n/a）。 */
+  async function sysFacts() {
+    let info = {};
+    try { info = await IO.call('sys.info') || {}; } catch (e) {}
+    let usage = { usage:0, quota:0, files:0 };
+    try { usage = await IO.call('fs.usage') || usage; } catch (e) {}
+    let pkgs = 0, procs = 1;
+    try { pkgs = (await listRows('.pkg')).length; } catch (e) {}
+    try { procs = (await IO.call('proc.list') || []).length || 1; } catch (e) {}
+    const up = Math.max(0, Math.floor((Date.now() - (IO.state.started || Date.now())) / 1000));
+    const upStr = up < 60 ? up + 's' : (up < 3600 ? Math.floor(up / 60) + 'm ' + (up % 60) + 's' : Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm');
+    return {
+      version: IO.version || '0.0.0.0',
+      engine: info.engine || 'n/a',
+      os: info.os || 'n/a',
+      shell: 'JSHeL + HSL',
+      term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
+      res: info.screen || 'n/a',
+      dpr: info.dpr || 1,
+      theme: info.theme || 'n/a',
+      lang: info.lang || 'n/a',
+      uptime: upStr,
+      pkgs, procs,
+      files: usage.files || 0,
+      disk: ((usage.usage || 0) / 1048576).toFixed(2) + ' MB / ' + ((usage.quota || 0) / 1048576).toFixed(0) + ' MB',
+      mem: info.mem || 'n/a',
+      cpu: info.cores ? info.cores + ' threads' : 'n/a'
+    };
+  }
+
+  const LOGO = [
+    '██╗  ██╗████████╗',
+    '██║  ██║╚══██╔══╝',
+    '███████║   ██║   ',
+    '██╔══██║   ██║   ',
+    '██║  ██║   ██║   ',
+    '╚═╝  ╚═╝   ╚═╝   '
+  ];
+
+  def('fastfetch', async (a) => {
+    const f = await sysFacts();
+    const noLogo = a.includes('--no-logo') || a.includes('-n');
+    const rows = [
+      ['OS', f.os],
+      ['Host', 'browser · ' + f.engine],
+      ['Kernel', 'JSHeL ' + f.version],
+      ['Shell', f.shell],
+      ['Terminal', f.term],
+      ['Resolution', f.res + (f.dpr !== 1 ? ' @' + f.dpr + 'x' : '')],
+      ['CPU', f.cpu],
+      ['Memory', f.mem],
+      ['Disk', f.disk],
+      ['Files', String(f.files) + ' · ' + f.pkgs + ' pkg'],
+      ['Workers', String(f.procs)],
+      ['Locale', f.lang],
+      ['Theme', f.theme],
+      ['Uptime', f.uptime]
+    ];
+    const name = CYAN + 'HTerMinaL' + R + DIM + ' ' + f.version + R;
+    const sep = DIM + '─'.repeat(26) + R;
+    const info = [name, sep].concat(rows.map(([k, v]) => DIM + k.padEnd(10) + R + ' ' + v));
+    let s = '';
+    if (noLogo) {
+      s = info.join('\n') + '\n';
+    } else {
+      const h = Math.max(LOGO.length, info.length);
+      for (let i = 0; i < h; i++) {
+        const left = (LOGO[i] || '').padEnd(19);
+        s += YELLOW + left + R + '  ' + (info[i] || '') + '\n';
+      }
+    }
+    return { out: s };
+  }, '系统信息');
+  def('neofetch', async (a) => CMDS.fastfetch.fn(a), '系统信息（别名）');
+
+  /* ---------------------------------------------------------------- 编辑器
+   *
+   * 全屏应用（vim / nano）用的是终端自己的备用屏（DECSET 1049），
+   * 画面完全靠「绝对定位」画出来：每一行都 `\x1b[{n};1H` 定点写，**不发换行符**。
+   * 之前是拼一段带 \r\n 的字符串再从 [H 开始刷，只要内容高度等于终端高度，
+   * 末尾那个 \r\n 就会把整屏顶上去一行——这就是 nano「显示不正常」的根因：
+   * 标题栏被顶出屏幕、正文整体上移、光标落在错误的位置。
+   *
+   * 中文宽度也必须按显示宽度算（一个汉字占 2 列）：按 code unit 切片会让
+   * 满屏中文的 readme 一行行错位、右边界参差。
+   */
+  const CW = (cp) => {
+    if (cp === 0x200b || (cp >= 0x0300 && cp <= 0x036f) || cp === 0xfeff) return 0;
+    if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe10 && cp <= 0xfe19) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) ||
+        (cp >= 0x1f300 && cp <= 0x1f64f) || (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+        (cp >= 0x20000 && cp <= 0x3fffd)) return 2;
+    return 1;
+  };
+  const dw = (s) => { let n = 0; for (const ch of String(s)) n += CW(ch.codePointAt(0)); return n; };
+  function sliceW(s, max) {
+    let n = 0, out = '';
+    for (const ch of String(s)) { const w = CW(ch.codePointAt(0)); if (n + w > max) break; n += w; out += ch; }
+    return out;
+  }
+  function padW(s, max) { const t = sliceW(s, max); return t + ' '.repeat(Math.max(0, max - dw(t))); }
+  function skipW(s, cols) {
+    let n = 0, i = 0;
+    for (const ch of String(s)) { const w = CW(ch.codePointAt(0)); if (n + w > cols) break; n += w; i += ch.length; }
+    return { rest: String(s).slice(i), skipped: n };
+  }
+  function xToCol(line, x) {
+    let n = 0, i = 0;
+    for (const ch of String(line)) { const w = CW(ch.codePointAt(0)); if (n + w > x) break; n += w; i += ch.length; }
+    return i;
+  }
+
   function makeEditor(filePath, mode) {
     const isVim = mode === 'vim' || mode === 'vi';
     const st = {
       lines: [''], row: 0, col: 0, top: 0, left: 0,
       dirty: false, mode: isVim ? 'normal' : 'edit',
       msg: '', cmd: '', quit: false, path: filePath, pend: null,
-      clipboard: '', undo: [], search: ''
+      clipboard: '', undo: [], search: '', forceQuit: false
     };
     const W = () => Math.max(20, (IO.cols || 80));
-    const H = () => Math.max(4, (IO.rows || 24) - 2);
+    const ROWS = () => Math.max(6, (IO.rows || 24));
+    /* 顶栏 1 行；nano 底部两行（状态 + 快捷键），vim 一行（状态） */
+    const CHROME = () => (isVim ? 2 : 3);
+    const H = () => Math.max(1, ROWS() - CHROME());
 
+    /* 反显（SGR 7）在自定义主题里不可靠：它换的是「默认前景/背景」，
+     * 而默认前景在浅色主题下是纯黑，换完就是黑字压在深色条上——看不见。
+     * 所以顶栏和状态栏用显式配色：灰底 + 亮白字，深浅主题都清楚。 */
+    const BAR = ESC + '[100;97m';
     function render() {
-      const w = W(), h = H();
-      let s = ESC + '[?25l' + ESC + '[H';
-      // 顶部留一行给状态
-      s += ESC + '[2m' + (' ' + (st.path || '[No Name]') + (st.dirty ? ' [+]' : '') + '   ' + (isVim ? st.mode.toUpperCase() : 'NANO')).padEnd(w - 1) + ESC + '[0m' + '\r\n';
+      const w = W(), rows = ROWS(), h = H();
+      let s = ESC + '[?25l';
+      /* 顶栏 */
+      const title = (isVim ? ' VIM ' : ' NANO ') + (st.path || '[No Name]') + (st.dirty ? '  [+]' : '');
+      s += ESC + '[1;1H' + BAR + padW(title, w) + ESC + '[0m';
+      /* 正文 */
       for (let i = 0; i < h; i++) {
         const ln = st.top + i;
-        const text = st.lines[ln] === undefined ? (ln === st.lines.length ? '~' : '') : st.lines[ln];
-        const vis = text.slice(st.left, st.left + w - 1);
-        s += vis + ESC + '[K';
-        if (i < h - 1) s += '\r\n';
+        let vis;
+        if (ln >= st.lines.length) vis = (ln === st.lines.length ? DIM + '~' + R : '');
+        else {
+          const { rest } = skipW(st.lines[ln], st.left);
+          vis = sliceW(rest, w - 1);
+        }
+        s += ESC + '[' + (i + 2) + ';1H' + ESC + '[2K' + vis;
       }
-      // 状态栏
-      s += '\r\n' + ESC + '[7m' + (st.msg || (isVim ? '  -- ' + (st.mode === 'insert' ? '插入' : '普通') + ' --' : '  ^O 保存  ^X 退出')) .slice(0, w - 1).padEnd(w - 1) + ESC + '[0m';
-      // 光标
-      const cy = st.row - st.top, cx = Math.min(st.col - st.left, w - 1);
-      s += ESC + `[${cy + 2};${cx + 1}H` + ESC + '[?25h';
+      /* 状态栏 */
+      const stat = st.msg || (isVim
+        ? '  -- ' + (st.mode === 'insert' ? '插入' : st.mode === 'command' ? ':' + st.cmd : '普通') + ' --   ' + (st.row + 1) + ',' + (st.col + 1)
+        : '  ' + (st.row + 1) + '/' + st.lines.length + ' 行 · ' + (st.col + 1) + ' 列');
+      s += ESC + '[' + (rows - (isVim ? 0 : 1)) + ';1H' + BAR + padW(stat, w) + ESC + '[0m';
+      if (!isVim) {
+        /* 必须绝对定位：上一行写满了 w 列，光标处于「待换行」状态，
+         * 直接接着写会先滚屏一行——这正是之前 nano 底部错位的原因。 */
+        s += ESC + '[' + rows + ';1H' + BAR
+          + padW('  ^O 保存   ^X 退出   ^K 剪切行   ^U 粘贴   ^G 位置', w) + ESC + '[0m';
+      }
+      /* 光标：按显示宽度定位，中文才不会偏 */
+      const line = st.lines[st.row] || '';
+      const cx = Math.max(0, Math.min(dw(line.slice(0, st.col)) - st.left, w - 1));
+      const cy = st.row - st.top;
+      s += ESC + '[' + (cy + 2) + ';' + (cx + 1) + 'H' + ESC + '[?25h';
       IO.out(s);
     }
 
@@ -737,8 +892,9 @@ const COMPAT = (function () {
       const h = H();
       if (st.row < st.top) st.top = st.row;
       if (st.row >= st.top + h) st.top = st.row - h + 1;
-      if (st.col < st.left) st.left = st.col;
-      if (st.col > st.left + W() - 2) st.left = st.col - W() + 2;
+      const colW = dw(st.lines[st.row].slice(0, st.col));
+      if (colW < st.left) st.left = colW;
+      if (colW > st.left + W() - 2) st.left = colW - W() + 2;
     }
 
     function insert(text) {
@@ -757,11 +913,35 @@ const COMPAT = (function () {
       st.msg = '"' + st.path + '" 已写入 ' + st.lines.join('\n').length + ' 字节';
     }
 
+    /* 鼠标：xterm 在 DECSET 1000 + 1006 下把点击发成 \x1b[<b;x;yM。
+     * 点正文就把光标移过去（点哪写哪），滚轮上下滚三行。 */
+    function onMouse(btn, x, y, down) {
+      const h = H();
+      if (btn === 64 || btn === 65) {
+        st.top += (btn === 64 ? -3 : 3);
+        st.top = Math.max(0, Math.min(st.top, Math.max(0, st.lines.length - 1)));
+        return;
+      }
+      if (!down) return;
+      if (y < 2 || y > 1 + h) return;
+      const row = Math.min(st.lines.length - 1, st.top + (y - 2));
+      st.row = row;
+      st.col = xToCol(st.lines[row] || '', Math.max(0, x - 1 + st.left));
+    }
+
     async function handle(data) {
       let i = 0;
       while (i < data.length) {
-        const seq = data.slice(i, i + 6);
+        const seq = data.slice(i, i + 20);
         let key = null, step = 1;
+        const mouse = seq.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
+        if (mouse) {
+          step = mouse[0].length;
+          onMouse(Number(mouse[1]) & 0x7f, Number(mouse[2]), Number(mouse[3]), mouse[4] === 'M');
+          i += step;
+          clamp(); render();
+          continue;
+        }
         if (seq.startsWith('\x1b[A') || seq.startsWith('\x1bOA')) { key = 'UP'; step = 3; }
         else if (seq.startsWith('\x1b[B') || seq.startsWith('\x1bOB')) { key = 'DOWN'; step = 3; }
         else if (seq.startsWith('\x1b[C') || seq.startsWith('\x1bOC')) { key = 'RIGHT'; step = 3; }
@@ -776,7 +956,7 @@ const COMPAT = (function () {
           const txt = end > 0 ? data.slice(i + 6, end) : data.slice(i + 6);
           txt.split('\n').forEach((t, k) => { if (k) { st.lines.splice(st.row + 1, 0, ''); st.row++; st.col = 0; } insert(t); });
           i = end > 0 ? end + 6 : data.length;
-          render(); continue;
+          clamp(); render(); continue;
         }
         else if (data[i] === '\x1b') { key = 'ESC'; step = 1; }
         else if (data[i] === '\r' || data[i] === '\n') { key = 'ENTER'; step = 1; }
@@ -797,6 +977,7 @@ const COMPAT = (function () {
 
     async function onKey(key) {
       st.msg = '';
+      if (key === 'C-Q') return quitNow();
       if (st.mode === 'command') {
         if (key === 'ESC') { st.mode = 'normal'; st.cmd = ''; return false; }
         if (key === 'ENTER') {
@@ -817,12 +998,14 @@ const COMPAT = (function () {
       if (!isVim && key === 'C-X') { if (st.dirty && !st.forceQuit) { st.msg = '未保存！再按一次 ^X 放弃修改'; st.forceQuit = true; return false; } return quitNow(); }
       if (!isVim && key === 'C-K') { st.clipboard = st.lines.splice(st.row, 1)[0] || ''; if (!st.lines.length) st.lines = ['']; clamp(); st.dirty = true; return false; }
       if (!isVim && key === 'C-U') { st.lines.splice(st.row, 0, st.clipboard); st.dirty = true; return false; }
+      /* nano 里方向键直接能移动（本来就是 edit 模式），这里只补一个 ^G 位置提示 */
+      if (!isVim && key === 'C-G') { st.msg = '第 ' + (st.row + 1) + '/' + st.lines.length + ' 行 · 第 ' + (st.col + 1) + ' 列 · ' + (st.path || '[No Name]'); return false; }
 
       const editing = !isVim || st.mode === 'insert';
 
       if (key === 'ESC') { if (isVim) { st.mode = 'normal'; st.col = Math.max(0, st.col - 1); } return false; }
-      if (key === 'UP') { st.row--; return false; }
-      if (key === 'DOWN') { st.row++; return false; }
+      if (key === 'UP' || key === 'C-UP') { st.row--; return false; }
+      if (key === 'DOWN' || key === 'C-DOWN') { st.row++; return false; }
       if (key === 'LEFT') { st.col--; return false; }
       if (key === 'RIGHT') { st.col++; return false; }
       if (key === 'PGUP') { st.row -= H(); return false; }
@@ -862,7 +1045,6 @@ const COMPAT = (function () {
       if (key.startsWith('C-')) {
         const k = key.slice(2);
         if (k === 'S') { await save(); return false; }
-        if (k === 'Q') return quitNow();
         if (k === 'G') { st.msg = '行 ' + (st.row + 1) + '/' + st.lines.length + ' · 列 ' + (st.col + 1) + (st.path ? ' · ' + st.path : ''); return false; }
         return false;
       }
@@ -916,8 +1098,11 @@ const COMPAT = (function () {
 
     function quitNow() {
       st.quit = true;
-      IO.out(ESC + '[?25h' + ESC + '[?1049l');
+      /* 关鼠标报告 → 离开备用屏 → 恢复光标。顺序不能反：
+       * 先切回主屏再关鼠标，主屏会残留一段随鼠标移动的高亮。 */
+      IO.out(ESC + '[?1000l' + ESC + '[?1006l' + ESC + '[?25h' + ESC + '[?1049l');
       if (IO.editor) IO.editor.setRaw(null);
+      if (IO.onEditorResize) IO.onEditorResize = null;
       return true;
     }
 
@@ -929,9 +1114,12 @@ const COMPAT = (function () {
           st.lines = txt.replace(/\n$/, '').split('\n');
           if (!st.lines.length) st.lines = [''];
           st.path = filePath;
-        } catch (e) { st.lines = ['']; }
-        IO.out(ESC + '[?1049h' + ESC + '[2J');
+        } catch (e) { st.lines = [''], st.path = filePath; }
+        /* 备用屏 + 清屏 + 开启鼠标报告（1000 点击 / 1006 SGR 坐标） */
+        IO.out(ESC + '[?1049h' + ESC + '[2J' + ESC + '[?1000h' + ESC + '[?1006h' + ESC + '[1;1H');
         if (IO.editor) IO.editor.setRaw((d) => { handle(d); });
+        /* 终端尺寸变了就重画：以前只有 shell 提示符会重画，全屏应用会被拉歪 */
+        IO.onEditorResize = () => { if (!st.quit) { clamp(); render(); } };
         clamp(); render();
       }
     };
@@ -950,37 +1138,40 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  def('zsh', async () => {
-    IO.state.mode = 'zsh';
+  /* HSL 是一个**可嵌套**的交互层：每敲一次 hsl 压一层，exit 弹一层。
+   * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
+   * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
+  const HSL = [];
+  function hslDepth() { return HSL.length; }
+  function hslPush() {
+    HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
+    IO.setMode('hsl');
     IO.kick();
-    return { out: DIM + '已进入 zsh 兼容模式：支持管道、重定向、通配符、变量、alias。exit 回到 JSHeL。' + R + '\n' };
-  }, '进入 zsh 兼容模式');
-  def('bash', async () => CMDS.zsh.fn(), '同 zsh');
-  def('sh', async () => CMDS.zsh.fn(), '同 zsh');
+    return HSL.length;
+  }
+  function hslPop() {
+    const f = HSL.pop();
+    if (!f) return false;
+    ENV = Object.assign(Object.create(null), f.env);
+    IO.setCwd(f.cwd);
+    IO.setMode(HSL.length ? 'hsl' : 'jshel');
+    IO.kick();
+    return true;
+  }
+
+  def('hsl', async () => {
+    const d = hslPush();
+    return { out: DIM + 'hsl: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 HSL（可嵌套）');
 
   def('exit', async () => {
-    if (IO.state.mode === 'zsh') { IO.state.mode = 'jshel'; IO.kick(); return { out: DIM + '已退出 zsh，回到 JSHeL。' + R + '\n' }; }
+    if (hslDepth()) {
+      const d = HSL.length;
+      hslPop();
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 HSL' : 'exit: 回到 JSHeL') + R + '\n' };
+    }
     return { exit: true };
-  }, '退出当前 shell');
-
-  def('logout', async () => CMDS.exit.fn(), '退出');
-  def('su', async () => ({ err: 'su: 单用户环境\n', code: 1 }), '');
-  def('sudo', async (a) => {
-    if (!a.length) return { code: 1, err: 'sudo: 需要命令\n' };
-    /* 嵌套执行：被包裹的命令自己在最后一节就把 stdout 打出去了，
-     * 这里只把退出码往上带。以前直接 `return execCommandTokens(...)`，
-     * 外层又按 res.out 打一遍，于是 `sudo ls` 会打印两次。 */
-    const r = await execCommandTokens(lex(a.join(' ')), '', { sudo:true });
-    return { code:(r && r.code) || 0, hold: r && r.hold };
-  }, '以当前用户执行（本环境无权限模型）');
-
-  def('apt', async () => ({ err: 'apt: 本终端用 npm 生态，请用 `install <包名>` 或 install_pkg\n', code: 1 }), '');
-  def('npm', async (a) => {
-    if (a[0] === 'install' || a[0] === 'i') return { out: '用 hterm.pkg.install("' + (a[1] || '') + '")\n' };
-    return { err: 'npm: 只支持 install <pkg>（走 CDN）\n', code: 1 };
-  }, '');
-  def('pip', async () => ({ err: 'pip: 请在 python() 里用 pyodide 的 micropip\n', code: 1 }), '');
-  def('ping', async () => ({ err: 'ping: 浏览器不允许 ICMP\n', code: 1 }), '');
+  }, '退出这一层（最外层退出终端）');
   def('curl', async (a) => {
     const url = a.find(x => !x.startsWith('-'));
     if (!url) return { code: 1, err: 'curl: 需要 URL\n' };
@@ -1080,16 +1271,20 @@ const COMPAT = (function () {
     return last;
   }
 
-  /* 不认识的名字：先看是不是 JS 全局函数（保持 JSHeL 的能力） */
-  async function tryExternal(name, args, stdin) {
-    const fn = IO.api && IO.api[name];
-    if (typeof fn === 'function') {
-      try {
-        const v = await fn(...args);
-        return { code: 0, out: v === undefined ? '' : String(v) + '\n' };
-      } catch (e) { return { code: 1, err: name + ': ' + (e.message || e) + '\n' }; }
+  /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
+   * 以前这里会去 IO.api[name] 找同名函数，于是 HSL 里敲 `write` 就真去写文件了，
+   * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
+  async function tryExternal(name, args) {
+    for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
+      const st = await IO.call('fs.stat', cand).catch(() => null);
+      if (st && st.kind === 'func') {
+        try {
+          const v = await IO.api.exec(cand, ...args);
+          return { code: 0, out: v === undefined ? '' : String(v) + '\n' };
+        } catch (e) { return { code: 1, err: name + ': ' + (e.message || e) + '\n' }; }
+      }
     }
-    return { code: 127, err: name + ': 命令未找到（试 `help` 看内置命令）\n' };
+    return { code: 127, err: name + ': 命令未找到（help 看命令表）\n' };
   }
 
   async function execLine(line, opts) {
@@ -1105,43 +1300,17 @@ const COMPAT = (function () {
     return res;
   }
 
-  /* 判断这一行是不是 shell 命令（而不是 JS 表达式） */
-  /* 一行到底是「shell 命令」还是「JS 表达式」？
-   *
-   * 判定顺序很重要：**先看第一个词是不是命令**，再看有没有 shell 语法。
-   * 早期版本优先看 `| ; >`，结果 `mkdir("a"); write("b")` 这种一句里带分号的 JS
-   * 被整行当成 shell，报「命令未找到」——这就是用户看到的那个 bug。
-   */
-  function isShellLine(line) {
-    const s = String(line || '').trim();
-    if (!s) return false;
-    const m = s.match(/^([A-Za-z_][\w.-]*)/);
-    if (!m) return false;
-    const name = m[1];
-    if (!CMDS[name]) return false;
-    const rest = s.slice(name.length);
-
-    /* 函数调用、成员访问、赋值、比较：都是 JS，别抢。
-     * 注意成员访问必须**紧贴**（ls.home / ls[0]），不能允许空格——
-     * `ls .home` 里的 `.home` 是点分路径参数，不是属性访问。
-     * 早期写成 /^\s*\./ 就把所有 `cmd .path` 都判成 JS 了，
-     * 于是 `ls .home` 变成求值 `ls.home`（undefined），一行输出都没有。 */
-    if (/^\s*\(/.test(rest)) return false;
-    if (/^\./.test(rest) || /^\[/.test(rest)) return false;
-    if (/^\s*=[^=]/.test(rest)) return false;
-    if (/^\s*([+\-*/%]<|\?\?|\|\||&&)\s/.test(rest)) return false;
-    return true;
-  }
-
   function attach(io) {
     IO = io;
+    HSL.length = 0;
     ENV.PATH = '/bin:/usr/bin';
     ENV.TERM = 'xterm-256color';
     ENV.HOME = '.home';
   }
 
   return {
-    attach, execLine, isShellLine, commands: CMDS, lex,
+    attach, execLine, commands: CMDS, lex,
+    hslPush, hslPop, hslDepth,
     editor: makeEditor,
     get ENV() { return ENV; }
   };

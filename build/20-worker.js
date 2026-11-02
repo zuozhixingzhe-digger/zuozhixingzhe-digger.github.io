@@ -1,5 +1,5 @@
 /* ============================================================================
- * hterminal · worker runtime
+ * HTerMinaL · worker runtime
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。此文件被内联进 index.html，作为 Blob Worker 运行。
  * 职责：JS shell 执行、行编辑、历史、补全、包加载、Python(Pyodide) REPL。
@@ -234,7 +234,10 @@ class LineEditor {
       out('\r\n');
     } finally {
       this.busy = false;
-      if (!this.closed) { this.promptStr = this.promptText(); out(this.promptStr); }
+      /* 全屏应用（vim/nano）接管期间**绝对不能**补提示符：
+       * 它们把画面画在自己算好的坐标上，这里再 out 一个 ".home $ " 会正好盖在
+       * 正文第一行上（nano 的标题栏和第二行内容就是这么糊掉的）。 */
+      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
     }
   }
   async submitText(text) {
@@ -248,7 +251,7 @@ class LineEditor {
       out('\r\n');
     } finally {
       this.busy = false;
-      if (!this.closed) { this.promptStr = this.promptText(); out(this.promptStr); }
+      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
     }
   }
   enqueueSubmit() {
@@ -464,7 +467,7 @@ function fmtRows(rows, long) {
 let shellCtx = null;
 
 const EXIT = Symbol('exit');
-const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py']);
+const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','nuke']);
 
 function makeShell(ctx) {
   const state = {
@@ -475,7 +478,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | zsh（zsh 时整行交给兼容层）
+    mode: 'jshel',          // jshel | hsl（hsl 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -744,13 +747,13 @@ function makeShell(ctx) {
 
   async function whoami() { out(state.user + '\r\n'); }
   async function uname() {
-    const s = 'hterminal ' + HT_VERSION + ' (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
+    const s = 'HTerMinaL ' + HT_VERSION + ' (browser; ' + (self.navigator && navigator.userAgent || 'worker') + ')';
     out(s + '\r\n');
   }
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'jshel', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -785,7 +788,7 @@ function makeShell(ctx) {
 
   async function help() {
     const lines = [
-      ['', 'hterminal · JSHeL 快速参考'],
+      ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
@@ -793,22 +796,13 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
+      ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
       ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
-      ['提示', '表达式直接回车即可；多行用反斜杠续行；Ctrl+C 取消行；Ctrl+D 退出。'],
+      ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
       out(ANSI.yellow + k.padEnd(6, ' ') + ANSI.reset + v + '\r\n');
-    }
-    /* 兼容层命令单独一段。以前这里被 compat 的 help 整个顶掉，
-     * 敲 help 只看到 40 个命令名，会以为 JSHeL 的函数没了。 */
-    const cc = (typeof COMPAT !== 'undefined' && COMPAT.commands) ? Object.keys(COMPAT.commands).sort() : [];
-    if (cc.length) {
-      out('\r\n' + ANSI.bold + ANSI.cyan + 'Linux 兼容层' + ANSI.reset + ANSI.gray + '（可直接敲，也可 `zsh` 进原生模式）' + ANSI.reset + '\r\n');
-      for (let i = 0; i < cc.length; i += 6) {
-        out('  ' + cc.slice(i, i + 6).map(n => n.padEnd(11)).join('') + '\r\n');
-      }
-      out(ANSI.gray + '  管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd) 均可用' + ANSI.reset + '\r\n');
     }
   }
 
@@ -886,6 +880,18 @@ function makeShell(ctx) {
       state.lastError = e;
       const msg = e && e.message || String(e);
       writeErr((e && e.name ? e.name + ': ' : '') + msg + '\r\n');
+      /* 只加一句指路的话，不改变「这一行是按 JS 求值的」这个事实。
+       * 以前这里是偷偷把 `ls -la` 当 shell 跑掉，那才叫不可预测。 */
+      /* 敲了 shell 命令却没进 shell：SyntaxError（`ls -la`）和 ReferenceError
+       * （`nano x`）都会发生。这里只补一句指路，不改变求值方式。 */
+      if (e instanceof SyntaxError || e instanceof ReferenceError) {
+        const first = String(code).trim().split(/[\s|;>]+/)[0] || '';
+        const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
+        const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
+        if (first && (gone || known)) {
+          out(ANSI.gray + '提示：' + first + ' 是 HSL 命令。hsl() 进 shell，或 hsl(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+        }
+      }
       if (e && e.stack) {
         const st = String(e.stack).split('\n').slice(1, 5).filter(l => !/^\s*at (new AsyncFunction|execute|LineEditor)/.test(l));
         if (st.length) out(ANSI.gray + st.join('\r\n') + ANSI.reset + '\r\n');
@@ -1474,7 +1480,7 @@ function makeDocument() {
     removeEventListener: (type, fn) => { removeWorkerListener(fn); },
     dispatchEvent: (ev) => { call('dom.op', 'dispatch', [docRef, (ev && ev.type) || 'click', ev && ev.detail]).catch(() => {}); return true; },
 
-    /* ---- hterminal 扩展（不是 DOM 标准，但保留兼容） ---- */
+    /* ---- HTerMinaL 扩展（不是 DOM 标准，但保留兼容） ---- */
     __snap: () => DOMC.root,
     get __html() { return (DOMC.root && DOMC.root.html && DOMC.root.html.text) || ''; }
   };
@@ -1525,6 +1531,8 @@ function dispatchWorkerEvent(msg) {
 /* ---------------------------------------------------------------- 安装 */
 function installDomProxy(call_) {
   const c = (op, ...args) => call_('dom.op', op, args);
+  /* 原生 API 不走 dom.op（那一层只认 DOM 操作，也不该认识 window 方法） */
+  const nat = (name, args) => call_('native', name, args);
   const document = makeDocument();
 
   /* localStorage：同步读快照、异步写回。和真的一样，写立刻能读到。 */
@@ -1542,7 +1550,7 @@ function installDomProxy(call_) {
     __snapshot: () => ({ ...lsSnap })
   };
 
-  /* page：hterminal 给智能体 / 脚本用的高层封装。不是 DOM 标准，但好用。 */
+  /* page：HTerMinaL 给智能体 / 脚本用的高层封装。不是 DOM 标准，但好用。 */
   const page = {
     title: () => c('title'),
     url: () => c('url'),
@@ -1665,19 +1673,32 @@ function installDomProxy(call_) {
     get scrollY() { return (DOMC.root && DOMC.root.sy) || 0; },
     get pageXOffset() { return this.scrollX; },
     get pageYOffset() { return this.scrollY; },
-    scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return c('scrollTo', n.left || 0, n.top || 0); },
-    scrollBy(dx, dy) { return c('scrollTo', this.scrollX + (Number(dx) || 0), this.scrollY + (Number(dy) || 0)); },
+    scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return nat('scrollTo', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
+    scrollBy(dx, dy) { const n = typeof dx === 'object' && dx ? dx : { left: dx, top: dy }; return nat('scrollBy', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     getComputedStyle, matchMedia,
-    alert: (m) => c('toast', String(m == null ? '' : m)),
-    confirm: (m) => c('dialog', '请确认', String(m == null ? '' : m)),
-    prompt: (m, d) => c('dialog', String(m == null ? '' : m), String(d == null ? '' : d)),
-    open: (u) => { c('openWindow', { type:'browser', url:String(u) }).catch(() => {}); return null; },
-    close: () => {},
-    focus: () => {}, blur: () => {},
+    /* ---- 原生 API：一律转回主线程调真的，不在 Worker 里另造一个 ----
+     *
+     * 以前 alert 变成一条 toast、confirm 变成自绘对话框、open 变成内部窗口，
+     * 那是「设计行为」，不是浏览器行为。现在全部走 native.* RPC，
+     * 主线程直接执行 window.alert / window.confirm / window.prompt / window.open，
+     * 连文案、按钮、焦点、拦截规则都由浏览器自己决定。
+     *
+     * 唯一的硬限制：Worker 里没有同步跨线程通道（要 SharedArrayBuffer，
+     * 那需要 COOP/COEP，file:// 打开时必然没有）。所以 alert / print / close 这类
+     * 「没有返回值」的调用语义完全一致；confirm / prompt 的返回值只能是 Promise，
+     * 必须 await —— 这是物理限制，不是我们在替你设计。 */
+    alert: (m) => { nat('alert', [m == null ? '' : String(m)]).catch(() => {}); },
+    confirm: (m) => nat('confirm', [m == null ? '' : String(m)]),
+    prompt: (m, d) => nat('prompt', [m == null ? '' : String(m), d == null ? '' : String(d)]),
+    print: () => { nat('print', []).catch(() => {}); },
+    open: (u, target, feat) => nat('open', [String(u == null ? '' : u), target == null ? '_blank' : String(target), feat == null ? '' : String(feat)]),
+    close: () => { nat('close', []).catch(() => {}); },
+    focus: () => { nat('focus', []).catch(() => {}); },
+    blur: () => { nat('blur', []).catch(() => {}); },
+    stop: () => { nat('stop', []).catch(() => {}); },
     addEventListener: (t, fn) => { if (typeof fn === 'function') addWorkerListener('\u0001win', String(t), fn); },
     removeEventListener: (t, fn) => removeWorkerListener(fn),
     dispatchEvent: () => true,
-    getSelection: () => null,
     history,
     get screen() { return { width: this.innerWidth, height: this.innerHeight, availWidth: this.innerWidth, availHeight: this.innerHeight, colorDepth: 24, pixelDepth: 24 }; },
     requestAnimationFrame, cancelAnimationFrame,
@@ -1708,8 +1729,8 @@ async function bootShell(init) {
      * 一次性 value 拷贝会让它们永远停在启动那一刻。 */
     globalThis.window = globalThis;
     const KEYS = ['document','localStorage','page','location','history',
-      'alert','confirm','prompt','open','close','focus','blur',
-      'getComputedStyle','matchMedia','getSelection',
+      'alert','confirm','prompt','print','open','close','focus','blur','stop',
+      'getComputedStyle','matchMedia',
       'innerWidth','innerHeight','outerWidth','outerHeight','devicePixelRatio',
       'scrollX','scrollY','pageXOffset','pageYOffset','scrollTo','scrollBy','screen',
       'requestAnimationFrame','cancelAnimationFrame',
@@ -1740,7 +1761,8 @@ async function bootShell(init) {
     trace: (...a) => out(ANSI.gray + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
     time: () => {}, timeEnd: () => {}, assert: () => {}
   };
-  globalThis.print = (...a) => out(fmtArgs(a) + '\r\n');
+  /* print 不是「往终端打印」的别名：浏览器里 window.print() 是打印对话框。
+   * 以前这里把它改成了终端输出，属于抢注。要往终端输出请用 console.log。 */
   globalThis.exit = (code) => { post({ t:'exit', code:code || 0 }); throw EXIT; };
 
   let ctx;
@@ -1763,30 +1785,30 @@ async function bootShell(init) {
   } catch (e) {}
 
   const editor = new LineEditor({
-    prompt: () => (api.__state.mode === 'zsh' ? api.__state.cwd + '% ' : api.__state.cwd + '> '),
+    prompt: () => (api.__state.mode === 'hsl' ? api.__state.cwd + ' $ ' : api.__state.cwd + '> '),
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
     onSubmit: async (line) => {
       if (!line.trim()) return;
-      const zsh = api.__state.mode === 'zsh';
-      if (zsh || COMPAT.isShellLine(line)) {
+      /* 两种模式，两条完全分开的路，中间没有「猜一下这行是什么」：
+       *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
+       *   hsl   → 只当 shell 命令行（不认 JS 语法，`1+1` 是「命令未找到」）
+       * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
+       * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
+      if (api.__state.mode === 'hsl') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
       }
-      try { await api.run(line); }
-      catch (e) {
-        if (e === EXIT) throw e;
-        throw e;
-      }
+      await api.run(line);
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- Linux 兼容层
+  /* ---------------------------------------------------------------- HSL（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 这样 `ls -la | grep txt > out.txt` 这类写法能直接用，并且 `zsh` 之后
-   * 整个行编辑器进入原生模式（提示符变成 `路径% `）。
+   * 只有 mode === 'hsl' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
   /* ---------------------------------------------------------------- TUI 智能体
@@ -1811,6 +1833,10 @@ async function bootShell(init) {
         out(ANSI.gray + '│  直接输入任务，Enter 发送\r\n');
         out(ANSI.gray + '│  agentTui.stop() 中断 · agentTui.queue("…") 排队 · agentTui.close() 退出\r\n');
         out(ANSI.cyan + '└─' + ANSI.reset + '\r\n');
+        /* 接上历史，并明说接上了——否则刷新后一片空白，用户会以为对话丢了 */
+        call('agent.status').then(st => {
+          if (st && st.messages) out(ANSI.gray + '│  已接上历史会话：' + st.messages + ' 条消息' + ANSI.reset + '\r\n');
+        }).catch(() => {});
       }
       /* 返回短字符串而不是 this：JSHeL 会把表达式值打印出来，
        * 返回对象会刷一整屏方法签名，看着像报错。 */
@@ -1888,6 +1914,28 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
+  /* hsl —— JSHeL 里唯一通往 Linux 风格命令的入口。
+   *
+   *   hsl()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsl('ls -la')    跑一行，输出直接进终端，返回退出码
+   *   await hsl.run(x) 跑一行但不打印，返回 { code, out, err }
+   *
+   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell，
+   * 也不会因为你写了 `mkdir("a")` 就被当成命令。 */
+  function hsl(cmd) {
+    if (cmd === undefined || cmd === null) {
+      /* 只打印横幅，不返回值：`hsl` 单独一行时不该在下面多出一个 "1" */
+      const d = COMPAT.hslPush();
+      out(ANSI.gray + 'hsl · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      return undefined;
+    }
+    /* 返回 undefined：输出已经直接进终端了，再回显一个退出码只是噪音。
+     * 要退出码用 `(await hsl.run('…')).code`。 */
+    return COMPAT.execLine(String(cmd)).then(() => undefined);
+  }
+  hsl.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsl = hsl;
+
   COMPAT.attach({
     out: (t) => out(t),
     call,
@@ -1899,15 +1947,20 @@ async function bootShell(init) {
     setCwd: (p) => { api.__state.cwd = p; post({ t:'cwd', path:p }); },
     get cols() { return api.__state.cols || 80; },
     get rows() { return api.__state.rows || 24; },
-    kick: () => { editor.promptStr = editor.promptText(); }
+    /* 模式切换只改 state.mode + 重画提示符。真实的「第几层」在 COMPAT 的栈里，
+     * 这里不存第二份状态——两份状态一定会不同步。 */
+    setMode: (m) => { api.__state.mode = m; },
+    kick: () => { editor.promptStr = editor.promptText(); },
+    get onEditorResize() { return editor._onResize || null; },
+    set onEditorResize(fn) { editor._onResize = fn || null; }
   });
 
   out('\x1b[?2004h');
 
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
-    out(ANSI.gray + 'hterminal · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl()。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 
@@ -2054,8 +2107,10 @@ self.onmessage = async (ev) => {
       self.__shell.state.rows = m.rows || self.__shell.state.rows;
     }
     const ed = self.__shell && self.__shell.editor || self.__py && self.__py.editor;
-    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉 */
-    if (ed && !ed.raw) { ed.promptStr = ed.promptText(); ed.redraw(); }
+    /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉；
+     * 但全屏应用自己需要重画（否则终端一改尺寸，画面就被拉歪）。 */
+    if (ed && ed.raw) { if (ed._onResize) { try { ed._onResize(); } catch (e) {} } }
+    else if (ed) { ed.promptStr = ed.promptText(); ed.redraw(); }
     return;
   }
   if (m.t === 'terminate') {

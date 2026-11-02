@@ -1,11 +1,11 @@
 /* ============================================================================
- * hterminal · agent harness
+ * HTerMinaL · agent harness
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * 单会话、前端循环、JSONL 持久化；后端只做无状态格式转换与转发。
  * ==========================================================================*/
 
-const AGENT_SYSTEM = `你是 hterminal 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
+const AGENT_SYSTEM = `你是 HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
 
 环境事实：
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
@@ -22,6 +22,7 @@ const AGENT_SYSTEM = `你是 hterminal 里的智能体，运行在一个浏览�
 - 想看界面长什么样就调 screenshot，比用文字描述界面省事得多。
 - 同一个工具、同样的参数不要连着重试。失败两次就换办法，或者直接说明卡在哪。
 - 已经做过的事不要重复做，已经说过的话不要重复说。每次回答只给新增信息。
+- 若 harness 提示你“已连续 3 次重复输出并自动追问”，说明你陷入了循环：立即停止重复，换思路、改参数或总结已完成的结果，不要再把同样的动作发出来。
 - 完成后用简短中文说明做了什么、结果如何。不要输出大段无关代码。`;
 
 const AGENT_TOOLS = [
@@ -241,12 +242,179 @@ function fileToDataUrl(file) {
   });
 }
 
+/* ---------------------------------------------------------------- 会话持久化
+ *
+ * 独立数据库 `ht-agent`，**不**塞进 DepCache：清依赖缓存是常规操作，
+ * 顺手把用户几十轮对话删掉就是事故。
+ *
+ *   sessions  { id, title, createdAt, updatedAt, model, mode, msgCount }
+ *   messages  { sid, seq, role, content, tool_calls, tool_call_id, name, display, ts }
+ *
+ * 顺序一律用 seq，不靠时间戳——时钟会跳。
+ * 图片附件不存 dataURL：超过 40 KB 的转成 Blob 存（IDB 原生支持），读回来再转回 dataURL。
+ * 一张截图几百 KB，几十轮就顶到配额，这是唯一撑得住的做法。
+ */
+const AgentStore = {
+  DB: 'ht-agent',
+  VER: 1,
+  _db: null,
+  _p: null,
+
+  open() {
+    if (this._db) return Promise.resolve(this._db);
+    if (this._p) return this._p;
+    this._p = new Promise((res, rej) => {
+      if (typeof indexedDB === 'undefined') return rej(new Error('没有 IndexedDB'));
+      const r = indexedDB.open(this.DB, this.VER);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('sessions')) db.createObjectStore('sessions', { keyPath:'id' });
+        if (!db.objectStoreNames.contains('messages')) {
+          const ms = db.createObjectStore('messages', { keyPath:['sid', 'seq'] });
+          ms.createIndex('sid', 'sid', { unique:false });
+        }
+      };
+      r.onsuccess = () => { this._db = r.result; res(this._db); };
+      r.onerror = () => rej(r.error || new Error('打不开 ht-agent'));
+    });
+    return this._p;
+  },
+
+  _done(tx) {
+    return new Promise((res, rej) => { tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+  },
+
+  async load(sid) {
+    const db = await this.open();
+    const tx = db.transaction(['sessions', 'messages'], 'readonly');
+    const sreq = tx.objectStore('sessions').get(sid);
+    const mreq = tx.objectStore('messages').index('sid').getAll(IDBKeyRange.only(sid));
+    await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    const sess = sreq.result || null;
+    const rows = (mreq.result || []).sort((a, b) => a.seq - b.seq);
+    const messages = [];
+    for (const r of rows) messages.push(await unpackMsg(r));
+    return { session: sess, messages };
+  },
+
+  async save(sid, messages, meta) {
+    /* 两条 IDB 的硬规矩，踩过一次就不会再踩：
+     * ①事务一旦没有挂起的请求就会自动提交，中间 await 一下（比如 packMsg 转图片）
+     *   事务就关了，后面的 put/delete 全部 TransactionInactiveError；
+     * ②所以：**先把数据准备好，再开事务，事务里只做同步调用**。 */
+    const packed = [];
+    for (const m of messages) packed.push(await packMsg(m));
+    const db = await this.open();
+    const oldKeys = await new Promise((res, rej) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx.objectStore('messages').index('sid').getAllKeys(IDBKeyRange.only(sid));
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
+    const tx = db.transaction(['sessions', 'messages'], 'readwrite');
+    const ms = tx.objectStore('messages');
+    packed.forEach((m, i) => ms.put(Object.assign({}, m, { sid, seq:i, ts:m.ts || Date.now() })));
+    for (const k of oldKeys) if (k[1] >= packed.length) ms.delete(k);
+    const first = packed.find(m => m.role === 'user' && typeof m.content === 'string');
+    tx.objectStore('sessions').put({
+      id: sid,
+      title: (meta && meta.title) || (first ? String(first.content).slice(0, 40) : '（空会话）'),
+      createdAt: (meta && meta.createdAt) || Date.now(),
+      updatedAt: Date.now(),
+      model: (meta && meta.model) || '',
+      mode: (meta && meta.mode) || 'main',
+      msgCount: packed.length
+    });
+    await this._done(tx);
+    return packed.length;
+  },
+
+  async list() {
+    const db = await this.open();
+    const tx = db.transaction('sessions', 'readonly');
+    const req = tx.objectStore('sessions').getAll();
+    await this._done(tx);
+    return (req.result || []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  async remove(sid) {
+    const db = await this.open();
+    const oldKeys = await new Promise((res, rej) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx.objectStore('messages').index('sid').getAllKeys(IDBKeyRange.only(sid));
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = () => rej(req.error);
+    });
+    const tx = db.transaction(['sessions', 'messages'], 'readwrite');
+    tx.objectStore('sessions').delete(sid);
+    const ms = tx.objectStore('messages');
+    for (const k of oldKeys) ms.delete(k);
+    await this._done(tx);
+    return true;
+  },
+
+  async summary() {
+    try {
+      const rows = await this.list();
+      const total = rows.reduce((n, r) => n + (r.msgCount || 0), 0);
+      return { sessions: rows.length, messages: total, last: rows[0] || null };
+    } catch (e) { return { sessions:0, messages:0, last:null }; }
+  }
+};
+
+const dataUrlToBlob = (u) => fetch(u).then(r => r.blob());
+function blobToDataUrl(b) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result));
+    fr.onerror = () => rej(fr.error);
+    fr.readAsDataURL(b);
+  });
+}
+
+/* 存之前：把大 dataURL 换成 Blob（结构化克隆可以直接存 Blob） */
+async function packMsg(m) {
+  const c = m && m.content;
+  if (!Array.isArray(c)) return m;
+  const parts = [];
+  for (const p of c) {
+    if (p && p.type === 'image_url' && p.image_url && /^data:/.test(String(p.image_url.url)) && String(p.image_url.url).length > 40000) {
+      try { parts.push({ type:'image_url', image_url:{ blob: await dataUrlToBlob(p.image_url.url) }, __blob:true }); continue; }
+      catch (e) { /* 转不了就照原样存，宁大勿丢 */ }
+    }
+    parts.push(p);
+  }
+  return Object.assign({}, m, { content: parts });
+}
+
+/* 读回来：Blob → dataURL。不认识的形状原样返回。 */
+async function unpackMsg(m) {
+  const c = m && m.content;
+  if (!Array.isArray(c)) return m;
+  const parts = [];
+  for (const p of c) {
+    if (p && p.__blob && p.image_url && p.image_url.blob instanceof Blob) {
+      try {
+        parts.push({ type:'image_url', image_url:{ url: await blobToDataUrl(p.image_url.blob) } });
+        continue;
+      } catch (e) {}
+    }
+    const q = Object.assign({}, p);
+    delete q.__blob;
+    parts.push(q);
+  }
+  return Object.assign({}, m, { content: parts });
+}
+
 class AgentApp {
   constructor(container, opts, win) {
     this.el = container;
     this.win = win;
     this.opts = opts || {};
     this.messages = [];
+    this.sid = this.sid || 'main';
+    this.createdAt = Date.now();
+    this._saveT = null;
     this.running = false;
     this.abort = null;
     this.onTitle = null;
@@ -270,7 +438,7 @@ class AgentApp {
         <textarea placeholder="给智能体一个任务…  Enter 发送，Shift+Enter 换行；可直接粘贴图片"></textarea>
         <div class="ag-actions">
           <button class="btn" data-a="attach" title="添加图片 / 文件（也可以直接粘贴或拖进来）">＋</button>
-          <span class="ag-hint">工具直接执行，不问许可 · 会话保存在 .agent.session</span>
+          <span class="ag-hint">工具直接执行，不问许可 · 对话存在 IndexedDB（ht-agent），刷新不丢</span>
           <div class="grow"></div>
           <button class="btn" data-a="stop" disabled>停止</button>
           <button class="btn primary" data-a="send">发送</button>
@@ -370,19 +538,36 @@ class AgentApp {
   }
 
   async loadSession() {
+    /* 会话主存是 IndexedDB 的 ht-agent 库；`.agent.session` 只是可导出的 JSONL 镜像。
+     * 老版本把数据全放在后者里，所以这里做一次单向迁移，用户不会丢历史。 */
+    this.sid = this.sid || 'main';
+    let out = [];
+    let at = 0;
     try {
-      const r = await FS.read('.agent.session');
-      const txt = String(r.content || '');
-      const lines = txt.split('\n').map(x => x.trim()).filter(Boolean);
-      const out = [];
-      for (const line of lines) {
-        try {
-          const m = JSON.parse(line);
-          if (m && (m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'system')) out.push(m);
-        } catch (e) { /* 截断的行直接忽略——这正是 JSONL 的好处 */ }
+      const r = await AgentStore.load(this.sid);
+      if (r && r.messages && r.messages.length) {
+        out = r.messages;
+        at = (r.session && r.session.updatedAt) || 0;
       }
-      this.messages = out;
-    } catch (e) { this.messages = []; }
+    } catch (e) { /* 隐私模式 / 没 IDB：退回到 JSONL 镜像 */ }
+    if (!out.length) {
+      try {
+        const r = await FS.read('.agent.session');
+        const lines = String(r.content || '').split('\n').map(x => x.trim()).filter(Boolean);
+        for (const line of lines) {
+          try {
+            const m = JSON.parse(line);
+            if (m && (m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'system')) out.push(m);
+          } catch (e) { /* 截断的行直接忽略——这正是 JSONL 的好处 */ }
+        }
+        if (out.length) {
+          at = r.mtime || Date.now();
+          AgentStore.save(this.sid, out, { createdAt:at }).catch(() => {});
+        }
+      } catch (e) { out = []; }
+    }
+    this.messages = out;
+    this.createdAt = at || Date.now();
     this.render();
     if (!this.messages.length) {
       const direct = Settings.get('agentMode') === 'direct';
@@ -391,6 +576,13 @@ class AgentApp {
         : `后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端`;
       this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
         <div class="msg assistant"><span class="role">agent</span>你好。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
+    } else {
+      /* 必须明说「这是恢复的」：不然用户会以为是上一次自己刚说的话，怀疑没刷新。
+       * 存成字段而不是直接插 DOM——render() 随时会被 markdown 加载完再调一次，
+       * 插进去的那行会被整块 innerHTML 冲掉（第一版就是这么消失的）。 */
+      const when = at ? new Date(at).toLocaleString('zh-CN') : '未知时间';
+      this.restoreNote = `已恢复 ${this.messages.length} 条消息（最后更新 ${when}）· 存在 IndexedDB「ht-agent」`;
+      this.render();
     }
   }
 
@@ -398,7 +590,24 @@ class AgentApp {
     return this.messages.map(m => JSON.stringify(m)).join('\n') + (this.messages.length ? '\n' : '');
   }
 
-  async saveSession() {
+  /* 写盘分两种时机：
+   *   流式输出/每步工具调用 → saveSession() 只排一个 800ms 的防抖
+   *   一轮结束 / 清空 / 导入  → flushSession() 立即写
+   * 以前每个 token 都全量重写一遍 JSONL，主线程能被拖到掉帧。 */
+  saveSession() {
+    clearTimeout(this._saveT);
+    this._saveT = setTimeout(() => { this.flushSession(); }, 800);
+  }
+
+  async flushSession() {
+    clearTimeout(this._saveT);
+    const snapshot = this.messages.slice();
+    try {
+      await AgentStore.save(this.sid || 'main', snapshot, {
+        createdAt: this.createdAt,
+        model: Settings.get('agentModel') || ''
+      });
+    } catch (e) { /* 配额满 / 隐私模式：会话照常能用，只是不落盘 */ }
     try {
       await FS.write('.agent.session', this.sessionJsonl(), { mime:'application/x-ndjson', hint:'智能体会话' });
     } catch (e) {}
@@ -407,7 +616,7 @@ class AgentApp {
   render() {
     if (!this.logEl) return;
     const msgs = this.messages.slice(-200);
-    let html = '';
+    let html = this.restoreNote ? `<div class="msg sys">${esc(this.restoreNote)}</div>` : '';
     for (const m of msgs) {
       if (m.role === 'user') {
         /* content 可能是多模态数组：渲染时优先用 display 字段（发送前已拍平） */
@@ -422,6 +631,8 @@ class AgentApp {
           return `<div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-top:4px">→ ${esc(t.function && t.function.name || '?')} ${esc(String(args).slice(0, 300))}</div>`;
         }).join('');
         if (body || tc) html += `<div class="msg assistant"><span class="role">agent</span>${body}${tc}</div>`;
+      } else if (m.role === 'system') {
+        html += `<div class="msg sys">${esc(m.content || '')}</div>`;
       } else if (m.role === 'tool') {
         const raw = Array.isArray(m.content)
           ? m.content.map(p => p.type === 'text' ? p.text : '[图片 ' + Math.round(String(p.image_url && p.image_url.url || '').length * 0.75 / 1024) + ' KB]').join('\n')
@@ -458,9 +669,10 @@ class AgentApp {
       this.renderStatus('idle', 'stopped');
       toast('已请求停止');
     } else if (a === 'clear') {
-      if (!(await confirmDlg('清空会话', '会删除当前会话与 <span class="code">.agent.session</span>，不可撤销。', true))) return;
+      if (!(await confirmDlg('清空会话', '会删除这个会话的全部消息（IndexedDB「ht-agent」）与 <span class="code">.agent.session</span> 镜像，不可撤销。', true))) return;
       this.messages = [];
-      await this.saveSession();
+      try { await AgentStore.remove(this.sid || 'main'); } catch (e) {}
+      await this.flushSession();
       this.render();
       this.renderStatus('idle');
       toast('会话已清空');
@@ -482,7 +694,7 @@ class AgentApp {
       }
       if (!out.length) { toast('没有可导入的消息', true); return; }
       this.messages = out;
-      await this.saveSession();
+      await this.flushSession();
       this.render();
       toast('已导入 ' + out.length + ' 条消息');
     } else if (a === 'settings') {
@@ -514,10 +726,10 @@ class AgentApp {
     this.messages.push({ role:'user', content, display:shown || '[图片]' });
     this.attachments = [];
     this.renderAttachments();
-    this.render(); await this.saveSession();
+    this.render(); await this.flushSession();
     try { await this.run(); }
     catch (e) { this.pushError(e); }
-    finally { this.running = false; this.renderStatus('idle'); }
+    finally { this.running = false; this.renderStatus('idle'); await this.flushSession(); }
   }
 
   /* 把内部消息列表转成 OpenAI 能接受的形状。
@@ -542,7 +754,7 @@ class AgentApp {
     const usedCalls = new Set();
 
     for (const m of this.messages) {
-      if (m.role === 'error' || m.role === 'tool') continue;   // tool 在下面跟着 assistant 一起发
+      if (m.role === 'error' || m.role === 'tool' || m.role === 'system') continue;   // tool 在下面跟着 assistant 一起发；system 备注只给用户看，不进请求
 
       if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
         const calls = m.tool_calls.filter(t => t && t.function && t.function.name);
@@ -614,7 +826,7 @@ class AgentApp {
       headers = {
         'Content-Type':'application/json',
         'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
-        'X-HTerm-Client':'hterminal'
+        'X-HTerm-Client':'HTerMinaL'
       };
       payload = {
         model, provider: Settings.get('agentProvider') || 'openai',
@@ -674,6 +886,10 @@ class AgentApp {
      * 指纹只在这一轮有效，用户下次提问会重来。 */
     const calls = new Map();
     let steps = 0;
+    /* 重复生成防护：连续 N 次输出相同签名（工具调用或文本）→ 卡断本轮并自动追问。
+     * 见 _injectRepeatNudge()。阈值取 3：前两次视为正常重试，第三次才判定“卡住”。 */
+    const REPEAT_LIMIT = 3;
+    let lastSig = null, repeatCount = 0;
 
     while (this.running && steps < maxSteps) {
       steps++;
@@ -682,6 +898,20 @@ class AgentApp {
       if (!this.running) { this._pushAssistant(msg, true); break; }
       this._pushAssistant(msg, false);
       this.render(); await this.saveSession();
+
+      /* —— 重复生成防护 ——
+       * 算这一轮“输出签名”：连续三次签名相同，判定智能体陷入重复循环。
+       * 这时不再执行这一轮的动作，而是自动向它追问一句“是否卡住、请检查”，
+       * 然后让它继续（带追问再跑一轮，而不是硬停）。reset 后从 0 重数，避免每轮都追问。 */
+      const sig = this._turnSig(msg);
+      if (sig && sig === lastSig) repeatCount++;
+      else { lastSig = sig; repeatCount = 1; }
+      if (repeatCount >= REPEAT_LIMIT) {
+        this._injectRepeatNudge(sig);
+        lastSig = null; repeatCount = 0;
+        this.render(); await this.saveSession();
+        continue;
+      }
 
       if (msg.tool_calls && msg.tool_calls.length) {
         for (const tc of msg.tool_calls) {
@@ -730,6 +960,36 @@ class AgentApp {
     }
     this.running = false;
     this.renderStatus('idle');
+  }
+
+  /* 输出签名：把“这一轮智能体到底干了什么”压成一个可比较的字符串。
+   * 带工具调用 → 工具名+参数指纹；纯文本 → 正文前若干字符（长输出只比前缀，
+   * 末尾差异极少见，且真要判重也该比整体结构）。两次签名相同即视为“同一输出”。 */
+  _turnSig(msg) {
+    if (msg && msg.tool_calls && msg.tool_calls.length) {
+      const tc = msg.tool_calls
+        .filter(t => t && t.function && t.function.name)
+        .map(t => {
+          let a = '{}';
+          try { a = stableKey(JSON.parse(t.function.arguments || '{}')); }
+          catch (e) { a = stableKey(String(t.function.arguments || '')); }
+          return t.function.name + '(' + a + ')';
+        }).join('|');
+      return 'TC:' + tc;
+    }
+    return 'TX:' + String((msg && msg.content) || '').slice(0, 400);
+  }
+
+  /* 重复循环触发：在日志里记一条系统备注，并自动以“用户”身份向智能体追问一句，
+   * 让它自行检查是否卡住。追问以 user 角色进会话（apiMessages 会正常发送）；
+   * system 备注只给用户看（渲染成 sys 样式，但不进发给模型的请求）。 */
+  _injectRepeatNudge(sig) {
+    const note = '⚠ 检测到连续 3 次输出相同内容（工具调用或文本），已自动向智能体追问以检查是否卡住。';
+    this.messages.push({ role:'system', content:note });
+    const prompt = '【自动检查】你已连续 3 次输出基本相同的内容（同一工具相同参数，或同一段文本），'
+      + '疑似陷入重复循环。请先停下：对照已有结果，确认任务是否已完成、是否忽略了某些报错或缺失信息。'
+      + '若已完成，请用简短中文总结结果；若仍需要新信息，请改用不同的参数或换一个工具，不要重复刚才完全相同的动作。';
+    this.messages.push({ role:'user', content:prompt, display:'[自动追问] ' + prompt.slice(0, 60) + '…' });
   }
 
   /* 收下一条 assistant 消息。两个小动作都在治「重复输出」：
@@ -838,6 +1098,7 @@ class AgentApp {
     this._disposed = true;
     this.running = false;
     try { this.abort && this.abort.abort(); } catch (e) {}
-    this.saveSession();
+    /* 关窗就是「这一轮到此为止」：必须立刻落盘，不能等防抖（页面可能马上就关了） */
+    this.flushSession().catch(() => {});
   }
 }

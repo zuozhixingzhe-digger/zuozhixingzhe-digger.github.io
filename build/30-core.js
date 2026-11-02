@@ -1,11 +1,11 @@
 /* ============================================================================
- * hterminal · core
+ * HTerMinaL · core
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。设置、IndexedDB 文件系统、虚拟目录、UI 原子件。
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.0';
+const HT_VERSION = '0.0.1.2';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -292,7 +292,7 @@ const PERM_DEFS = [
 const SEED_FILES = {
   '.home.welcome': {
     kind:'file', mime:'text/plain',
-    content:`欢迎来到 hterminal。
+    content:`欢迎来到 HTerMinaL。
 
 这是一个跑在浏览器里的 JS 终端。你看到的每一行都是 JavaScript：
 
@@ -302,17 +302,22 @@ const SEED_FILES = {
   > python()          // 在当前终端开一个 Python
   > winOpen({type:'browser', url:'https://example.com'})
   > agentOpen()       // 轻量智能体（需要本地后端）
+  > hsl()             // 进 HSL：Linux 风格的交互 shell
+
+这一层是 JS 控制台，不是 shell：ls -la 这种写法不会执行，会报语法错误。
+要敲 Linux 命令，用 hsl() 进去，或者 hsl('ls -la') 跑一行。
+两边是彻底分开的：JSHeL 只认 JS，HSL 只认命令。
 
 路径用点分隔，根是 "."。例如：
   .home.notes       根下的 home 目录里的 notes
   .bin.hello        一个可执行函数
   .localstorage.x   浏览器 localStorage 里的 x
 
-输入 help 看完整命令表。`
+输入 help() 看 JS 侧的 API；进 HSL 之后 help 看命令表。`
   },
   '.home.readme': {
     kind:'file', mime:'text/plain',
-    content:`hterminal 的几条“世界观”：
+    content:`HTerMinaL 的几条“世界观”：
 
 1. 一切皆文件。文件可以是文本、函数、应用、设备、权限、包、线程、会话。
 2. 文件系统尽量扁平。所有目录都挂在根 "." 下，路径用 "." 分隔。
@@ -331,7 +336,7 @@ const SEED_FILES = {
   .config       设置
   .agent        智能体会话
   .sys          系统信息（只读）
-  .perm         权限
+  .perm         授权（摄像头 / 通知等）
   .temp         临时文件（刷新即失）
   .queryfile    你通过“询问文件”交进来的文件
   .localstorage localStorage 的镜像
@@ -340,7 +345,10 @@ const SEED_FILES = {
   > await ls('.bin')
   > await exec('.bin.hello')
   > cat('.home.readme')
-`
+  > hsl()                 然后   ls -la | head      或者   fastfetch
+
+HSL 可以嵌套：再敲一次 hsl 就是下一层，exit 回到上一层，
+每一层的当前目录互不影响（和真的子 shell 一样）。`
   },
   '.bin.hello': {
     kind:'func', mime:'application/javascript',
@@ -354,7 +362,7 @@ return 'done';`
     kind:'func', mime:'application/javascript',
     meta:{ hint:'打印环境信息', interpreter:'js' },
     content:`const u = await navigator.storage.estimate().catch(()=>({}));
-print('hterminal', '${HT_VERSION}');
+print('HTerMinaL', '${HT_VERSION}');
 print('UA       ', navigator.userAgent);
 print('CPU      ', navigator.hardwareConcurrency, 'threads');
 print('内存     ', navigator.deviceMemory || '?', 'GB');
@@ -370,10 +378,10 @@ const r = await fs.read(p);
 const lines = String(r.content || '').split('\\n').length;
 print('已放入', p, '，共', lines, '行');`
   },
-  '.sys.version': { kind:'file', mime:'text/plain', content:'hterminal ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
+  '.sys.version': { kind:'file', mime:'text/plain', content:'HTerMinaL ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
   '.sys.license': { kind:'file', mime:'text/plain', content:`Apache License 2.0 OR MIT（双许可，任选其一）
 
-Copyright (c) 2026 hterminal contributors
+Copyright (c) 2026 HTerMinaL contributors
 
 本项目由 AI 智能体生成并维护。第三方组件：
   xterm.js                   MIT
@@ -383,7 +391,7 @@ Copyright (c) 2026 hterminal contributors
   html2canvas                MIT
   Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
-  '.sys.about': { kind:'file', mime:'text/plain', content:`hterminal
+  '.sys.about': { kind:'file', mime:'text/plain', content:`HTerMinaL
 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
 
 一个自包含的 index.html，加上三个可选的单文件模型转发后端。
@@ -801,11 +809,11 @@ const FS = {
     for (const [path, v] of this.temp) temp.push({ path, content:await packContent(v.content), meta:v.meta });
     const ls = {};
     for (const k of lsKeys()) ls[k] = localStorage.getItem('ht.ls.' + k);
-    return { format:'hterminal-fs', version:1, at:nowISO(), files, temp, localstorage:ls, settings:Settings.all() };
+    return { format:'HTerMinaL-fs', version:1, at:nowISO(), files, temp, localstorage:ls, settings:Settings.all() };
   },
 
   async importAll(obj) {
-    if (!obj || obj.format !== 'hterminal-fs') throw new Error('不是 hterminal 导出的文件');
+    if (!obj || obj.format !== 'HTerMinaL-fs') throw new Error('不是 HTerMinaL 导出的文件');
     if (Array.isArray(obj.files)) {
       for (const r of obj.files) {
         if (!r || !r.path) continue;
@@ -1113,7 +1121,7 @@ function isTypingTarget(el) {
 /* ---------------------------------------------------------------- 关于 */
 function aboutHtml() {
   return `<div style="line-height:1.8">
-    <p><b style="color:var(--accent);font-family:var(--mono)">hterminal ${HT_VERSION}</b><br>
+    <p><b style="color:var(--accent);font-family:var(--mono)">HTerMinaL ${HT_VERSION}</b><br>
     浏览器里的 JS 终端、一切皆文件桌面、轻量智能体宿主。</p>
     <p>一个自包含的 <span class="code">index.html</span>，加上三个可选的单文件模型转发后端
     （<span class="code">modelserver.py / .js / .go</span>）。没有构建步骤，没有账号，没有云端。</p>

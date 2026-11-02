@@ -1,8 +1,53 @@
 /* ============================================================================
- * hterminal · boot / RPC / window API / drawer
+ * HTerMinaL · boot / RPC / window API / drawer
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 原生 API 转发
+ *
+ * Worker 里没有 window.alert / confirm / prompt / open / print …，而它们**只能**
+ * 由页面线程执行。所以这里原样转发：不换文案、不换按钮、不换返回值类型，
+ * 你在屏幕上看到的就是浏览器自己的对话框、自己的弹窗拦截、自己的焦点处理。
+ *
+ * 两个必须写明的物理限制：
+ *   1. 同步返回做不到。跨线程没有同步通道（要 SharedArrayBuffer，需要 COOP/COEP，
+ *      双击 index.html 打开时必然没有）。所以 confirm / prompt 的返回值是 Promise。
+ *   2. window.open 返回的是 WindowProxy，结构化克隆传不回来，只能回 null。
+ */
+const NATIVE_ALLOWED = new Set(['alert','confirm','prompt','print','open','close','focus','blur','stop','scrollTo','scrollBy']);
+
+function nativeCall(name, args) {
+  if (!NATIVE_ALLOWED.has(String(name))) throw new Error('native: 不允许转发 ' + name);
+  const fn = window[name];
+  if (typeof fn !== 'function') throw new Error('native: 浏览器没有 ' + name);
+  const r = fn.apply(window, Array.isArray(args) ? args : []);
+  if (name === 'open') return null;
+  return r === undefined ? null : r;
+}
+
+/* fastfetch 要的真实信息。拿不到就返回空字符串，由命令那边显示 n/a——
+ * 不编数字。 */
+function sysInfo() {
+  const ua = navigator.userAgent || '';
+  const m = ua.match(/(Edg|Chrome|Firefox)\/([\d.]+)/);
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS'
+    : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS'
+    : /Linux/.test(ua) ? 'Linux' : '';
+  let mem = '';
+  if (navigator.deviceMemory) mem = navigator.deviceMemory + ' GB';
+  else if (performance.memory) mem = Math.round(performance.memory.usedJSHeapSize / 1048576) + ' MB heap';
+  return {
+    engine: m ? m[1] + ' ' + m[2] : '',
+    os,
+    screen: screen.width + 'x' + screen.height,
+    dpr: window.devicePixelRatio || 1,
+    theme: window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    lang: navigator.language || '',
+    cores: navigator.hardwareConcurrency || 0,
+    mem
+  };
+}
 
 /* ---------------------------------------------------------------- RPC（worker → 主线程） */
 const RPC = {
@@ -65,7 +110,7 @@ const RPC = {
       case 'notify': {
         const msg = String(a[0] || '');
         if ('Notification' in window && Notification.permission === 'granted') {
-          try { new Notification('hterminal', { body:msg }); return true; } catch (e) {}
+          try { new Notification('HTerMinaL', { body:msg }); return true; } catch (e) {}
         }
         toast(msg);
         return true;
@@ -88,6 +133,10 @@ const RPC = {
       case 'deps.load': await loadScriptCached(a[0]); return true;
       /* ---- DOM：worker 摸页面的唯一通道 ---- */
       case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
+      /* ---- 原生 API：Worker 里没有，转回主线程调真的 ----
+       * 白名单是「浏览器真实存在的 window 方法」，不做任何替换或包装。 */
+      case 'native': return nativeCall(a[0], a[1] || []);
+      case 'sys.info': return sysInfo();
       default: throw new Error('未知 RPC：' + op);
     }
   }
@@ -219,7 +268,7 @@ const Drawer = {
     if (launcherMore) launcherMore.onclick = () => { AppMenu.close(); this.open(); };
     // 品牌 → 关于
     const brand = $('#tbBrand');
-    if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
+    if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
     $('#drawerClose').onclick = () => this.close();
     $('#drawer-overlay').onclick = () => this.close();
     const bindRange = (id, key, fmt) => {
@@ -271,7 +320,7 @@ const Drawer = {
       toast('依赖缓存已清空，下次打开会重新下载');
       try { this.refresh(); } catch (e) {}
     };
-    $('#btnAbout').onclick = () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
+    $('#btnAbout').onclick = () => modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] });
 
     this.syncControls();
     this.refreshPkgList();
@@ -348,6 +397,13 @@ const Drawer = {
     } catch (e) {}
     set('#stSession', (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
     set('#stHist', String(loadHistory().length));
+    /* 对话条数直接问 IndexedDB（ht-agent），不要问内存里的 harness——
+     * 刷新之后 harness 还没建，但历史已经在库里了。
+     * AgentStore 自己吞异常，库打不开就回 0。 */
+    try {
+      const s = await AgentStore.summary();
+      set('#stAgent', s.messages ? (s.sessions + ' 段 · ' + s.messages + ' 条') : '空');
+    } catch (e) { set('#stAgent', '空'); }
     try {
       const d = await DepCache.usage();
       set('#stDeps', d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空');
@@ -390,7 +446,7 @@ const Drawer = {
   async exportFs() {
     try {
       const obj = await FS.exportAll();
-      await saveFile('hterminal-fs-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(obj, null, 2), 'application/json');
+      await saveFile('HTerMinaL-fs-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(obj, null, 2), 'application/json');
     } catch (e) { toast('导出失败：' + e.message, true); }
   },
   async importFs() {
@@ -408,7 +464,7 @@ const Drawer = {
   async exportLs() {
     const o = {};
     for (const k of lsKeys()) o[k] = localStorage.getItem('ht.ls.' + k);
-    await saveFile('hterminal-localstorage.json', JSON.stringify(o, null, 2), 'application/json');
+    await saveFile('HTerMinaL-localstorage.json', JSON.stringify(o, null, 2), 'application/json');
   },
   async installPkg() {
     const inp = $('#pkgInput');
@@ -570,7 +626,7 @@ function installWindowAPI() {
     openURL: (url) => WindowManager.open({ type:'browser', url:String(url) }),
     requestPermission,
     notify: (msg) => {
-      if ('Notification' in window && Notification.permission === 'granted') { try { new Notification('hterminal', { body:String(msg) }); return; } catch (e) {} }
+      if ('Notification' in window && Notification.permission === 'granted') { try { new Notification('HTerMinaL', { body:String(msg) }); return; } catch (e) {} }
       toast(String(msg));
     },
     // 设置 / 包 / 智能体
@@ -596,7 +652,7 @@ function installWindowAPI() {
     },
     clearData: nuke,
     nuke,
-    about: () => modal({ title:'关于 hterminal', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }),
+    about: () => modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }),
     sleep,
     uuid: uid,
     storage: IDB,
@@ -731,12 +787,12 @@ async function boot() {
 }
 
 window.addEventListener('error', (e) => {
-  if (e.message && !/ResizeObserver/.test(e.message)) console.error('[hterminal]', e.message);
+  if (e.message && !/ResizeObserver/.test(e.message)) console.error('[HTerMinaL]', e.message);
 });
 window.addEventListener('unhandledrejection', (e) => {
   const r = e.reason;
   if (r && r.name === 'AbortError') return;
-  console.warn('[hterminal] unhandled', r);
+  console.warn('[HTerMinaL] unhandled', r);
 });
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

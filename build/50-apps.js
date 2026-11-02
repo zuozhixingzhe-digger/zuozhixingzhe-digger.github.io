@@ -1,5 +1,5 @@
 /* ============================================================================
- * hterminal · apps: browser / files / editor
+ * HTerMinaL · apps: browser / files / editor
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  * ==========================================================================*/
