@@ -11,9 +11,19 @@ hterminal 本体采用 `Apache-2.0 OR MIT` 双许可（见上级目录的 `LICEN
 | --- | --- | --- | --- | --- | --- |
 | [xterm.js](https://github.com/xtermjs/xterm.js) | 5.5.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 终端渲染引擎 |
 | [@xterm/addon-fit](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) | 0.10.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 让终端自适应容器尺寸 |
+| [@xterm/addon-unicode11](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-unicode11) | 0.8.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 东亚宽字符/emoji 的列宽计算 |
+| [marked](https://github.com/markedjs/marked) | 12.0.2 | MIT | `LICENSE.marked.txt` | CDN（jsdelivr / unpkg） | 把智能体回复的 Markdown 转成 HTML |
+| [html2canvas](https://github.com/niklasvh/html2canvas) | 1.4.1 | MIT | `LICENSE.html2canvas.txt` | CDN（jsdelivr / unpkg） | 智能体 `screenshot` 工具 |
 | [Pyodide](https://pyodide.org/) | 0.26.4 | MPL-2.0 | `LICENSE.pyodide.txt` | CDN（jsdelivr / unpkg） | 在浏览器里跑 CPython 3.12 (WASM) |
 
-`@xterm/addon-fit` 与 `xterm.js` 同属一个仓库、同一份 MIT 许可，因此共用 `LICENSE.xterm.js.txt`。
+`@xterm/addon-fit`、`@xterm/addon-unicode11` 与 `xterm.js` 同属一个仓库、同一份 MIT 许可，
+因此共用 `LICENSE.xterm.js.txt`。
+
+`LICENSE.marked.txt` 除了 marked 自己的 MIT 文本，还包含上游随附的 **Markdown（John Gruber）BSD 声明**，
+那是 marked 项目对 Markdown 语法的致敬性声明，一并保留原文。
+
+> 这张表由 `check-licenses.sh` 兜底：它会扫 `build/*.js` 里所有 `npm/<包>@<版本>` 形式的 CDN 地址，
+> 缺登记就报错。**加依赖忘了登记，脚本会拦下来。**
 
 ## 兼容性说明
 
@@ -54,9 +64,12 @@ MPL-2.0 是**文件级**弱 copyleft：它要求"对 MPL 覆盖文件的修改�
 | --- | --- | --- |
 | 图标 | 图标字体 / SVG 图标集 | 手写 SVG，见 `build/30-core.js` 的 `SVG_ICONS` |
 | 终端行编辑 | 引入 readline 库 | 自研 `LineEditor`（`build/20-worker.js`） |
-| Markdown 渲染 | marked / markdown-it | 不渲染，终端里显示原文 |
+| HTML 消毒 | DOMPurify | 自研白名单 `sanitizeHtml()`（`build/60-agent.js`），只留标签/属性表里的东西 |
 | 窗口拖拽 | interact.js / draggable | 原生 Pointer Events |
 | HTTP 客户端（后端） | requests / axios / go-resty | 各自语言标准库 |
+
+Markdown 渲染用 CDN 上的 `marked`，但**渲染结果一律过 `sanitizeHtml()`** 才进 DOM：
+`marked` 只负责语法转 HTML，不负责安全，这条分工不能搞反。
 
 ## 更新流程
 
