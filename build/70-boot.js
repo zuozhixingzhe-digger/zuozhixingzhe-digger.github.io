@@ -326,6 +326,10 @@ const Drawer = {
     if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
   },
   async refresh() {
+    /* 页面可能已经被 document.write / body.innerHTML 整个拆掉了——那是用户
+     * 明确要求的「和 F12 一样」。这时 #st* 全是 null，直接跳过，
+     * 不要每 2 秒往控制台丢一堆 TypeError。 */
+    if (!document.getElementById('stSession')) return;
     try {
       const u = await FS.usage();
       $('#stUsage').textContent = (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB';

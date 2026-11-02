@@ -349,70 +349,458 @@ const AgentTuiHost = {
 };
 
 /* ---------------------------------------------------------------- DOM RPC（主线程侧）
- * Worker 里没有 DOM。这个对象是「Worker 想摸页面」时唯一的入口，Worker 侧那层
- * document 代理把每个操作翻译成一次 call('dom.op', name, args)。
+ * Worker 里没有 DOM。这个对象是「Worker 想摸页面」时的唯一通道。
  *
- * 设计原则：**只传值，不传引用**。返回值一律是能 JSON 化的快照，
- * 因为跨线程没有对象身份可言。改完想再看最新值，就再查一次。
- */
+ * 设计原则是**照浏览器原样执行，不自作聪明**：
+ *   document.write('…')        → 真的调 document.write，文档被清空也照做
+ *   document.body.innerHTML=…  → 真的写宿主 body
+ *   el.value = 'x'             → 真的赋值，**不**补发 input/change（原生也不发）
+ *
+ * 唯一绕不过去的硬限制是「同步返回」：跨线程调用只能是异步的。所以
+ *   - 写：立刻下发，语义 100% 相同
+ *   - 读：Worker 执行前预取一份快照，读不到就是 undefined（和「元素还没渲染」同感）
+ *   - 要 100% 原生同步行为：page.eval('…')，那段代码在主线程跑
+ * ==========================================================================*/
 const DomRpc = {
-  _el(sel) {
-    if (!sel) return null;
-    if (typeof sel !== 'string') return null;
-    try { return document.querySelector(sel); } catch (e) { return null; }
+  _reg: new Map(),          // ref -> Node
+  _rev: new WeakMap(),      // Node -> ref
+  _seq: 0,
+  _lis: new Map(),          // id -> { sel, type }
+  _lisSeq: 0,
+  _evBound: false,
+  _sinks: new Set(),        // 每个 TerminalSession 注册一个「往自己 Worker 发消息」的函数
+
+  attach(fn) { if (typeof fn === 'function') this._sinks.add(fn); },
+  detach(fn) { this._sinks.delete(fn); },
+  _emit(msg) { for (const f of this._sinks) { try { f(msg); } catch (e) {} } },
+
+  /* 元素引用：\u0001<n>。用控制字符开头，绝不会和 CSS 选择器撞车。 */
+  _tag(node) {
+    if (!node) return null;
+    if (node === document) return '\u0001doc';
+    if (node === window) return '\u0001win';
+    let r = this._rev.get(node);
+    if (r) return r;
+    r = '\u0001' + (++this._seq);
+    try { this._rev.set(node, r); } catch (e) { return null; }
+    this._reg.set(r, node);
+    return r;
   },
-  _desc(el, i) {
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    return {
-      index: i,
-      tag: el.tagName ? el.tagName.toLowerCase() : '',
-      id: el.id || '',
-      cls: typeof el.className === 'string' ? el.className : '',
-      text: (el.textContent || '').trim().slice(0, 500),
-      value: el.value === undefined ? undefined : el.value,
-      rect: { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) },
+  /* 把节点注册到 Worker 指定的 ref 上：Worker 那边同步创建句柄、先拿到 ref，
+   * 主线程建好节点后回填。这样 createElement / cloneNode 能同步返回。 */
+  _tagAs(ref, node) {
+    if (!ref || !node) return null;
+    try { this._rev.set(node, ref); } catch (e) {}
+    this._reg.set(ref, node);
+    return ref;
+  },
+  _res(ref) {
+    if (ref === '\u0001doc') return document;
+    if (ref === '\u0001win') return window;
+    if (typeof ref !== 'string' || !ref) return null;
+    if (ref.charCodeAt(0) === 1) return this._reg.get(ref) || null;
+    try { return document.querySelector(ref); } catch (e) { return null; }
+  },
+  _json(v, depth) {
+    if (v === undefined) return null;
+    if (v === null) return null;
+    const t = typeof v;
+    if (t === 'string' || t === 'number' || t === 'boolean') return v;
+    if (t === 'function') return '[Function ' + (v.name || 'anonymous') + ']';
+    if (v && v.nodeType) return { __ref: this._tag(v), __kind: 'node', nodeType: v.nodeType,
+                                  tag: v.nodeType === 1 ? v.tagName.toLowerCase() : '', text: (v.textContent || '').slice(0, 200) };
+    if (v && v.window === v) return { __kind: 'window' };
+    if (Array.isArray(v)) {
+      if ((depth || 0) > 2) return '[Array(' + v.length + ')]';
+      return v.slice(0, 200).map(x => this._json(x, (depth || 0) + 1));
+    }
+    if (t === 'object') {
+      if ((depth || 0) > 2) return '[Object]';
+      const o = {};
+      let n = 0;
+      for (const k of Object.keys(v)) {
+        if (n++ > 200) break;
+        try { o[k] = this._json(v[k], (depth || 0) + 1); } catch (e) { o[k] = '[getter threw]'; }
+      }
+      return o;
+    }
+    return String(v);
+  },
+  _desc(node, deep) {
+    if (!node) return null;
+    if (node === document) {
+      return {
+        ref: '\u0001doc', tag: '#document', id: '', cls: '',
+        text: (document.body ? document.body.textContent : '').slice(0, deep ? 20000 : 200),
+        attrs: {}, rect: { x:0, y:0, w:innerWidth, h:innerHeight }, visible: true,
+        style: {}, parent: null, children: [document.documentElement ? this._tag(document.documentElement) : null].filter(Boolean),
+        nodeName: '#document'
+      };
+    }
+    if (node.nodeType !== 1) {
+      return { ref: this._tag(node), tag: '#text', id: '', cls: '', text: String(node.nodeValue || '').slice(0, deep ? 20000 : 200),
+               attrs: {}, rect:{x:0,y:0,w:0,h:0}, visible: true, style: {}, parent: node.parentNode ? this._tag(node.parentNode) : null,
+               children: [], nodeName: node.nodeName };
+    }
+    const r = node.getBoundingClientRect();
+    const cs = getComputedStyle(node);
+    const attrs = {};
+    for (const a of node.attributes) attrs[a.name] = a.value;
+    const d = {
+      ref: this._tag(node),
+      tag: node.tagName.toLowerCase(),
+      id: node.id || '',
+      cls: typeof node.className === 'string' ? node.className : (node.className && node.className.baseVal) || '',
+      text: (node.textContent || '').slice(0, deep ? 20000 : 200),
+      attrs,
+      rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
       visible: cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
-      style: { display:cs.display, position:cs.position, color:cs.color, background:cs.backgroundColor }
+      style: { display: cs.display, position: cs.position, color: cs.color, background: cs.backgroundColor },
+      parent: node.parentNode ? this._tag(node.parentNode) : null,
+      children: [...node.children].map(c => this._tag(c)),
+      nodeName: node.nodeName,
+      connected: node.isConnected !== false
     };
+    if (deep) {
+      /* 截断：整页 innerHTML 可以到几 MB，跨线程克隆一次就是几十毫秒。
+       * 20 万字符够覆盖任何正常的「读一段 HTML」场景。 */
+      const CAP = 200000;
+      d.html = String(node.innerHTML).slice(0, CAP);
+      d.outer = String(node.outerHTML).slice(0, CAP);
+      if (d.html.length >= CAP) d.htmlTruncated = true;
+      if (d.outer.length >= CAP) d.outerTruncated = true;
+      if (node.value !== undefined) d.value = node.value;
+      if (node.checked !== undefined) d.checked = node.checked;
+      if (node.selectedIndex !== undefined) d.selectedIndex = node.selectedIndex;
+      if (node.href !== undefined) d.href = node.href;
+      if (node.src !== undefined) d.src = node.src;
+      const cs2 = {};
+      for (const p of ['display','position','color','background-color','width','height','left','top','z-index','font-size','opacity','visibility','transform','overflow','flex-direction','justify-content','align-items','border-radius','box-shadow','padding','margin']) {
+        cs2[p] = cs.getPropertyValue(p);
+      }
+      d.computed = cs2;
+    }
+    return d;
   },
+
+  _bindEvents() {
+    if (this._evBound) return;
+    this._evBound = true;
+    const types = ['click','dblclick','mousedown','mouseup','mousemove','pointerdown','pointerup',
+                   'keydown','keyup','keypress','input','change','submit','focus','blur','scroll','resize','touchstart','touchend'];
+    const fire = (t, e) => {
+      if (!this._lis.size) return;
+      const path = [];
+      let n = e.target;
+      while (n && path.length < 40) { if (n.nodeType === 1) path.push(this._tag(n)); n = n.parentNode; }
+      for (const [id, L] of this._lis) {
+        if (L.type !== t) continue;
+        const sel = L.sel;
+        let hit = false;
+        if (!sel || sel === '\u0001win' || sel === 'window' || sel === '\u0001doc' || sel === 'document') hit = true;
+        else {
+          const el = this._res(sel);
+          if (el) hit = (el === e.target) || (el.nodeType === 1 && el.contains(e.target));
+        }
+        if (!hit) continue;
+        let data = null;
+        try {
+          data = {
+            type: e.type, phase: e.eventPhase,
+            target: e.target ? { ref: this._tag(e.target), tag: (e.target.tagName||'').toLowerCase(), id: e.target.id||'' } : null,
+            path,
+            key: e.key, code: e.code, repeat: e.repeat,
+            clientX: e.clientX, clientY: e.clientY, button: e.button,
+            value: e.target && e.target.value !== undefined ? e.target.value : undefined,
+            checked: e.target && e.target.checked !== undefined ? e.target.checked : undefined,
+            defaultPrevented: e.defaultPrevented
+          };
+        } catch (err) { data = { type: e.type }; }
+        try { this._emit({ t: 'dom-event', id, ev: data }); } catch (err) {}
+      }
+    };
+    for (const t of types) {
+      try { document.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
+      try { window.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
+    }
+  },
+
   async op(name, args) {
     args = args || [];
     switch (name) {
-      case 'query': return this._desc(this._el(args[0]), 0);
+      /* ------------------------------------------------ 文档级读 */
+      case 'snap': {
+        return {
+          url: location.href,
+          title: document.title,
+          readyState: document.readyState,
+          cookie: document.cookie,
+          dark: (() => { try { return matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; } })(),
+          w: innerWidth, h: innerHeight, dpr: devicePixelRatio || 1,
+          sx: scrollX || 0, sy: scrollY || 0,
+          doc: this._desc(document, false),
+          html: document.documentElement ? this._desc(document.documentElement, false) : null,
+          head: document.head ? this._desc(document.head, false) : null,
+          body: document.body ? this._desc(document.body, false) : null,
+          active: document.activeElement ? this._desc(document.activeElement, false) : null
+        };
+      }
+      case 'prefetch': {
+        /* 把代码里出现的选择器一次拿全，deep=true（带 innerHTML/value）。
+         * 这样 `document.querySelector('#x').innerHTML` 能在 Worker 里同步读到值。 */
+        const out = {};
+        for (const sel of (args[0] || [])) {
+          try {
+            const el = document.querySelector(String(sel));
+            out[sel] = el ? this._desc(el, true) : null;
+          } catch (e) { out[sel] = null; }
+        }
+        for (const sel of (args[1] || [])) {
+          try {
+            const list = [...document.querySelectorAll(String(sel))];
+            out[sel] = { __list: true, count: list.length, items: list.slice(0, 300).map(el => this._desc(el, true)) };
+          } catch (e) { out[sel] = { __list: true, count: 0, items: [] }; }
+        }
+        return out;
+      }
+      case 'query': { const el = this._res(args[0]); return el ? this._desc(el, !!args[1]) : null; }
       case 'all': {
         let list = [];
         try { list = [...document.querySelectorAll(String(args[0] || '*'))]; } catch (e) {}
-        const lim = Math.min(list.length, Number(args[1]) || 40);
-        return { count: list.length, items: list.slice(0, lim).map((el, i) => this._desc(el, i)) };
+        const lim = Math.min(list.length, Number(args[1]) || 300);
+        return { count: list.length, items: list.slice(0, lim).map(el => this._desc(el, !!args[2])) };
       }
-      case 'text': { const el = this._el(args[0]); return el ? (el.textContent || '').trim() : null; }
-      case 'html': { const el = this._el(args[0]); return el ? el.innerHTML : null; }
-      case 'attr': { const el = this._el(args[0]); return el ? el.getAttribute(args[1]) : null; }
-      case 'setAttr': { const el = this._el(args[0]); if (!el) return false; el.setAttribute(args[1], String(args[2])); return true; }
-      case 'setText': { const el = this._el(args[0]); if (!el) return false; el.textContent = String(args[1]); return true; }
-      case 'setHtml': { const el = this._el(args[0]); if (!el) return false; el.innerHTML = String(args[1]); return true; }
-      case 'setValue': { const el = this._el(args[0]); if (!el) return false; el.value = String(args[1]); el.dispatchEvent(new Event('input', { bubbles:true })); el.dispatchEvent(new Event('change', { bubbles:true })); return true; }
-      case 'click': { const el = this._el(args[0]); if (!el) return false; el.click(); return true; }
-      case 'addClass': { const el = this._el(args[0]); if (!el) return false; el.classList.add(String(args[1])); return true; }
-      case 'removeClass': { const el = this._el(args[0]); if (!el) return false; el.classList.remove(String(args[1])); return true; }
-      case 'toggleClass': { const el = this._el(args[0]); if (!el) return false; el.classList.toggle(String(args[1]), args[2] === undefined ? undefined : !!args[2]); return true; }
-      case 'hasClass': { const el = this._el(args[0]); return el ? el.classList.contains(String(args[1])) : false; }
-      case 'setTitle': document.title = String(args[0]); return true;
-      case 'exists': return !!this._el(args[0]);
-      case 'rect': { const el = this._el(args[0]); if (!el) return null; const r = el.getBoundingClientRect(); return { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) }; }
+      case 'text': { const el = this._res(args[0]); return el ? (el.textContent || '') : null; }
+      case 'html': { const el = this._res(args[0]); return el ? el.innerHTML : null; }
+      case 'outer': { const el = this._res(args[0]); return el ? el.outerHTML : null; }
+      case 'attr': { const el = this._res(args[0]); return el ? el.getAttribute(args[1]) : null; }
+      case 'prop': {
+        const el = this._res(args[0]); if (!el) return null;
+        const prop = String(args[1]);
+        if (prop.startsWith('style.')) return this._json(el.style[prop.slice(6)] || '');
+        if (prop.startsWith('attr:')) return el.getAttribute(prop.slice(5));
+        let v;
+        try { v = el[prop]; } catch (e) { v = el.getAttribute(prop); }
+        return this._json(v, 0);
+      }
+      case 'rect': { const el = this._res(args[0]); if (!el) return null; const r = el.getBoundingClientRect(); return { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) }; }
       case 'computed': {
-        const el = this._el(args[0]); if (!el) return null;
+        const el = this._res(args[0]); if (!el) return null;
         const cs = getComputedStyle(el); const out = {};
         for (const p of (args[1] || [])) out[p] = cs.getPropertyValue(p);
         return out;
       }
+      case 'exists': { const el = this._res(args[0]); return !!(el && el.isConnected !== false); }
       case 'title': return document.title;
       case 'url': return location.href;
       case 'readyState': return document.readyState;
+      case 'cookie': return document.cookie;
+      case 'htmlRaw': return document.documentElement ? document.documentElement.outerHTML : '';
+
+      /* ------------------------------------------------ 文档级写（真的写） */
+      case 'docWrite': {
+        /* 真·document.write。文档已加载完时它会隐式 open() 并清空整页——
+         * 终端也会没。这就是浏览器行为，不拦、不改成窗口、不搬走。 */
+        document.write(String(args[0] == null ? '' : args[0]));
+        return true;
+      }
+      case 'docWriteln': { document.writeln(String(args[0] == null ? '' : args[0])); return true; }
+      case 'docOpen': { document.open(); return true; }
+      case 'docClose': { document.close(); return true; }
+      case 'setTitle': { document.title = String(args[0]); return true; }
+      case 'setCookie': { document.cookie = String(args[0]); return true; }
+      case 'scrollTo': { window.scrollTo(Number(args[0]) || 0, Number(args[1]) || 0); return { x: scrollX || 0, y: scrollY || 0 }; }
+
+      /* ------------------------------------------------ 元素写（真的写） */
+      case 'setHtml': { const el = this._res(args[0]); if (!el) return false; el.innerHTML = String(args[1]); return true; }
+      case 'setOuter': { const el = this._res(args[0]); if (!el || !el.parentNode) return false; el.outerHTML = String(args[1]); return true; }
+      case 'setText': { const el = this._res(args[0]); if (!el) return false; el.textContent = String(args[1]); return true; }
+      case 'setAttr': { const el = this._res(args[0]); if (!el) return false; el.setAttribute(String(args[1]), String(args[2])); return true; }
+      case 'rmAttr': { const el = this._res(args[0]); if (!el) return false; el.removeAttribute(String(args[1])); return true; }
+      case 'setProp': {
+        const el = this._res(args[0]); if (!el) return false;
+        const prop = String(args[1]); const v = args[2];
+        if (prop.startsWith('style.')) { el.style[prop.slice(6)] = v; return true; }
+        if (prop.startsWith('attr:')) { el.setAttribute(prop.slice(5), v); return true; }
+        try { el[prop] = v; }
+        catch (e) { try { el.setAttribute(prop, v); } catch (e2) { return false; } }
+        return true;
+      }
+      case 'insertHtml': {
+        const el = this._res(args[0]); if (!el) return false;
+        el.insertAdjacentHTML(String(args[1] || 'beforeend'), String(args[2]));
+        return true;
+      }
+      case 'remove': { const el = this._res(args[0]); if (!el || !el.remove) return false; el.remove(); return true; }
+      case 'appendHtml': { const el = this._res(args[0]); if (!el) return false; el.insertAdjacentHTML('beforeend', String(args[1])); return true; }
+      case 'prependHtml': { const el = this._res(args[0]); if (!el) return false; el.insertAdjacentHTML('afterbegin', String(args[1])); return true; }
+      case 'click': { const el = this._res(args[0]); if (!el) return false; el.click(); return true; }
+      case 'focus': { const el = this._res(args[0]); if (!el) return false; el.focus(); return true; }
+      case 'blur': { const el = this._res(args[0]); if (!el) return false; el.blur(); return true; }
+      case 'addClass': { const el = this._res(args[0]); if (!el) return false; el.classList.add(String(args[1])); return true; }
+      case 'removeClass': { const el = this._res(args[0]); if (!el) return false; el.classList.remove(String(args[1])); return true; }
+      case 'toggleClass': { const el = this._res(args[0]); if (!el) return false; el.classList.toggle(String(args[1]), args[2] === undefined ? undefined : !!args[2]); return true; }
+      case 'hasClass': { const el = this._res(args[0]); return el ? el.classList.contains(String(args[1])) : false; }
+
+      /* ------------------------------------------------ 节点创建 / 组装 */
+      case 'createElement': {
+        let el;
+        try { el = document.createElement(String(args[0])); } catch (e) { throw new Error('createElement 失败：' + args[0]); }
+        const props = args[1];
+        if (props && typeof props === 'object') {
+          for (const k of Object.keys(props)) {
+            const v = props[k];
+            try {
+              if (k === 'style' && v && typeof v === 'object') Object.assign(el.style, v);
+              else if (k === 'dataset' && v && typeof v === 'object') Object.assign(el.dataset, v);
+              else if (k === 'className') el.className = String(v);
+              else if (k === 'html') el.innerHTML = String(v);
+              else el.setAttribute(k, String(v));
+            } catch (e) {}
+          }
+        }
+        if (args[2] != null) el.innerHTML = String(args[2]);
+        return this._tag(el);
+      }
+      /* ---------------- Worker 预分配 ref 的创建类（能同步返回句柄） ---------------- */
+      case 'queryAs': {
+        const el = this._res(args[1]);
+        if (!el) return null;
+        this._tagAs(args[0], el);
+        return this._desc(el, true);
+      }
+      case 'queryInAs': {
+        const p = this._res(args[1]); if (!p) return null;
+        let el = null;
+        try { el = p.querySelector(String(args[2])); } catch (e) {}
+        if (!el) return null;
+        this._tagAs(args[0], el);
+        return this._desc(el, true);
+      }
+      case 'allIn': {
+        const p = this._res(args[1]); if (!p) return { count: 0, items: [] };
+        let list = [];
+        try { list = [...p.querySelectorAll(String(args[2]))]; } catch (e) {}
+        return { count: list.length, items: list.slice(0, 300).map(el => this._desc(el, true)) };
+      }
+      case 'createAs': {
+        const el = document.createElement(String(args[1]));
+        this._tagAs(args[0], el);
+        const props = args[2];
+        if (props && typeof props === 'object') {
+          for (const k of Object.keys(props)) {
+            const v = props[k];
+            try {
+              if (k === 'style' && v && typeof v === 'object') Object.assign(el.style, v);
+              else if (k === 'dataset' && v && typeof v === 'object') Object.assign(el.dataset, v);
+              else if (k === 'className') el.className = String(v);
+              else if (k === 'textContent') el.textContent = String(v);
+              else if (k === 'html' || k === 'innerHTML') el.innerHTML = String(v);
+              else el.setAttribute(k, String(v));
+            } catch (e) {}
+          }
+        }
+        if (args[3] != null) el.innerHTML = String(args[3]);
+        return this._desc(el, true);
+      }
+      case 'createTextAs': {
+        const t = document.createTextNode(String(args[1] == null ? '' : args[1]));
+        this._tagAs(args[0], t);
+        return { ref: args[0], tag: '#text', text: t.nodeValue };
+      }
+      case 'createFragmentAs': {
+        const f = document.createDocumentFragment();
+        this._tagAs(args[0], f);
+        return { ref: args[0], tag: '#fragment' };
+      }
+      case 'cloneAs': {
+        const src = this._res(args[0]); if (!src) return null;
+        const cp = src.cloneNode(!!args[2]);
+        this._tagAs(args[1], cp);
+        return this._desc(cp, true);
+      }
+      case 'matches': { const el = this._res(args[0]); if (!el || !el.matches) return false; try { return el.matches(String(args[1])); } catch (e) { return false; } }
+      case 'closest': {
+        const el = this._res(args[0]); if (!el || !el.closest) return null;
+        let c2 = null;
+        try { c2 = el.closest(String(args[1])); } catch (e) {}
+        return c2 ? this._tag(c2) : null;
+      }
+      case 'fromPoint': {
+        const el = document.elementFromPoint(Number(args[1]) || 0, Number(args[2]) || 0);
+        if (!el) return null;
+        this._tagAs(args[0], el);
+        return this._desc(el, true);
+      }
+      case 'rectRefresh': { const el = this._res(args[0]); if (!el) return null; const r = el.getBoundingClientRect(); return { x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height) }; }
+      case 'computedRefresh': {
+        const el = this._res(args[0]); if (!el) return null;
+        const cs = getComputedStyle(el); const o = {};
+        for (const p of ['display','position','color','background-color','width','height','left','top','z-index','font-size','opacity','visibility','transform','overflow','flex-direction','justify-content','align-items','border-radius','box-shadow','padding','margin']) o[p] = cs.getPropertyValue(p);
+        return o;
+      }
+      case 'callMethod': {
+        const el = this._res(args[0]); if (!el) return null;
+        const m = String(args[1]);
+        if (typeof el[m] !== 'function') return null;
+        return this._json(el[m](...(Array.isArray(args[2]) ? args[2] : [])), 0);
+      }
+      case 'nav': { location.href = String(args[0]); return true; }
+      case 'navReplace': {
+        try { history.replaceState(null, '', String(args[0])); return true; } catch (e) { return false; }
+      }
+      case 'reload': { location.reload(); return true; }
+      case 'createText': { return this._tag(document.createTextNode(String(args[0] == null ? '' : args[0]))); }
+      case 'createFragment': { return this._tag(document.createDocumentFragment()); }
+      case 'append': { const p = this._res(args[0]), k = this._res(args[1]); if (!p || !k) return false; p.appendChild(k); return true; }
+      case 'prepend': { const p = this._res(args[0]), k = this._res(args[1]); if (!p || !k) return false; p.insertBefore(k, p.firstChild); return true; }
+      case 'insertBefore': { const p = this._res(args[0]), k = this._res(args[1]), b = this._res(args[2]); if (!p || !k) return false; p.insertBefore(k, b || null); return true; }
+      case 'removeChild': { const p = this._res(args[0]), k = this._res(args[1]); if (!p || !k) return false; p.removeChild(k); return true; }
+      case 'replaceChild': { const p = this._res(args[0]), n = this._res(args[1]), o = this._res(args[2]); if (!p || !n || !o) return false; p.replaceChild(n, o); return true; }
+      case 'clone': { const el = this._res(args[0]); if (!el) return null; return this._tag(el.cloneNode(!!args[1])); }
+      case 'call': {
+        const el = this._res(args[0]); if (!el) return null;
+        const m = String(args[1]);
+        if (typeof el[m] !== 'function') throw new Error((m) + ' 不是方法');
+        const r = el[m](...(Array.isArray(args[2]) ? args[2] : []));
+        return this._json(r, 0);
+      }
+      case 'dispatch': {
+        const el = this._res(args[0]); if (!el) return false;
+        const type = String(args[1] || 'click');
+        const Ctor = /^(click|dblclick|mouse)/.test(type) ? MouseEvent : (type === 'input' || type === 'change' ? Event : Event);
+        const ev = new Ctor(type, { bubbles: true, cancelable: true, detail: args[2] === undefined ? null : args[2] });
+        return el.dispatchEvent(ev);
+      }
+
+      /* ------------------------------------------------ 事件监听（异步转发） */
+      case 'listen': {
+        const id = ++this._lisSeq;
+        this._lis.set(id, { sel: args[0] || null, type: String(args[1] || 'click') });
+        this._bindEvents();
+        return id;
+      }
+      case 'unlisten': { this._lis.delete(Number(args[0])); return true; }
+      case 'listeners': return [...this._lis.entries()].map(([id, L]) => ({ id, sel: L.sel, type: L.type }));
+
+      /* ------------------------------------------------ 主线程求值（100% 原生） */
+      case 'evalPage': {
+        const code = String(args[0] == null ? '' : args[0]);
+        let v;
+        try {
+          /* 间接 eval：在全局作用域执行，和 F12 里敲一行完全一致，
+           * 包括「最后一条表达式的值」这个语义（new Function 包一层会丢掉它）。
+           * 返回 Promise 就 await，这样 await 写法也能用。 */
+          v = (0, eval)(code);
+          if (v && typeof v.then === 'function') v = await v;
+        } catch (e) { return { __error: true, name: e && e.name, message: e && e.message || String(e) }; }
+        return { __ok: true, value: this._json(v, 0) };
+      }
+
+      /* ------------------------------------------------ localStorage */
       case 'ls.get': return localStorage.getItem(String(args[0]));
       case 'ls.set': localStorage.setItem(String(args[0]), String(args[1])); return true;
+      case 'ls.rm': localStorage.removeItem(String(args[0])); return true;
       case 'ls.clear': localStorage.clear(); return true;
       case 'ls.keys': return Object.keys(localStorage);
       case 'ls.all': {
@@ -423,27 +811,11 @@ const DomRpc = {
         }
         return o;
       }
+
+      /* ------------------------------------------------ 宿主能力（hterminal 自己的） */
       case 'toast': { toast(String(args[0] || '')); return true; }
       case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
       case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }
-      /* Worker 里的 document.write：写到「文档窗口」的 srcdoc。
-       * 第一次调用开窗，之后更新同一窗口；不碰宿主页面的 document。 */
-      case 'docWrite': {
-        const html = String(args[0] == null ? '' : args[0]);
-        let w = this._docWin;
-        if (!w || !w.el || !w.el.isConnected) {
-          w = WindowManager.open({ type:'browser', title:'document', html });
-          this._docWin = w;
-          this._docHtml = html;
-          return { ok:true, win:true, id:w && w.id, length:html.length };
-        }
-        this._docHtml = html;
-        try {
-          const app = WindowManager.windows.get(w.id);
-          if (app && app.content && app.content.loadHtml) app.content.loadHtml(html, 'document');
-        } catch (e) {}
-        return { ok:true, win:false, id:w.id, length:html.length };
-      }
       case 'wins': return WindowManager.list();
       default: throw new Error('dom.op 不支持：' + name);
     }

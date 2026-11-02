@@ -28,7 +28,7 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
-const VERSION = '0.0.0.3';
+const VERSION = '0.0.0.4';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {

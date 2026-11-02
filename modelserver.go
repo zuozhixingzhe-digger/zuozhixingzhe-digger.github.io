@@ -28,7 +28,7 @@ import (
 	"time"
 )
 
-const version = "0.0.0.3"
+const version = "0.0.0.4"
 
 var (
 	port             = envInt("HT_PORT", 8787)

@@ -590,6 +590,10 @@ class TerminalSession {
       const msg = (e && e.message) || 'worker error';
       this.term.write('\r\n\x1b[31m[worker] ' + msg + '\x1b[0m\r\n');
     };
+    /* DOM 事件回放通道：主线程捕获到 click/input 之类，按 listener id 广播给
+     * 每个 Worker，Worker 只认自己注册过的 id。 */
+    this._domSink = (msg) => this._post(msg);
+    try { if (typeof DomRpc !== 'undefined') DomRpc.attach(this._domSink); } catch (e) {}
     const dims = this.term && this.term.cols ? { cols:this.term.cols, rows:this.term.rows } : { cols:80, rows:24 };
     this._post({
       t:'init', role, cwd:this.cwd, version:HT_VERSION, prompt:this.role === 'shell' ? (Settings.get('prompt') || '> ') : '>>> ',
@@ -648,6 +652,8 @@ class TerminalSession {
     if (this.disposed) return;
     this.disposed = true;
     Proc.remove(this.pid);
+    try { if (this._domSink && typeof DomRpc !== 'undefined') DomRpc.detach(this._domSink); } catch (e) {}
+    this._domSink = null;
     try { this.worker && this.worker.postMessage({ t:'terminate' }); } catch (e) {}
     try { this.worker && this.worker.terminate(); } catch (e) {}
     this.worker = null;

@@ -640,6 +640,12 @@ function makeShell(ctx) {
 
   async function open(p) {
     if (!p) { await call('drawer.open'); return; }
+    /* 和 window.open 对齐：URL 开浏览器窗口，其余当文件路径。
+     * 以前 open('https://…') 会去文件系统里找一个叫 https: 的目录，报「不存在」。 */
+    const s0 = String(p);
+    if (/^(https?:|data:|blob:|about:|file:)/i.test(s0) || /^\/\//.test(s0) || /^www\./i.test(s0)) {
+      return await call('win.open', { type:'browser', url:/^www\./i.test(s0) ? 'https://' + s0 : s0 });
+    }
     const t = abs(p);
     const st = await fsstat(t);
     if (!st) {
@@ -769,7 +775,8 @@ function makeShell(ctx) {
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  clear()  history()'],
-      ['DOM', 'document.title  document.write(html)  document.querySelector(sel)  page.q(sel)  page.wins()  page.toast(t)'],
+      ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
+      ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
       ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
       ['提示', '表达式直接回车即可；多行用反斜杠续行；Ctrl+C 取消行；Ctrl+D 退出。'],
@@ -830,6 +837,10 @@ function makeShell(ctx) {
       code = code.replace(/\\\s*$/, '') + '\n' + next;
     }
     let value, error = null;
+    /* DOM 预取：把代码里写死的选择器一次拉回来，让
+     * `document.querySelector('#x').innerHTML` 这种同步读能拿到值。
+     * 不改变语义，只是把「读」提前做掉。 */
+    try { await prefetchDom(code); } catch (e) {}
     const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(code);
     try {
       // 声明优先走语句模式（并提升到全局，保证 REPL 里后续还能用）；
@@ -951,168 +962,710 @@ function makeShell(ctx) {
  * Worker 侧的 DOM / window 代理
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  *
- * Worker 里天生没有 DOM：`document` 是 undefined，`window` 只是 globalThis。
- * 以前在控制台敲 `document.title` 直接 ReferenceError，智能体也会误以为
- * 「这个环境没有页面」。这里补一层代理，把常用的那部分接回主线程。
+ * 目标只有一个：**让 `document` 就是 F12 里的那个 `document`**。
+ * 不是「安全的子集」，不是「差不多能用」——用户的原话是
+ * 「哪怕把页面破坏掉也必须执行」，所以这里没有一层「为你好」的拦截。
  *
- * 重要的取舍：**跨线程只能异步**。所以
- *   - 属性读取用方法：await page.title()
- *   - 元素操作返回句柄，句柄的方法是 async 的；不 await 也会照样发出请求
- *   - localStorage 用「启动时拉一份快照」实现同步读，写回是异步的
- * 想拿到 100% 原生的同步 DOM，请用智能体窗口里的 js 工具——那段代码本来就在主线程。
+ *   真做的：
+ *     document.write('<h1>x</h1>')   真的 document.write，整页清空也照做
+ *     document.body.innerHTML = 'x'  真的写宿主 body
+ *     el.textContent = 'y'           真的赋值，**不**补发 input/change（原生也不发）
+ *     el.style.color = 'red'         真的改样式
+ *     document.createElement/append  真节点，真插进页面
+ *     el.addEventListener(...)       真注册在主线程，事件异步回放到 Worker
+ *
+ *   物理上做不到的（跨线程，不是偷懒）：
+ *     同步读取总有「最后一次快照」的延迟；写永远立刻生效。
+ *     要 100% 同步语义用 page.eval('…') —— 那段代码在主线程跑，就是 F12 本身。
  * ==========================================================================*/
 
-function makeElHandle(sel, c) {
-  const op = (name, ...args) => c('dom.op', name, [sel, ...args]);
-  const h = {
-    __sel: sel,
-    get: () => op('query'),
-    text: () => op('text'),
-    html: () => op('html'),
-    attr: (n) => op('attr', n),
-    rect: () => op('rect'),
-    css: (props) => op('computed', props),
-    exists: () => op('exists'),
-    setText: (v) => op('setText', v),
-    setValue: (v) => op('setValue', v),
-    setAttr: (n, v) => op('setAttr', n, v),
-    click: () => op('click'),
-    /* 让 el.classList.add('x') 这种最常见写法不用改 */
-    classList: {
-      add: (...cs) => { /* 逐个累加 */ let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('addClass', c2)); return p; },
-      remove: (...cs) => { let p = Promise.resolve(); for (const c2 of cs) p = p.then(() => op('removeClass', c2)); return p; },
-      toggle: (c2, on) => op('toggleClass', c2, on),
-      contains: (c2) => op('hasClass', c2)
-    },
-    toString() { return '[Element ' + sel + ']'; }
-  };
-  /* innerHTML / textContent 做成真属性：读走 RPC（Promise），写直接下发。
-   * 对 body / html 的写**不**落到宿主页面——那会把整个终端冲掉，
-   * 改为走 document.write 的文档窗口，看得见效果又不会炸现场。 */
-  const writeish = (v) => {
-    const s = String(v == null ? '' : v);
-    if (sel === 'body' || sel === 'html' || sel === '.') return c('dom.op', 'docWrite', [s]);
-    return op('setHtml', s);
-  };
-  Object.defineProperty(h, 'innerHTML', {
-    get: () => op('html'),
-    set: (v) => { writeish(v); },
-    configurable: true
-  });
-  Object.defineProperty(h, 'textContent', {
-    get: () => op('text'),
-    set: (v) => { op('setText', String(v == null ? '' : v)); },
-    configurable: true
-  });
-  Object.defineProperty(h, 'value', {
-    get: () => op('attr', 'value'),
-    set: (v) => { op('setValue', String(v == null ? '' : v)); },
-    configurable: true
-  });
-  return h;
+const DOMC = {
+  root: null,            // 最近一次 snap 的结果
+  nodes: new Map(),      // ref -> desc
+  bySel: new Map(),      // 选择器 -> desc（预取填充）
+  lists: new Map(),      // 选择器 -> desc[]
+  proxies: new Map(),    // ref -> Proxy
+  refSeq: 0,
+  listeners: new Map(),  // id -> { type, fn, sel }
+  chosen: new Map(),     // 回调函数 -> listener id
+  newRef() { return '\u0001w' + (++this.refSeq); },
+  clear() { this.nodes.clear(); this.bySel.clear(); this.lists.clear(); this.proxies.clear(); }
+};
+
+const HTML_NS = '[object HTMLElement]';
+const camel2kebab = (s) => String(s).replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+const kebab2camel = (s) => String(s).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+
+function refOf(x) {
+  if (!x) return null;
+  if (typeof x === 'string') return x;
+  if (x.__ref) return x.__ref;
+  return null;
 }
 
-function installDomProxy(call) {
-  const c = (op, ...args) => call('dom.op', op, args);
+/* ---------------------------------------------------------------- 元素句柄 */
+function nodeProxy(ref) {
+  if (!ref) return null;
+  if (DOMC.proxies.has(ref)) return DOMC.proxies.get(ref);
+  const st = { __ref: ref };
+  const D = () => DOMC.nodes.get(ref) || null;
+  const c = (op, ...args) => callDom(op, ref, ...args);
 
+  const styleProxy = () => {
+    const d = D();
+    const cs = Object.assign({}, (d && d.computed) || {});
+    const set = (p, v) => {
+      const key = camel2kebab(p);
+      cs[key] = String(v);
+      callDom('setProp', ref, 'style.' + p, String(v));
+    };
+    return new Proxy({}, {
+      get(t, p) {
+        if (typeof p === 'symbol') return undefined;
+        if (p === 'cssText') return Object.keys(cs).map(k => k + ':' + cs[k]).join('; ');
+        if (p === 'setProperty') return (n, v) => set(n, v);
+        if (p === 'getPropertyValue') return (n) => cs[String(n)] || '';
+        if (p === 'removeProperty') return (n) => { delete cs[String(n)]; callDom('setProp', ref, 'style.' + kebab2camel(n), ''); };
+        return cs[camel2kebab(p)] || '';
+      },
+      set(t, p, v) { if (typeof p === 'symbol') return true; set(p, v); return true; },
+      has(t, p) { return camel2kebab(p) in cs; },
+      ownKeys() { return Object.keys(cs); },
+      getOwnPropertyDescriptor(t, p) { return { value: cs[camel2kebab(p)] || '', enumerable: true, configurable: true }; }
+    });
+  };
+
+  const classListFor = () => {
+    const d = D();
+    const arr = () => String((D() && D().cls) || '').split(/\s+/).filter(Boolean);
+    return {
+      add: (...cs) => { for (const k of cs) callDom('addClass', ref, String(k)); const a = arr(); for (const k of cs) if (!a.includes(k)) a.push(k); if (D()) D().cls = a.join(' '); },
+      remove: (...cs) => { for (const k of cs) callDom('removeClass', ref, String(k)); if (D()) D().cls = arr().filter(x => !cs.includes(x)).join(' '); },
+      toggle: (k, force) => { const has = arr().includes(k); const on = force === undefined ? !has : !!force; callDom('toggleClass', ref, String(k), on); if (D()) D().cls = (on ? [...arr(), k] : arr().filter(x => x !== k)).filter((v, i, s) => s.indexOf(v) === i).join(' '); return on; },
+      contains: (k) => arr().includes(k),
+      replace: (a, b) => { const x = arr(); const i = x.indexOf(a); if (i < 0) return false; x[i] = b; callDom('setProp', ref, 'className', x.join(' ')); if (D()) D().cls = x.join(' '); return true; },
+      item: (i) => arr()[i] || null,
+      forEach: (fn) => arr().forEach(fn),
+      get length() { return arr().length; },
+      get value() { return (D() && D().cls) || ''; },
+      toString() { return (D() && D().cls) || ''; }
+    };
+  };
+
+  const datasetFor = () => new Proxy({}, {
+    get(t, p) {
+      if (typeof p === 'symbol') return undefined;
+      const d = D();
+      return (d && d.attrs && d.attrs['data-' + camel2kebab(p)]) || undefined;
+    },
+    set(t, p, v) { if (typeof p === 'symbol') return true; callDom('setAttr', ref, 'data-' + camel2kebab(p), String(v)); const d = D(); if (d) { d.attrs = d.attrs || {}; d.attrs['data-' + camel2kebab(p)] = String(v); } return true; },
+    deleteProperty(t, p) { callDom('rmAttr', ref, 'data-' + camel2kebab(p)); return true; },
+    has(t, p) { const d = D(); return !!(d && d.attrs && ('data-' + camel2kebab(p)) in d.attrs); },
+    ownKeys() { const d = D(); return Object.keys((d && d.attrs) || {}).filter(k => k.startsWith('data-')).map(k => kebab2camel(k.slice(5))); },
+    getOwnPropertyDescriptor(t, p) { return { enumerable: true, configurable: true, value: datasetFor()[p] }; }
+  });
+
+  const kids = () => { const d = D(); return (d && d.children) || []; };
+  const sibling = (dir) => {
+    const d = D(); if (!d || !d.parent) return null;
+    const sibs = (DOMC.nodes.get(d.parent) || {}).children || [];
+    const i = sibs.indexOf(ref);
+    if (i < 0) return null;
+    return sibs[i + dir] ? nodeProxy(sibs[i + dir]) : null;
+  };
+
+  const M = {
+    /* 老 API（自定义的，保留，别处还在用） */
+    text: () => (D() ? (D().text || '') : ''),
+    html: () => (D() ? (D().html != null ? D().html : '') : ''),
+    attr: (n) => { const d = D(); return d && d.attrs ? (d.attrs[String(n)] ?? null) : null; },
+    rect: () => { const d = D(); return d ? { ...d.rect } : { x:0, y:0, w:0, h:0 }; },
+    exists: () => !!D(),
+    setText: (v) => { callDom('setText', ref, String(v)); if (D()) D().text = String(v); },
+    setHtml: (v) => { callDom('setHtml', ref, String(v)); if (D()) D().html = String(v); },
+    setValue: (v) => { callDom('setProp', ref, 'value', v); if (D()) D().value = v; },
+
+    /* 原生 API */
+    click: () => { callDom('click', ref); },
+    focus: () => { callDom('focus', ref); },
+    blur: () => { callDom('blur', ref); },
+    remove: () => { callDom('remove', ref); },
+    getAttribute: (n) => { const d = D(); return d && d.attrs && String(n) in d.attrs ? d.attrs[String(n)] : null; },
+    setAttribute: (n, v) => { callDom('setAttr', ref, String(n), String(v)); const d = D(); if (d) { d.attrs = d.attrs || {}; d.attrs[String(n)] = String(v); } },
+    removeAttribute: (n) => { callDom('rmAttr', ref, String(n)); const d = D(); if (d && d.attrs) delete d.attrs[String(n)]; },
+    hasAttribute: (n) => { const d = D(); return !!(d && d.attrs && String(n) in d.attrs); },
+    toggleAttribute: (n, force) => { const has = M.hasAttribute(n); const on = force === undefined ? !has : !!force; if (on) M.setAttribute(n, ''); else M.removeAttribute(n); return on; },
+    getAttributeNames: () => Object.keys((D() && D().attrs) || {}),
+    appendChild: (child) => { const r = refOf(child); if (r) callDom('append', ref, r); return child; },
+    append: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('appendHtml', ref, n); else { const r = refOf(n); if (r) callDom('append', ref, r); } } },
+    prepend: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('prependHtml', ref, n); else { const r = refOf(n); if (r) callDom('prepend', ref, r); } } },
+    insertBefore: (child, before) => { const r = refOf(child); if (r) callDom('insertBefore', ref, r, before ? refOf(before) : null); return child; },
+    removeChild: (child) => { const r = refOf(child); if (r) callDom('removeChild', ref, r); return child; },
+    replaceChild: (n, o) => { callDom('replaceChild', ref, refOf(n), refOf(o)); return o; },
+    insertAdjacentHTML: (pos, html) => { callDom('insertHtml', ref, String(pos), String(html)); },
+    insertAdjacentText: (pos, txt) => { callDom('insertHtml', ref, String(pos), String(txt).replace(/[&<>]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m]))); },
+    cloneNode: (deep) => { const r = DOMC.newRef(); callDom('cloneAs', ref, r, !!deep); return nodeProxy(r); },
+    contains: (other) => { const d = D(); const r = refOf(other); if (!d || !r) return false; return d.children && d.children.includes(r); },
+    matches: (sel) => new Promise(res => call('dom.op', 'matches', [ref, String(sel)]).then(v => res(!!v)).catch(() => res(false))),
+    closest: (sel) => new Promise(res => call('dom.op', 'closest', [ref, String(sel)]).then(v => res(v ? nodeProxy(v) : null)).catch(() => res(null))),
+    querySelector: (sel) => { const r = DOMC.newRef(); callDom('queryInAs', ref, r, String(sel)); return nodeProxy(r); },
+    querySelectorAll: (sel) => {
+      const arr = [];
+      call('dom.op', 'allIn', [ref, String(sel), DOMC.newRef()]).then(list => {
+        for (const d of (list && list.items) || []) { DOMC.nodes.set(d.ref, d); arr.push(nodeProxy(d.ref)); }
+      }).catch(() => {});
+      return arr;
+    },
+    getElementsByTagName: (t) => M.querySelectorAll(String(t)),
+    getElementsByClassName: (c2) => M.querySelectorAll('.' + String(c2).trim().split(/\s+/).join('.')),
+    getBoundingClientRect: () => {
+      const d = D(); const r = (d && d.rect) || { x:0, y:0, w:0, h:0 };
+      callDom('rectRefresh', ref);
+      return { x:r.x, y:r.y, width:r.w, height:r.h, top:r.y, left:r.x, right:r.x + r.w, bottom:r.y + r.h, toJSON() { return this; } };
+    },
+    getClientRects: () => [M.getBoundingClientRect()],
+    scrollIntoView: () => { callDom('callMethod', ref, 'scrollIntoView', []); },
+    setAttributeNS: (ns, n, v) => M.setAttribute(n, v),
+    addEventListener: (type, fn) => {
+      if (typeof fn !== 'function') return;
+      const key = ref + '|' + type + '|' + DOMC.listeners.size;
+      const id = (++DOMC.seqcounter) || (DOMC.seqcounter = 1);
+      DOMC.listeners.set(id, { type: String(type), fn, sel: ref });
+      DOMC.chosen.set(fn, id);
+      callDom('listen', ref, String(type)).then(real => {
+        const L = DOMC.listeners.get(id);
+        if (L) L.real = real;
+      }).catch(() => {});
+    },
+    removeEventListener: (type, fn) => {
+      const id = DOMC.chosen.get(fn);
+      if (!id) return;
+      const L = DOMC.listeners.get(id);
+      if (L && L.real) call('dom.op', 'unlisten', [L.real]).catch(() => {});
+      DOMC.listeners.delete(id);
+      DOMC.chosen.delete(fn);
+    },
+    dispatchEvent: (ev) => { callDom('dispatch', ref, (ev && ev.type) || 'click', (ev && ev.detail)); return true; }
+  };
+  DOMC.seqcounter = DOMC.seqcounter || 0;
+
+  const handler = {
+    get(t, k) {
+      if (k === '__ref') return ref;
+      if (typeof k === 'symbol') {
+        if (k === Symbol.toPrimitive) return () => '[object HTMLUnknownElement]';
+        if (k === Symbol.toStringTag) return 'HTMLElement';
+        return undefined;
+      }
+      if (k === 'then') return undefined;          // 别让 await el 挂死
+      if (k === 'toJSON') return () => ({ __ref: ref });
+      if (k in M) return M[k];
+      const d = D();
+      /* 真属性 */
+      switch (k) {
+        case 'tagName': return d ? String(d.tag).toUpperCase() : '';
+        case 'localName': return d ? d.tag : '';
+        case 'nodeName': return d ? (d.nodeName || String(d.tag).toUpperCase()) : '';
+        case 'nodeType': return 1;
+        case 'nodeValue': return null;
+        case 'isConnected': return !!(d && d.connected !== false);
+        case 'innerHTML': return d ? (d.html != null ? d.html : '') : '';
+        case 'outerHTML': return d ? (d.outer != null ? d.outer : '') : '';
+        case 'textContent':
+        case 'innerText': return d ? (d.text || '') : '';
+        case 'value': return d && d.value !== undefined ? d.value : '';
+        case 'checked': return !!(d && d.checked);
+        case 'selected': return !!(d && d.selected);
+        case 'id': return d ? (d.id || '') : '';
+        case 'className': return d ? (d.cls || '') : '';
+        case 'classList': return classListFor();
+        case 'style': return styleProxy();
+        case 'dataset': return datasetFor();
+        case 'attributes': return Object.entries((d && d.attrs) || {}).map(([n, v]) => ({ name:n, value:v, nodeName:n, nodeValue:v }));
+        case 'children':
+        case 'childNodes': return kids().map(r => nodeProxy(r));
+        case 'childElementCount': return kids().length;
+        case 'firstChild':
+        case 'firstElementChild': return kids()[0] ? nodeProxy(kids()[0]) : null;
+        case 'lastChild':
+        case 'lastElementChild': { const a = kids(); return a.length ? nodeProxy(a[a.length - 1]) : null; }
+        case 'nextSibling':
+        case 'nextElementSibling': return sibling(1);
+        case 'previousSibling':
+        case 'previousElementSibling': return sibling(-1);
+        case 'parentNode':
+        case 'parentElement': return d && d.parent ? nodeProxy(d.parent) : null;
+        case 'ownerDocument': return globalThis.document;
+        case 'offsetWidth':
+        case 'clientWidth': return d ? d.rect.w : 0;
+        case 'offsetHeight':
+        case 'clientHeight': return d ? d.rect.h : 0;
+        case 'offsetLeft': return d ? d.rect.x : 0;
+        case 'offsetTop': return d ? d.rect.y : 0;
+        case 'scrollTop': return 0;
+        case 'scrollLeft': return 0;
+        case 'scrollWidth': return d ? d.rect.w : 0;
+        case 'scrollHeight': return d ? d.rect.h : 0;
+        case 'hidden': return !!(d && d.attrs && 'hidden' in d.attrs);
+        case 'disabled': return !!(d && d.attrs && 'disabled' in d.attrs);
+        case 'form': return null;
+        case 'files': return null;
+        case 'src':
+        case 'href':
+        case 'alt':
+        case 'title':
+        case 'type':
+        case 'name':
+        case 'placeholder':
+        case 'htmlFor':
+        case 'target':
+          return d && d.attrs ? (d.attrs[k === 'htmlFor' ? 'for' : k] ?? '') : '';
+        default: break;
+      }
+      /* 兜底：属性 → 计算样式 */
+      if (d && d.attrs && k in d.attrs) return d.attrs[k];
+      if (d && d.computed && k in d.computed) return d.computed[k];
+      return undefined;
+    },
+    set(t, k, v) {
+      if (typeof k === 'symbol') return true;
+      if (k === 'innerHTML') { callDom('setHtml', ref, String(v)); const d = D(); if (d) d.html = String(v); return true; }
+      if (k === 'outerHTML') { callDom('setOuter', ref, String(v)); return true; }
+      if (k === 'textContent' || k === 'innerText') { callDom('setText', ref, String(v)); const d = D(); if (d) d.text = String(v); return true; }
+      if (k === 'className') { callDom('setProp', ref, 'className', String(v)); const d = D(); if (d) d.cls = String(v); return true; }
+      if (k === 'id') { callDom('setProp', ref, 'id', String(v)); const d = D(); if (d) d.id = String(v); return true; }
+      if (k === 'style') { callDom('setProp', ref, 'style', String(v)); return true; }
+      if (k === 'value') { callDom('setProp', ref, 'value', v); const d = D(); if (d) d.value = v; return true; }
+      if (k === 'checked') { callDom('setProp', ref, 'checked', !!v); const d = D(); if (d) d.checked = !!v; return true; }
+      if (k === 'hidden' || k === 'disabled' || k === 'selected') {
+        if (v) callDom('setAttr', ref, k, ''); else callDom('rmAttr', ref, k);
+        const d = D(); if (d) { d.attrs = d.attrs || {}; if (v) d.attrs[k] = ''; else delete d.attrs[k]; }
+        return true;
+      }
+      if (/^on[a-z]/.test(k)) {
+        if (typeof v === 'function') { const type = k.slice(2); t.__on = t.__on || {}; if (!t.__on[type]) M.addEventListener(type, v); }
+        return true;
+      }
+      callDom('setProp', ref, k, (v && typeof v === 'object') ? String(v) : v);
+      const d = D(); if (d && d.attrs) d.attrs[k] = String(v);
+      return true;
+    },
+    has(t, k) {
+      if (typeof k === 'symbol') return false;
+      const d = D();
+      return k in M || (d && d.attrs && k in d.attrs) || ['innerHTML','textContent','id','className','tagName','style','classList','value'].includes(k);
+    },
+    deleteProperty(t, k) { if (typeof k === 'string') M.removeAttribute(k); return true; },
+    ownKeys(t) {
+      const d = D();
+      const base = Object.keys((d && d.attrs) || {});
+      return [...new Set([...base, 'id', 'className', 'tagName', 'innerHTML', 'textContent', 'children', 'parentNode', 'style', 'classList'])];
+    },
+    getOwnPropertyDescriptor(t, k) { return { enumerable: true, configurable: true, value: handler.get(t, k) }; }
+  };
+
+  const p = new Proxy(st, handler);
+  DOMC.proxies.set(ref, p);
+  return p;
+}
+
+/* callDom：所有元素操作的统一出口。ref 会作为第一个参数传下去。 */
+function callDom(op, ref, ...args) {
+  return call('dom.op', op, [ref, ...args]).catch(() => null);
+}
+
+/* ---------------------------------------------------------------- 执行前预取
+ * 从代码文本里抠出选择器，一次拉回来，这样
+ *   document.querySelector('#x').innerHTML
+ * 在 Worker 里能同步拿到值（不用 await）。
+ * 不改变任何语义——只是把「读」提前做了。 */
+async function prefetchDom(code) {
+  if (!code || typeof code !== 'string') return;
+  if (!/\b(document|window|page|localStorage|getComputedStyle)\b/.test(code)) return;
+  /* 不要默认把 body/html 塞进来：deep 快照带 innerHTML，整页可能是几 MB，
+   * 每条命令都拉一遍会把 REPL 拖到几百毫秒。只有代码里真出现才拉。 */
+  const sels = new Set();
+  const listSels = new Set();
+  const wantDeep = /innerHTML|outerHTML|textContent|innerText/.test(code);
+  if (wantDeep) { sels.add('body'); sels.add('head'); sels.add('html'); }
+  else {
+    if (/\bdocument\.body\b/.test(code)) sels.add('body');
+    if (/\bdocument\.head\b/.test(code)) sels.add('head');
+    if (/documentElement|\bdocument\.html\b/.test(code)) sels.add('html');
+  }
+  const re = /(querySelectorAll|querySelector|getElementById|closest)\(\s*(['"`])((?:\\.|(?!\2)[^\\])*)\2/g;
+  let m;
+  while ((m = re.exec(code))) {
+    const kind = m[1], sel = m[3];
+    if (!sel) continue;
+    if (kind === 'getElementById') sels.add('#' + sel.replace(/[^\w-]/g, '\\$&'));
+    else if (kind === 'querySelectorAll') listSels.add(sel);
+    else sels.add(sel);
+  }
+  /* page.q('…') / page.el('…') 也是选择器，别漏 */
+  const re2 = /page\.(?:q|el|text|html|attr|exists|click|setText|setValue|setAttr)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+  while ((m = re2.exec(code))) { if (m[2]) sels.add(m[2]); }
+  /* 裸的 document.body / document.head 之类靠 body/head 兜住 */
+  try {
+    const snap = await call('dom.op', 'snap', []);
+    if (!snap) return;
+    DOMC.root = snap;
+    for (const k of ['doc', 'html', 'head', 'body', 'active']) {
+      const d = snap[k];
+      if (d && d.ref) { DOMC.nodes.set(d.ref, d); }
+    }
+    if (snap.body) DOMC.bySel.set('body', snap.body);
+    if (snap.head) DOMC.bySel.set('head', snap.head);
+    if (snap.html) DOMC.bySel.set('html', snap.html);
+    DOMC.bySel.set('documentElement', snap.html);
+    DOMC.bySel.set(':root', snap.html);
+    DOMC.bySel.set('body', snap.body);
+  } catch (e) {}
+  const one = [...sels];
+  const many = [...listSels];
+  if (!one.length && !many.length) return;
+  try {
+    const got = await call('dom.op', 'prefetch', [one, many]);
+    for (const sel of Object.keys(got || {})) {
+      const v = got[sel];
+      if (!v) { DOMC.bySel.set(sel, null); continue; }
+      if (v.__list) {
+        DOMC.lists.set(sel, v.items || []);
+        for (const d of v.items || []) DOMC.nodes.set(d.ref, d);
+      } else {
+        if (v.ref) DOMC.nodes.set(v.ref, v);
+        DOMC.bySel.set(sel, v);
+      }
+    }
+  } catch (e) {}
+}
+
+/* ---------------------------------------------------------------- document */
+function makeDocument() {
+  const c = (op, ...args) => call('dom.op', op, args);
+  const docRef = '\u0001doc';
+
+  const elsFromSel = (sel) => {
+    const d = DOMC.bySel.get(sel);
+    if (d && d.ref) return nodeProxy(d.ref);
+    const r = DOMC.newRef();
+    call('dom.op', 'queryAs', [r, String(sel)]).then(x => { if (x && x.ref) { DOMC.nodes.set(x.ref, x); DOMC.bySel.set(sel, x); } }).catch(() => {});
+    return nodeProxy(r);
+  };
+
+  const document = {
+    /* ---- 元信息 ---- */
+    get title() { return (DOMC.root && DOMC.root.title) || ''; },
+    set title(v) { c('setTitle', String(v)); if (DOMC.root) DOMC.root.title = String(v); },
+    get readyState() { return (DOMC.root && DOMC.root.readyState) || 'complete'; },
+    get URL() { return (DOMC.root && DOMC.root.url) || ''; },
+    get documentURI() { return this.URL; },
+    get baseURI() { return this.URL; },
+    get domain() { try { return new URL(this.URL).hostname; } catch (e) { return ''; } },
+    get referrer() { return ''; },
+    get cookie() { return (DOMC.root && DOMC.root.cookie) || ''; },
+    set cookie(v) { c('setCookie', String(v)); if (DOMC.root) DOMC.root.cookie = String(v); },
+    get characterSet() { return 'UTF-8'; },
+    get charset() { return 'UTF-8'; },
+    get contentType() { return 'text/html'; },
+    get hidden() { return false; },
+    get visibilityState() { return 'visible'; },
+    get dir() { return 'ltr'; },
+    hasFocus: () => true,
+
+    /* ---- 树根 ---- */
+    get documentElement() { return elsFromSel('html'); },
+    get body() { return elsFromSel('body'); },
+    get head() { return elsFromSel('head'); },
+    get activeElement() { return DOMC.root && DOMC.root.active ? nodeProxy(DOMC.root.active.ref) : elsFromSel('body'); },
+    get scrollingElement() { return elsFromSel('html'); },
+    get children() { const h = DOMC.root && (DOMC.root.html || DOMC.root.doc); return h ? [nodeProxy(h.ref)] : []; },
+
+    /* ---- 查询 ---- */
+    querySelector: (sel) => { try { return elsFromSel(String(sel)); } catch (e) { throw new Error('querySelector: ' + sel + ' 不是有效选择器'); } },
+    querySelectorAll: (sel) => {
+      const key = String(sel);
+      const cached = DOMC.lists.get(key);
+      const arr = [];
+      if (cached) for (const d of cached) arr.push(nodeProxy(d.ref));
+      else {
+        call('dom.op', 'all', [key, 300, true]).then(list => {
+          DOMC.lists.set(key, (list && list.items) || []);
+          for (const d of (list && list.items) || []) {
+            DOMC.nodes.set(d.ref, d);
+            if (!arr.some(x => x.__ref === d.ref)) arr.push(nodeProxy(d.ref));
+          }
+        }).catch(() => {});
+      }
+      arr.item = (i) => arr[i] || null;
+      return arr;
+    },
+    getElementById: (id) => elsFromSel('#' + String(id).replace(/[^\w\u00a0-\uffff-]/g, '\\$&')),
+    getElementsByClassName: (cls) => document.querySelectorAll('.' + String(cls).trim().split(/\s+/).join('.')),
+    getElementsByTagName: (tag) => document.querySelectorAll(String(tag) === '*' ? '*' : String(tag)),
+    getElementsByName: (n) => document.querySelectorAll('[name="' + String(n).replace(/"/g, '\\"') + '"]'),
+    elementFromPoint: (x, y) => { const r = DOMC.newRef(); call('dom.op', 'fromPoint', [r, x, y]).catch(() => {}); return nodeProxy(r); },
+
+    /* ---- 创建 ---- */
+    createElement: (tag, opts) => {
+      const r = DOMC.newRef();
+      let props = null, html = null;
+      if (typeof opts === 'string') html = opts;
+      else if (opts && typeof opts === 'object') props = opts;
+      call('dom.op', 'createAs', [r, String(tag), props, html]).catch(() => {});
+      return nodeProxy(r);
+    },
+    createElementNS: (ns, tag) => document.createElement(String(tag).replace(/^.*:/, '')),
+    createTextNode: (t) => {
+      const r = DOMC.newRef();
+      call('dom.op', 'createTextAs', [r, String(t == null ? '' : t)]).catch(() => {});
+      return nodeProxy(r);
+    },
+    createDocumentFragment: () => {
+      const r = DOMC.newRef();
+      call('dom.op', 'createFragmentAs', [r]).catch(() => {});
+      return nodeProxy(r);
+    },
+    createComment: (t) => document.createTextNode(''),
+    importNode: (n, deep) => { const r = DOMC.newRef(); call('dom.op', 'cloneAs', [refOf(n), r, !!deep]).catch(() => {}); return nodeProxy(r); },
+
+    /* ---- 真·write ---- */
+    /* 返回 undefined，和浏览器一样。它会清空文档——这是浏览器行为，不拦。 */
+    write(...parts) {
+      const html = parts.map(x => String(x == null ? '' : x)).join('');
+      call('dom.op', 'docWrite', [html]).then(() => { DOMC.clear(); }).catch(() => {});
+    },
+    writeln(...parts) {
+      const html = parts.map(x => String(x == null ? '' : x)).join('') + '\n';
+      call('dom.op', 'docWriteln', [html]).then(() => { DOMC.clear(); }).catch(() => {});
+    },
+    open() { call('dom.op', 'docOpen', []).then(() => DOMC.clear()).catch(() => {}); return this; },
+    close() { call('dom.op', 'docClose', []).catch(() => {}); },
+
+    /* ---- 事件 ---- */
+    addEventListener: (type, fn) => { if (typeof fn === 'function') addWorkerListener(docRef, String(type), fn); },
+    removeEventListener: (type, fn) => { removeWorkerListener(fn); },
+    dispatchEvent: (ev) => { call('dom.op', 'dispatch', [docRef, (ev && ev.type) || 'click', ev && ev.detail]).catch(() => {}); return true; },
+
+    /* ---- hterminal 扩展（不是 DOM 标准，但保留兼容） ---- */
+    __snap: () => DOMC.root,
+    get __html() { return (DOMC.root && DOMC.root.html && DOMC.root.html.text) || ''; }
+  };
+
+  /* document.location 与 window.location 是同一个对象 */
+  return document;
+}
+
+/* ---------------------------------------------------------------- 监听表 */
+function addWorkerListener(sel, type, fn) {
+  const id = ++DOMC.seq;
+  DOMC.listeners.set(id, { type, fn, sel });
+  DOMC.chosen.set(fn, id);
+  call('dom.op', 'listen', [sel, type]).then(real => {
+    const L = DOMC.listeners.get(id);
+    if (L) L.real = real;
+  }).catch(() => {});
+}
+function removeWorkerListener(fn) {
+  const id = DOMC.chosen.get(fn);
+  if (!id) return;
+  const L = DOMC.listeners.get(id);
+  if (L && L.real != null) call('dom.op', 'unlisten', [L.real]).catch(() => {});
+  DOMC.listeners.delete(id);
+  DOMC.chosen.delete(fn);
+}
+/* 主线程转过来的事件：按 listener id 找到 Worker 里的函数并调用。 */
+function dispatchWorkerEvent(msg) {
+  const L = DOMC.listeners.get(Number(msg.id));
+  if (!L || typeof L.fn !== 'function') return;
+  const e = msg.ev || {};
+  const target = e.target && e.target.ref ? nodeProxy(e.target.ref) : null;
+  const ev = {
+    type: e.type,
+    target,
+    currentTarget: target,
+    bubbles: true, cancelable: true, defaultPrevented: !!e.defaultPrevented,
+    key: e.key, code: e.code, repeat: !!e.repeat,
+    clientX: e.clientX, clientY: e.clientY, button: e.button,
+    value: e.value, checked: e.checked,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() {},
+    stopImmediatePropagation() {}
+  };
+  try { L.fn.call(target, ev); } catch (err) { out(ANSI.red + '[listener] ' + (err && err.message || err) + ANSI.reset + '\r\n'); }
+}
+
+/* ---------------------------------------------------------------- 安装 */
+function installDomProxy(call_) {
+  const c = (op, ...args) => call_('dom.op', op, args);
+  const document = makeDocument();
+
+  /* localStorage：同步读快照、异步写回。和真的一样，写立刻能读到。 */
+  let lsSnap = Object.create(null);
+  const lsRefresh = () => c('ls.all').then(o => { lsSnap = Object.assign(Object.create(null), o || {}); }).catch(() => {});
+  lsRefresh();
+  const localStorage = {
+    getItem: (k) => (String(k) in lsSnap ? lsSnap[String(k)] : null),
+    setItem: (k, v) => { lsSnap[String(k)] = String(v); c('ls.set', String(k), String(v)).catch(() => {}); },
+    removeItem: (k) => { delete lsSnap[String(k)]; c('ls.rm', String(k)).catch(() => {}); },
+    key: (i) => Object.keys(lsSnap)[i] || null,
+    get length() { return Object.keys(lsSnap).length; },
+    clear: () => { for (const k of Object.keys(lsSnap)) delete lsSnap[k]; c('ls.clear').catch(() => {}); },
+    __refresh: lsRefresh,
+    __snapshot: () => ({ ...lsSnap })
+  };
+
+  /* page：hterminal 给智能体 / 脚本用的高层封装。不是 DOM 标准，但好用。 */
   const page = {
-    /* 元信息 */
     title: () => c('title'),
     url: () => c('url'),
     ready: () => c('readyState'),
-    /* 查询 */
-    q: (sel) => c('query', sel),
-    all: (sel, n) => c('all', sel, n),
-    text: (sel) => c('text', sel),
-    html: (sel) => c('html', sel),
-    attr: (sel, n) => c('attr', sel, n),
-    rect: (sel) => c('rect', sel),
+    q: (sel) => document.querySelector(sel),
+    all: (sel, n) => c('all', sel, n || 300, true),
+    text: (sel) => { const el = document.querySelector(sel); return el ? el.textContent : null; },
+    html: (sel) => { const el = document.querySelector(sel); return el ? el.innerHTML : null; },
+    attr: (sel, n) => { const el = document.querySelector(sel); return el ? el.getAttribute(n) : null; },
+    rect: (sel) => { const el = document.querySelector(sel); return el ? el.getBoundingClientRect() : null; },
     css: (sel, props) => c('computed', sel, props),
-    exists: (sel) => c('exists', sel),
-    /* 改 */
-    click: (sel) => c('click', sel),
-    setText: (sel, v) => c('setText', sel, v),
-    setValue: (sel, v) => c('setValue', sel, v),
-    setAttr: (sel, n, v) => c('setAttr', sel, n, v),
-    /* 界面 */
+    exists: (sel) => !!document.querySelector(sel),
+    click: (sel) => { const el = document.querySelector(sel); if (el) el.click(); },
+    setText: (sel, v) => { const el = document.querySelector(sel); if (el) el.textContent = v; },
+    setValue: (sel, v) => { const el = document.querySelector(sel); if (el) el.value = v; },
+    setAttr: (sel, n, v) => { const el = document.querySelector(sel); if (el) el.setAttribute(n, v); },
+    el: (sel) => document.querySelector(sel),
     toast: (t) => c('toast', t),
     ask: (title, body) => c('dialog', title, body),
     wins: () => c('wins'),
     win: (opts) => c('openWindow', opts),
-    shot: (sel, opts) => call('shot.page', sel || null, opts || {}),
-    /* 常用组合：把一段 HTML 直接开成窗口 */
-    show: (title, html, opts) => c('openWindow', Object.assign({ type:'browser', title, html }, opts || {}))
-  };
-
-  /* document 外壳：querySelector 返回句柄；title/readyState 走 async 方法，
-   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。
-   *
-   * document.write 是真能用的：内容写进一个「文档窗口」，第一次 write 开窗，
-   * 之后每次 write 更新同一个窗口的 srcdoc。**不会**往宿主页面 document 上写——
-   * 那会把整个终端冲掉（浏览器里 document.write 本来就是「打开新文档」的语义，
-   * 这里只是把「新文档」落到一个窗口里，更符合直觉也不炸现场）。 */
-  let docBuf = '';
-  /* 返回 undefined：浏览器的 document.write 也不返回值，
-   * 回一个 {ok:…} 只会让 REPL 每敲一行都刷一串对象。 */
-  const docPush = (s) => { docBuf += s; c('docWrite', docBuf).catch(() => {}); };
-  const document = {
-    get title() { return page._titleCache || ''; },
-    set title(v) { page._titleCache = String(v); c('setTitle', String(v)); },
-    get readyState() { return 'interactive'; },
-    querySelector: (sel) => makeElHandle(sel, call),
-    querySelectorAll: (sel) => ({ length:null, async items() { const r = await c('all', sel); return r.items; } }),
-    getElementById: (id) => makeElHandle('#' + id, call),
-    createElement: (tag) => ({ __virtual:true, tag, textContent:'', innerHTML:'', appendChild(){ return this; } }),
-    get body() { return makeElHandle('body', call); },
-    get head() { return makeElHandle('head', call); },
-    addEventListener: () => { /* worker 里监听 DOM 事件没有意义，静默吞掉 */ },
-    removeEventListener: () => {},
-    /* —— 真·document.write —— */
-    write(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('')); },
-    writeln(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('') + '\n'); },
-    open() { docBuf = ''; },
-    close() { docPush(''); },
-    get __html() { return docBuf; },
-    location: {
-      get href() { return page._urlCache || ''; },
-      reload: () => call('page.reload').catch(() => {})
+    shot: (sel, opts) => call_('shot.page', sel || null, opts || {}),
+    show: (title, html, opts) => c('openWindow', Object.assign({ type:'browser', title, html }, opts || {})),
+    snap: () => DOMC.root,
+    sync: () => prefetchDom('document.body.innerText'),
+    /* 100% 原生同步：在主线程跑。这是「想和 F12 完全一样」时的唯一确切答案。 */
+    async eval(code) {
+      const r = await c('evalPage', String(code));
+      if (r && r.__error) { const e = new Error(r.message); e.name = r.name || 'Error'; throw e; }
+      return r ? r.value : undefined;
     }
   };
 
-  /* localStorage：同步读快照，异步写回。第一次访问时后台刷新一次快照。 */
-  let snap = Object.create(null);
-  let snapAt = 0;
-  const refresh = () => c('ls.all').then(o => { snap = Object.assign(Object.create(null), o || {}); snapAt = Date.now(); }).catch(() => {});
-  refresh();
-  const localStorage = {
-    getItem: (k) => (k in snap ? snap[k] : null),
-    setItem: (k, v) => { snap[k] = String(v); c('ls.set', k, String(v)).catch(() => {}); },
-    removeItem: (k) => { delete snap[k]; c('ls.set', k, '').catch(() => {}); },
-    key: (i) => Object.keys(snap)[i] || null,
-    get length() { return Object.keys(snap).length; },
-    clear: () => { for (const k of Object.keys(snap)) delete snap[k]; c('ls.clear').catch(() => {}); },
-    __refresh: refresh,
-    __snapshot: () => ({ ...snap, __at:snapAt })
+  /* getComputedStyle：读快照里的 computed，未命中就触发一次刷新。 */
+  const getComputedStyle = (el) => {
+    const ref = refOf(el);
+    const d = ref ? DOMC.nodes.get(ref) : null;
+    const cs = Object.assign({}, (d && d.computed) || {});
+    return new Proxy({}, {
+      get(t, p) {
+        if (typeof p === 'symbol') return undefined;
+        if (p === 'getPropertyValue') return (n) => cs[String(n)] || '';
+        if (p === 'getPropertyPriority') return () => '';
+        if (p === 'item') return (i) => Object.keys(cs)[i] || '';
+        if (p === 'length') return Object.keys(cs).length;
+        const key = camel2kebab(p);
+        if (key in cs) return cs[key];
+        if (ref) callDom('computedRefresh', ref);
+        return '';
+      }
+    });
+  };
+
+  const matchMedia = (q) => {
+    const query = String(q || '');
+    const w = (DOMC.root && DOMC.root.w) || 1280;
+    const h = (DOMC.root && DOMC.root.h) || 800;
+    const dark = !!(DOMC.root && DOMC.root.dark);
+    let m = true;
+    const mx = query.match(/max-width:\s*(\d+)px/i); if (mx) m = m && w <= +mx[1];
+    const mn = query.match(/min-width:\s*(\d+)px/i); if (mn) m = m && w >= +mn[1];
+    const mxh = query.match(/max-height:\s*(\d+)px/i); if (mxh) m = m && h <= +mxh[1];
+    const mnh = query.match(/min-height:\s*(\d+)px/i); if (mnh) m = m && h >= +mnh[1];
+    if (/prefers-color-scheme:\s*dark/i.test(query)) m = m && dark;
+    if (/prefers-color-scheme:\s*light/i.test(query)) m = m && !dark;
+    if (/prefers-reduced-motion:\s*reduce/i.test(query)) m = false;
+    return {
+      media: query, matches: m, onchange: null,
+      addEventListener() {}, removeEventListener() {},
+      addListener() {}, removeListener() {},
+      dispatchEvent() { return true; }
+    };
+  };
+
+  let rafSeq = 0;
+  const rafMap = new Map();
+  const requestAnimationFrame = (fn) => {
+    const id = ++rafSeq;
+    const t = setTimeout(() => { rafMap.delete(id); try { if (typeof fn === 'function') fn(performance.now()); } catch (e) {} }, 16);
+    rafMap.set(id, t);
+    return id;
+  };
+  const cancelAnimationFrame = (id) => { const t = rafMap.get(id); if (t != null) { clearTimeout(t); rafMap.delete(id); } };
+
+  const history = {
+    get length() { return 1; },
+    get state() { return null; },
+    back() {}, forward() {}, go() {},
+    pushState(state, title, url) { if (url) c('navReplace', String(url)).catch(() => {}); },
+    replaceState(state, title, url) { if (url) c('navReplace', String(url)).catch(() => {}); }
+  };
+
+  const locationShim = {
+    get href() { return (DOMC.root && DOMC.root.url) || ''; },
+    set href(v) { c('nav', String(v)).catch(() => {}); },
+    get origin() { try { return new URL(this.href).origin; } catch (e) { return ''; } },
+    get protocol() { try { return new URL(this.href).protocol; } catch (e) { return ''; } },
+    get host() { try { return new URL(this.href).host; } catch (e) { return ''; } },
+    get hostname() { try { return new URL(this.href).hostname; } catch (e) { return ''; } },
+    get port() { try { return new URL(this.href).port; } catch (e) { return ''; } },
+    get pathname() { try { return new URL(this.href).pathname; } catch (e) { return ''; } },
+    get search() { try { return new URL(this.href).search; } catch (e) { return ''; } },
+    get hash() { try { return new URL(this.href).hash; } catch (e) { return ''; } },
+    get searchParams() { try { return new URL(this.href).searchParams; } catch (e) { return new URLSearchParams(); } },
+    assign(u) { c('nav', String(u)).catch(() => {}); },
+    replace(u) { c('navReplace', String(u)).catch(() => {}); },
+    reload() { c('reload').catch(() => {}); },
+    toString() { return this.href; }
   };
 
   const windowShim = {
     document, localStorage, page,
-    get location() { return { href: page._urlCache || '', reload: () => call('page.reload').catch(() => {}) }; },
-    alert: (m) => c('toast', String(m)),
-    confirm: (m) => c('dialog', '请确认', String(m)),
-    prompt: (m, d) => c('dialog', String(m), String(d || '')),
-    open: (url) => c('openWindow', { type:'browser', url:String(url) }),
-    getComputedStyle: () => ({ getPropertyValue: () => '' }),
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    matchMedia: (q) => ({ matches:/dark/.test(String(q)) ? document.body : false, addEventListener:()=>{}, addListener:()=>{} }),
-    devicePixelRatio: 1,
-    innerWidth: 1280, innerHeight: 800,
-    navigator: { userAgent:'hterminal-worker', language:'zh-CN', vibrate:()=>{} }
+    get location() { return locationShim; },
+    get innerWidth() { return (DOMC.root && DOMC.root.w) || 0; },
+    get innerHeight() { return (DOMC.root && DOMC.root.h) || 0; },
+    get outerWidth() { return this.innerWidth; },
+    get outerHeight() { return this.innerHeight; },
+    get devicePixelRatio() { return (DOMC.root && DOMC.root.dpr) || 1; },
+    get scrollX() { return (DOMC.root && DOMC.root.sx) || 0; },
+    get scrollY() { return (DOMC.root && DOMC.root.sy) || 0; },
+    get pageXOffset() { return this.scrollX; },
+    get pageYOffset() { return this.scrollY; },
+    scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return c('scrollTo', n.left || 0, n.top || 0); },
+    scrollBy(dx, dy) { return c('scrollTo', this.scrollX + (Number(dx) || 0), this.scrollY + (Number(dy) || 0)); },
+    getComputedStyle, matchMedia,
+    alert: (m) => c('toast', String(m == null ? '' : m)),
+    confirm: (m) => c('dialog', '请确认', String(m == null ? '' : m)),
+    prompt: (m, d) => c('dialog', String(m == null ? '' : m), String(d == null ? '' : d)),
+    open: (u) => { c('openWindow', { type:'browser', url:String(u) }).catch(() => {}); return null; },
+    close: () => {},
+    focus: () => {}, blur: () => {},
+    addEventListener: (t, fn) => { if (typeof fn === 'function') addWorkerListener('\u0001win', String(t), fn); },
+    removeEventListener: (t, fn) => removeWorkerListener(fn),
+    dispatchEvent: () => true,
+    getSelection: () => null,
+    history,
+    get screen() { return { width: this.innerWidth, height: this.innerHeight, availWidth: this.innerWidth, availHeight: this.innerHeight, colorDepth: 24, pixelDepth: 24 }; },
+    requestAnimationFrame, cancelAnimationFrame,
+    queueMicrotask: (fn) => Promise.resolve().then(fn),
+    get performance() { return { now: () => performance.now() }; }
   };
 
-  return { page, document, localStorage, windowShim };
+  /* document.location 与 window.location 必须是同一个对象（浏览器里就是这样） */
+  try { Object.defineProperty(document, 'location', { get: () => locationShim, configurable: true }); } catch (e) {}
+  try { Object.defineProperty(document, 'defaultView', { get: () => globalThis, configurable: true }); } catch (e) {}
+  try { Object.defineProperty(document, 'compatMode', { get: () => 'CSS1Compat', configurable: true }); } catch (e) {}
+
+  return { page, document, localStorage, windowShim, locationShim };
 }
+
 
 /* ---------------------------------------------------------------- Shell 启动 */
 async function bootShell(init) {
@@ -1124,19 +1677,26 @@ async function bootShell(init) {
   let DOMX = null;
   try {
     DOMX = installDomProxy(call);
-    /* 逐个挂，不要 Object.assign(globalThis, …)：Worker 里的 location 是只读的
-     * WorkerLocation，赋值会抛 TypeError，整个 try 就白做了（表现为 page 为 null）。 */
-    globalThis.document = DOMX.document;
-    globalThis.localStorage = DOMX.localStorage;
-    globalThis.page = DOMX.page;
+    /* 全部用 getter 挂：innerWidth / location.href 这类值会随快照变化，
+     * 一次性 value 拷贝会让它们永远停在启动那一刻。 */
     globalThis.window = globalThis;
-    for (const k of ['document', 'localStorage', 'page', 'alert', 'confirm', 'prompt', 'open', 'getComputedStyle', 'matchMedia']) {
-      try { Object.defineProperty(globalThis, k, { value: DOMX.windowShim[k], writable:true, configurable:true }); } catch (e) {}
+    const KEYS = ['document','localStorage','page','location','history',
+      'alert','confirm','prompt','open','close','focus','blur',
+      'getComputedStyle','matchMedia','getSelection',
+      'innerWidth','innerHeight','outerWidth','outerHeight','devicePixelRatio',
+      'scrollX','scrollY','pageXOffset','pageYOffset','scrollTo','scrollBy','screen',
+      'requestAnimationFrame','cancelAnimationFrame',
+      'addEventListener','removeEventListener','dispatchEvent'];
+    for (const k of KEYS) {
+      try { Object.defineProperty(globalThis, k, { get: () => DOMX.windowShim[k], configurable: true }); } catch (e) {}
     }
-    try { globalThis.navigator = DOMX.windowShim.navigator; } catch (e) {}
-    /* 缓存一份元信息，让 document.title / location.href 读起来像真的 */
-    call('dom.op', 'title', []).then(t => { globalThis.page._titleCache = t; }).catch(() => {});
-    call('dom.op', 'url', []).then(u => { globalThis.page._urlCache = u; }).catch(() => {});
+    /* 在 F12 里 top/parent/frames 都等于 window（非 iframe 页面） */
+    for (const k of ['top', 'parent', 'frames']) {
+      try { Object.defineProperty(globalThis, k, { get: () => globalThis, configurable: true }); } catch (e) {}
+    }
+    /* navigator 不覆盖：WorkerNavigator 的 userAgent / language / hardwareConcurrency
+     * 本来就是真的，之前那份假对象是错的。 */
+    prefetchDom('document.body.innerText');
   } catch (e) {
     globalThis.window = globalThis;
     globalThis.page = null;
@@ -1159,7 +1719,21 @@ async function bootShell(init) {
   let ctx;
   const api = makeShell({ cwd, history, cols:init.cols, rows:init.rows });
   ctx = { editor:null };
-  Object.assign(globalThis, api);
+  /* 逐个赋值，不要 Object.assign：Worker 的 open/location 是只读访问器，
+   * 一次 assign 撞上就整个失败（表现为 shell 起不来）。 */
+  for (const k of Object.keys(api)) {
+    try { globalThis[k] = api[k]; }
+    catch (e) { try { Object.defineProperty(globalThis, k, { value: api[k], writable:true, configurable:true }); } catch (e2) {} }
+  }
+  /* history 既是 JSHeL 的命令历史函数，也要能当 History 对象用 */
+  try {
+    const h0 = api.history;
+    h0.length = 1; h0.state = null;
+    h0.back = () => {}; h0.forward = () => {}; h0.go = () => {};
+    h0.pushState = (st, ti, u) => { if (u) call('dom.op', 'navReplace', [String(u)]).catch(() => {}); };
+    h0.replaceState = h0.pushState;
+    globalThis.history = h0;
+  } catch (e) {}
 
   const editor = new LineEditor({
     prompt: () => (api.__state.mode === 'zsh' ? api.__state.cwd + '% ' : api.__state.cwd + '> '),
@@ -1429,6 +2003,13 @@ self.onmessage = async (ev) => {
       writeErr('启动失败：' + (e && e.stack || e) + '\r\n');
       post({ t:'exit', code:1 });
     }
+    return;
+  }
+  if (m.t === 'dom-event') {
+    /* 主线程把捕获到的真实事件回放到 Worker：页面上 addEventListener('click')
+     * 的回调就是在这里被调用的。注意它是**异步**的——跨线程的代价，
+     * preventDefault() 改不了已经发生的事。 */
+    try { dispatchWorkerEvent(m); } catch (e) {}
     return;
   }
   if (m.t === 'in') {
