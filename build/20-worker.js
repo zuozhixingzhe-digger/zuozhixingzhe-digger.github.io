@@ -11,7 +11,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.2';
+let HT_VERSION = '0.0.1.0';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
@@ -65,6 +65,13 @@ function inspect(v, depth, seen) {
   }
   if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
   if (v instanceof Promise) return 'Promise { <pending> }';
+  /* ESM 命名空间对象：`await require('lodash-es@4')` 会回显几百行导出，
+   * 把整个终端刷掉。这里只报「是哪个包、有几个导出」，要看细节自己去点。 */
+  if (v && v[Symbol.toStringTag] === 'Module') {
+    const ks = Object.keys(v);
+    return ANSI.gray + 'Module(' + ks.length + ' exports) { ' + ks.slice(0, 8).join(', ')
+      + (ks.length > 8 ? ', …' : '') + ' }' + ANSI.reset;
+  }
   if (seen.has(v)) return ANSI.gray + '[Circular]' + ANSI.reset;
   if (depth > 4) return ANSI.gray + '…' + ANSI.reset;
   seen.add(v);
@@ -756,6 +763,14 @@ function makeShell(ctx) {
     out((ok ? ANSI.green + '已终止 ' : ANSI.red + '没有这个进程 ') + pid + ANSI.reset + '\r\n');
   }
 
+  /* 清空一切。真正的活在主线程（要处理 IndexedDB 连接、caches、SW），
+   * 这里只负责喊一声。以前 README 让用户「终端里敲 nuke()」，但 Worker 里根本没这个函数，
+   * 敲下去是 `nuke is not defined` —— 这个洞一直没人发现。 */
+  async function nuke() {
+    out(ANSI.yellow + '清除全部本地数据：确认后文件系统、依赖缓存、历史、设置都会没，然后重新加载。' + ANSI.reset + '\r\n');
+    await call('nuke.run').catch(() => {});
+  }
+
   async function df() {
     const u = await call('fs.usage');
     out('Filesystem      Size    Used   Avail  Use%  Mounted\r\n');
@@ -774,7 +789,7 @@ function makeShell(ctx) {
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
-      ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  clear()  history()'],
+      ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
@@ -941,7 +956,19 @@ function makeShell(ctx) {
     // 窗口 / 系统
     python, py:python, spawn, winOpen, winClose, winList, agentOpen,
     saveFile, askFile, fetchText, openUrl, notify, perm, requestPermission:perm,
-    whoami, uname, date, echo, env, ps, kill, clear, history:historyList, help, exit,
+    /* 别名：README 第 11 节那张表里用的是长名字（remove / move / copy / openWindow …），
+     * 但实现里叫 rm / mv / cp / winOpen。两边对不上，用户照着 README 敲就是 undefined。
+     * 这里把长名字补齐，短名字保留——两套都能用。 */
+    remove:rm, move:mv, copy:cp,
+    openWindow:winOpen, closeWindow:winClose, listWindows:winList,
+    openURL:openUrl,
+    threads:{ list:() => call('proc.list'), kill },
+    settings:{
+      get:(k) => call('settings.get', k),
+      set:(k, v) => call('settings.set', String(k), v),
+      all:() => call('settings.all')
+    },
+    whoami, uname, date, echo, env, ps, kill, nuke, clear, history:historyList, help, exit,
     sleep:(ms) => new Promise(r => setTimeout(r, ms)),
     uuid:() => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2)),
     // 内建对象
@@ -1944,7 +1971,11 @@ builtins.input = _ht_input
 
   const version = py.runPython('sys.version.split()[0]');
   out(ANSI.green + 'Python ' + version + ' on Pyodide' + ANSI.reset + '\r\n');
-  out(ANSI.gray + '输入 exit() 或 Ctrl+D 返回 shell。' + ANSI.reset + '\r\n\r\n');
+  out(ANSI.gray + '输入 exit() 或 Ctrl+D 返回 shell。' + ANSI.reset + '\r\n');
+  /* 说清楚一件事：Pyodide 跑在同一个 Worker 里，没有 SharedArrayBuffer 就没有中断通道，
+   * `while True: pass` 会把整个终端卡死（Ctrl+C 也救不回来，只能刷新页面）。
+   * 与其让用户以为按键坏了，不如先把代价写在脸上。 */
+  out(ANSI.gray + '注意：同步死循环无法中断（Ctrl+C 也不行），卡住了只能刷新页面。' + ANSI.reset + '\r\n\r\n');
   ready = true;
   post({ t:'ready' });
 

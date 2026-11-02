@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.5';
+const HT_VERSION = '0.0.1.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -376,9 +376,12 @@ print('已放入', p, '，共', lines, '行');`
 Copyright (c) 2026 hterminal contributors
 
 本项目由 AI 智能体生成并维护。第三方组件：
-  xterm.js                 MIT
-  @xterm/addon-fit         MIT
-  Pyodide                  MPL-2.0
+  xterm.js                   MIT
+  @xterm/addon-fit           MIT
+  @xterm/addon-unicode11     MIT
+  marked                     MIT
+  html2canvas                MIT
+  Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
   '.sys.about': { kind:'file', mime:'text/plain', content:`hterminal
 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
@@ -681,8 +684,18 @@ const FS = {
       return { path:p, name:seg, kind:'file', size:String(data || '').length, mtime:rec.mtime, meta };
     }
     let kind = meta.kind || 'file';
-    if (!this.exists(p) && /\.bin\./.test(p)) kind = kind || 'file';
     const old = this.idx.get(p);
+    /* kind 不随「写内容」丢失，这是两处必须一起改的地方：
+     * ①改一个已有的 .bin 函数（比如 vim 里存盘）不能把它降级成普通文本，否则下次 exec 就报
+     *   「不是可执行对象」；
+     * ②新建 .bin.* 默认就是可执行函数——README 说过「.bin 里放的是函数，content 被编译成
+     *   AsyncFunction」。以前这里有一行 `if (!this.exists(p) && /\.bin\./.test(p)) kind = kind || 'file'`，
+     *   等于什么都没做（kind 本来就是 'file'），于是 `write('.bin.hi','return 42')` 之后
+     *   `exec('.bin.hi')` 必然失败。 */
+    if (!meta.kind) {
+      if (old && old.kind && old.kind !== 'dir') kind = old.kind;
+      else if (/^\.bin\./.test(p)) kind = 'func';
+    }
     const rec = {
       path:p, parent:parentPath(p), name:seg, kind,
       content:data == null ? '' : data, meta,
@@ -1009,7 +1022,11 @@ async function askFile(opts) {
   if (!files.length) return opts.multiple ? [] : null;
   const out = [];
   for (const f of files) {
+    /* 名字里不能有点（点就是路径分隔符），但直接把扩展名剁掉会让 a.txt / a.md 撞成同一个
+     * `a`。折中：`hello.txt` → `hello-txt`，既守命名规则，又能一眼看出是什么。 */
     let name = sanitizeName(f.name, 'query');
+    const ext = String(f.name || '').match(/\.([\p{L}\p{N}_-]{1,8})$/u);
+    if (ext && !name.endsWith('-' + ext[1])) name += '-' + ext[1];
     let path = '.queryfile.' + name;
     let n = 2;
     while (FS.exists(path)) { path = '.queryfile.' + name + '-' + n; n++; }

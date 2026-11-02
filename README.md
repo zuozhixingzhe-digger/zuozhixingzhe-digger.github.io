@@ -1,11 +1,13 @@
 # hterminal
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.0.5**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.0**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 431 KB，无构建依赖、无外链脚本、可直接双击打开）。
+`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 430 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
+依赖（xterm / Pyodide / marked / html2canvas）走 CDN，**首次加载后统一进 IndexedDB**，
+之后离线也能开。
 
 ```text
   _   _ _____
@@ -86,6 +88,12 @@ readme     welcome
 3. 直接敲 JS：`1 + 1`、`document.title`、`await fetch('/')`。
 4. 敲 `help` 看命令表，敲 `ls('.home')` 看家目录，点顶栏 `▦` 开个窗口。
 5. 想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Ctrl+Shift+A` 开智能体。
+
+> **双击打开 ≠ 能用后端**。`file://` 页面的 Origin 是 `null`，和恶意网页里的
+> `<iframe sandbox>` 一模一样，浏览器给不出区别（连 `Sec-Fetch-Site` 都是 `cross-site`）。
+> 0.0.0.5 起后端**一律拒绝 `null` Origin**，所以用 `file://` 打开时后端连不上——
+> 这是刻意的，不是 bug。要用智能体（后端模式）请走 `python3 modelserver.py` 之后打开
+> `http://127.0.0.1:8787/`；只想临时测试，可以在设置里勾「直连 API」。
 
 > **数据在哪**：所有文件都在浏览器 IndexedDB 里（库名 `hterm-fs`）。
 > 换浏览器、换设备、清缓存就没了——所以请定期在「≥ 更多 → 文件系统 → 导出为 JSON」里备份。
@@ -233,6 +241,9 @@ help                        // 裸命令名自动调用（白名单内）
 - **`write` 不返回值**（像 shell 的 `>`）。想要文件对象请用 `fs.write` 或 `stat`。
 - **`pwd()` 只返回路径**，由 REPL 负责回显，不会打印两遍。
 - **`exec` 执行的是「可执行文件」**：`.bin` 里的 content 被编译成 `AsyncFunction`，`args` 是实参数组。
+  **写进 `.bin` 就是函数**（`write('.bin.hi','return 42')` 之后 `exec('.bin.hi')` 直接得 42），
+  之后用 `vim` 改它也不会丢掉可执行位；反过来 `chmod -x` 才会把它降回普通文本。
+  别的地方想加这一位，就用 `chmod +x <文件>`（只有这一位有意义，`+r`/`+w` 会被忽略）。
 - **`rm` 默认不递归**，删目录要 `rm(p, {r:true})`。
 - **多行**：行尾反斜杠续行；粘贴多行文本会被识别成一次提交（括号粘贴协议）。
 
@@ -490,14 +501,20 @@ hello from python
 - 首次进入要从 CDN 拉 Pyodide（约 10 MB，之后走浏览器缓存；冷缓存下 10–60 秒都正常）
 - stdout / stderr 被重定向到终端，batched 输出会补上换行
 - `exit()` / `Ctrl+D` 回到 shell 层，不会连带关掉浏览器页面
-- 代码跑飞了？`Ctrl+C` 打断
+- **`Ctrl+C` 打断不了 Python 的同步执行**：Pyodide 和终端跑在同一个 Worker 里，
+  中断要 `SharedArrayBuffer`（需要 COOP/COEP 跨域隔离，本项目没开），所以
+  `while True: pass` 会把终端卡死，只能刷新页面。启动横幅里也写了这句。
 
 ## 10. 包管理器
 
 ```js
-await require('lodash@4');        // 或 install('lodash@4')
-_.chunk([1,2,3,4], 2);            // [ [1,2], [3,4] ]
+const _ = await require('lodash-es@4');   // 返回值就是模块命名空间
+_.chunk([1,2,3,4], 2);                    // [ [1,2], [3,4] ]
 ```
+
+> `require` **不会**偷偷往全局塞 `_`。想要短名字就自己 `const _ = …`——
+> `hoist()` 会把顶层 `const` 提升成全局变量，后续命令行都能用。
+> 回显时只显示 `Module(n exports) { … }`，不会把整包导出刷满终端。
 
 - **智能 CDN 回退**：`esm.sh` → `jsdelivr` → `unpkg`，哪个通用哪个
 - 索引写入 `localStorage['ht.packages']`（同时映到 `.pkg.<spec>`），**下次打开自动加载**
@@ -509,6 +526,10 @@ _.chunk([1,2,3,4], 2);            // [ [1,2], [3,4] ]
 ## 11. 挂在 window 上的标准函数
 
 一套又短又统一的入口，全部挂 `window`（既在 `hterm.*` 下，也直挂顶层常用别名）：
+
+> 这些函数都是异步的（返回 Promise），REPL 里请写 `await`。
+> 长名与短名等价，两套都能用：`remove`=`rm`、`move`=`mv`、`copy`=`cp`、
+> `openWindow`=`winOpen`、`closeWindow`=`winClose`、`listWindows`=`winList`、`openURL`=`openUrl`。
 
 ```js
 // —— 文件 ——
@@ -754,9 +775,11 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 
 - 格式四段式 **X.Y.Z.W**，初始 `0.0.0.0`。
 - 若用户未指定，**默认第四位加一**（如 `0.0.0.7 → 0.0.0.8`）。
+- **第三位加一表示「上了一个台阶」**：功能面基本成型、可以拿给人用，而不是又修了几个 bug。
+  `0.0.1.0` 就是这样一次——初步制作阶段结束（见开发日志）。
 - 每次版本变更**必须**在第 9 节「开发日志」置顶追加一行，并在第 10 节「智能体操作记录」追加一条。
 - 版本号常量：
-  - 前端 `build/30-core.js` → `const HT_VERSION = '0.0.0.2';`
+  - 前端 `build/30-core.js` → `const HT_VERSION = '0.0.1.0';`
   - 后端 `modelserver.py` → `VERSION`、`modelserver.js` → `VERSION`、`modelserver.go` → `version`
   - 两者必须一致；前端会把 `HT_VERSION` 注进顶栏、抽屉、启动屏、`.sys.version`、`uname`
 
@@ -1183,6 +1206,7 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.0 | 2026-11-02 | **里程碑：初步制作阶段收尾——把「说得到但做不到」的地方全补上**：①**`.bin` 里写代码就是函数**——`FS.write` 以前无条件把 kind 设成 `file`，于是 `write('.bin.hi','return 42')` 之后 `exec('.bin.hi')` 必然报「不是可执行对象」；现在新建 `.bin.*` 默认 `kind:'func'`，改写已有文件保留原 kind（用 vim 改函数不会把可执行位弄丢）。②**补 `chmod +x / -x`**——README 的兼容层命令表里一直有它，实现里没有。③**`sudo <cmd>` 输出打两遍**——内层已经把 stdout 打到终端，外层又按 `res.out` 打一次；现在只带退出码。④**终端里敲 `nuke()` 是 `nuke is not defined`**——README 让用户这么干，但 Worker 里根本没这个函数；新增 `nuke.run` RPC，确认框、清库、重载全走主线程。⑤**README 第 11 节那张「挂在 window 上的标准函数」表大面积对不上**——`remove`/`move`/`copy`/`openWindow`/`closeWindow`/`listWindows`/`openURL`/`threads`/`settings` 全是 undefined；补齐长名别名与 `settings.set/all`、`threads.list/kill` 的 RPC。⑥**兼容层补 5 条只写在文档里、没实现的命令**——`sleep`（此前落到 JS 的 `sleep(ms)`，`sleep 2` 只等 2 毫秒）、`rev`、`tee`、`stat`、`xargs`；`diff` 遇到不存在的文件不再「无差异 exit 0」。⑦**页面被 `document.write` 拆掉后的两个崩溃点**——`Drawer.refresh` 在 `await` 回来后 `$('#stUsage')` 已是 null（实测一条 `Cannot set properties of null`），`checkBackend` 同理；统一走 null 安全的 setter。⑧**`file://` 与后端的关系写清楚**——`null` Origin 和恶意 sandbox iframe 无法区分，0.0.0.5 的拒绝是对的，但前端不该再盲发请求；`checkBackend` 直接显示「file:// 下不可用」，智能体报错文案给出两条出路。⑨**版本号残留**——`build/10-body.html` 与 `build/20-worker.js` 里硬编码的 `0.0.0.2` 改成占位符 `—`，`boot()` 第一件事注入 `HT_VERSION`，启动屏第一帧就是对的号。⑩**`askFile` 保留扩展名**——`hello.txt` 以前被剁成 `hello`，`a.txt` 与 `a.md` 会撞；现在 `hello-txt`。⑪**`require` 回显不再刷屏**——ESM 命名空间对象只显示 `Module(322 exports) { … }`；README 示例改成 `const _ = await require('lodash-es@4')`（`require` 从来不会偷偷塞全局 `_`）。⑫**Python 的 `Ctrl+C` 说明改成实话**——Pyodide 与终端同 Worker、没有 SAB 就没有中断通道，`while True` 只能刷新页面，启动横幅与 README 都写明。⑬**文档对齐**——踩坑条数 `17 → 29`、页脚版本 `0.0.0.2 → 0.0.1.0`、`00-head` 与 `.sys.license` 的第三方清单补全到 6 项。⑭实测：`.bin` 写入即执行（42）、`chmod +x/-x` 可逆、`sudo echo` 只打一次、`nuke()` 确认后 `.home` 只剩种子文件、9 个长名 API 全部 exists、5 条新命令与管道组合正确、`askFile` 产出 `.queryfile.hello-txt`、`require` 回显一行、`0.0.1.0` 在启动屏与抽屉里都对、s1–s14 关键项回归无 pageerror。 |
 | —（文档/许可证） | 2026-11-02 | **第三方许可证补齐，加机器校验**：①审计出三个**一直在用却没登记**的依赖——`@xterm/addon-unicode11@0.8.0`（MIT，同 xterm 仓库）、`marked@12.0.2`（MIT）、`html2canvas@1.4.1`（MIT），补 `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`，`LICENSE.xterm.js.txt` 覆盖两个 addon；`licenses/README.md` 与本文第 11 章的表同步补齐。②新增 **`check-licenses.sh`**：扫 `build/*.js` 与 `index.html` 里所有 `npm/`、`unpkg.com/` 形式的 CDN 地址（含版本号是变量的写法），比对登记表，缺一行 exit 1；同时校验表里引用的 `LICENSE.*.txt` 文件真的存在。③修 `licenses/README.md` 里过期的「Markdown 渲染：不渲染」——现在用 `marked` 渲染 + 自研 `sanitizeHtml()` 白名单消毒，两件事分工写在表里。④页脚版本号从 `0.0.0.2` 修到 `0.0.0.5`（此前漏改）。⑤实测：真依赖 6 项全「已登记」exit 0；临时塞一个 `left-pad@1.3.0` 进去，脚本报「缺失 ✗」exit 1。 |
 | 0.0.0.5 | 2026-11-02 | **后端安全加固（三份实现同步）**：①**`Origin: null` 从「放行」改成「拒绝」**——`file://`、`data:`、sandbox iframe 的 Origin 都是 `null`，以前放行等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` 打本地端口。②**新增 `Sec-Fetch-Site: cross-site` 拒绝**——浏览器自己打的标，页面改不了，直接堵死「公网网页 → 本地端口」。③**CORS 头只在 Origin 通过校验后回显**，不再对任意 Origin 回 `Access-Control-Allow-Origin`，也不发 `Allow-Credentials`；`OPTIONS` 必须带 Origin。④**每个响应都带安全头**：`X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cross-Origin-Resource-Policy: same-origin`、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`。⑤**`POST` 要求 `Content-Type: application/json`**（否则 415），堵掉 `text/plain`/`form-urlencoded` 这类不预检的简单请求。⑥**被拒请求在 stderr 留一行 `deny origin/host/fetch-site`**。⑦实测（curl，三份后端一致）：正常 200、`Origin: https://evil.com` 403、`Origin: null` 403、本机 Origin 200 且 ACAO 回显、`Sec-Fetch-Site: cross-site` 403、`Host: evil.com` 403、`text/plain` POST 415、`/etc/passwd` 403；页面响应含全部安全头。 |
 | 0.0.0.4 | 2026-11-02 | **JS 执行环境对齐 F12**：①**删除「文档窗口」这个自作聪明的改道**——`document.write` 现在就是 `document.write`，文档加载完后调用会隐式 `open()` 清空整页，终端一起没，这是浏览器行为，不拦。②**`document.body.innerHTML` 直写宿主**，不再重定向；`el.textContent`/`style`/`classList`/`appendChild`/`insertAdjacentHTML`/`remove()` 全部直达。③**元素句柄换成 Proxy**：`tagName`/`id`/`className`/`children`/`parentNode`/`outerHTML`/`getBoundingClientRect()`/`getComputedStyle(el).color` 都是真属性；`createElement` 在主线程建真游离节点，`appendChild` 才入 DOM。④**同步读靠预取**：执行前从代码里抠出 `querySelector('…')`/`page.q('…')`/`getElementById('…')` 的字面量，一次 `prefetch` 拉回 innerHTML/rect/computed；动态拼接的选择器第一次为空。⑤**事件回放**：`addEventListener` 在主线程注册真实捕获监听，事件描述异步发回 Worker 再调回调（`preventDefault` 无效，跨线程的代价）。⑥**`page.eval(code)`**：主线程间接 `eval`，100% 原生，含「返回最后一条表达式」语义。⑦**window 补齐**：`innerWidth/innerHeight/devicePixelRatio/scrollX/scrollY` 走快照、`requestAnimationFrame`（16ms 定时器）、`matchMedia`、`history`（既列命令历史又带 `length/back/pushState`）、`top/parent/frames === window`、`document.location === location`；`navigator` 不再覆盖成假对象。⑧**`Object.assign(globalThis, api)` 改逐个赋值**，修 Worker 只读访问器导致 shell 起不来的问题；`open()` 支持 URL。⑨实测——`document.write` 后 `#desk` 消失、`<h1 id=hi>` 出现；`body.innerHTML` 后只剩新内容；`createElement`+`appendChild` 真进 `#topbar`；`el.style.color` 真改；`el.addEventListener('click')` 回放后 `document.title` 变 `CLICKED`；`page.eval('1+1')` → 2；`getBoundingClientRect().height` → 54；s1–s14 回归全绿。 |
@@ -1198,6 +1222,7 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 13:05 | 0.0.1.0 里程碑：一致性梳理（补 `.bin` 可执行、`chmod`、`sudo`、`nuke`、长名 API、5 条 shell 命令、file:// 说明、版本号残留） | `build/30-core.js`（`FS.write` 保留/推断 kind、`askFile` 保留扩展名、`.sys.license` 清单）、`build/25-compat.js`（`chmod`/`sleep`/`rev`/`tee`/`stat`/`xargs`、`sudo`、`diff` 报错）、`build/20-worker.js`（`nuke()`、长名别名、`settings`/`threads`、`inspect` 的 Module 分支、Python 横幅、`HT_VERSION`）、`build/70-boot.js`（`nuke.run`/`settings.set`/`settings.all` RPC、`refresh`/`checkBackend` 判空、`file://` 提示、启动即注入版本）、`build/60-agent.js`（`file://` 下的报错文案）、`build/10-body.html`（版本占位符）、`build/00-head.html`（许可注释）、`build/65-tui.js`（注释更正）、`README.md`（11 章说明、9 章 Python 说明、踩坑 29 条、日志）、`IDEAS.md`（对话持久化待办） | playwright：`.bin.hi`→42、`chmod +x/-x` 可逆、`sudo echo B` 一次、`nuke()` 确认后 `.home` 只剩 readme/welcome、`remove/move/copy/openWindow/closeWindow/listWindows/openURL/threads/settings` 全部 define、`sleep 1` 真等 1 秒、`tee/rev/xargs/stat` 正确、`askFile`→`.queryfile.hello-txt`、`require('lodash-es@4')` 回显 `Module(322 exports)` 且 `_.chunk` 可用、启动屏与抽屉显示 `0.0.1.0`、`page.q`/`page.eval`/`document.title`/`1+1` 无回归 | `main` |
 | 2026-11-02 12:35 | 第三方许可证补齐 + `check-licenses.sh` + 对话持久化立项 | `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`（新增，上游原文）、`licenses/README.md`（6 项清单、xterm 三个包共用 MIT、Markdown 渲染说明更正）、`check-licenses.sh`（新增）、`README.md`（11 章表、页脚版本、日志）、`IDEAS.md`（新增：对话持久化待办） | `./check-licenses.sh` → 6 项全「已登记」exit 0、4 个 `LICENSE.*.txt` 全存在；反向测试塞 `left-pad@1.3.0` → 「缺失 ✗」exit 1；playwright 起后端加载 `127.0.0.1:8787` 无 pageerror、`1+1`→`2`（确认 0.0.0.5 的安全头没把前端打挂） | `main` |
 | 2026-11-02 12:40 | 后端安全加固：拒绝跨域与 null Origin（0.0.0.5） | `modelserver.py`（`origin_allowed` 拒 null、`security_headers`、`_deny` 日志、`local_only` 四重校验、`Content-Type` 415、`serve_index` 带头）、`modelserver.js`（同上，`LOCAL_NAMES`/`securityHeaders`/`deny`）、`modelserver.go`（同上，`securityHeaders`/`deny`）、`build/30-core.js`（版本）、`IDEAS.md`（许可证待办）、`README.md`（13 章安全模型重写、日志） | curl 三份后端：正常 200、evil Origin 403、null Origin 403、本机 Origin 200+ACAO、cross-site 403、坏 Host 403、text/plain POST 415、任意路径 403；`X-Frame-Options`/`frame-ancestors`/`CORP`/`COOP`/`Referrer-Policy`/`Permissions-Policy` 均在。Go `go build` 通过、JS `node --check` 通过 | `main` |
 | 2026-11-02 12:10 | DOM 与 F12 对齐：真写、真节点、同步预取、事件回放（0.0.0.4） | `build/20-worker.js`（重写 DOM 代理：`DOMC` 镜像 + `nodeProxy` Proxy 句柄 + `prefetchDom` + `document` 重写 + `windowShim`、`Object.assign` 改逐个赋值、`open()` 认 URL、`self.onmessage` 加 `dom-event`）、`build/65-tui.js`（`DomRpc` 重写：`docWrite` 真调、`_tagAs` 预分配 ref、`snap`/`prefetch`/`queryAs`/`allIn`/`createAs`/`cloneAs`/`evalPage`/`listen` 事件转发、`_desc` 截断）、`build/40-term.js`（`_domSink` 注册与注销）、`build/70-boot.js`（`refresh` 加 null 守卫）、`build/30-core.js`（版本号）、`modelserver.{py,js,go}`（版本）、`IDEAS.md`（许可证待办）、`README.md`（5.3 重写、踩坑 27–29、日志） | 无头 Chromium：`document.write` 清空整页（`#desk` 消失、`#hi` 出现）、`body.innerHTML` 直写、`createElement`+`appendChild` 真入 `#topbar`、`style.color`/`classList`/`insertAdjacentHTML`/`remove` 生效、`el.addEventListener('click')` 回放后 `document.title=CLICKED`、`page.eval('1+1')=2`、`getBoundingClientRect().height=54`、`getComputedStyle().height=54px`、`matchMedia` 正确；s1–s14 回归全绿 | `main` |
@@ -1253,7 +1278,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 17 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 29 条）由 AI 与人类共同排查完成
 
 这意味着：
 
@@ -1267,5 +1292,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>hterminal 0.0.0.5 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>hterminal 0.0.1.0 · 桌面就是终端 · 一切皆文件</sub>
 </p>

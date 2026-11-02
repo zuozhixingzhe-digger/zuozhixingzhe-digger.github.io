@@ -4,8 +4,8 @@
   Copyright (c) 2026 hterminal contributors
   SPDX-License-Identifier: Apache-2.0 OR MIT  （双许可，任选其一）
   本文件由 AI 智能体（WorkBuddy）生成并维护。第三方组件经 CDN 引用：
-  xterm.js（MIT）、@xterm/addon-fit（MIT）、Pyodide（MPL-2.0）。
-  完整许可原文见仓库 licenses/ 与 README「许可证」一节。
+  xterm.js、@xterm/addon-fit、@xterm/addon-unicode11、marked、html2canvas（均 MIT），
+  Pyodide（MPL-2.0）。完整许可原文见仓库 licenses/ 与 README「许可证」一节。
   注意：本项目不接受任何与 Apache-2.0 或 MIT 不兼容的代码/资源。
 -->
 <html lang="zh-CN">
@@ -892,7 +892,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
         js in the browser · everything is a file</div>
-      <div class="boot-title">hterminal <span id="bootVer">0.0.0.2</span></div>
+      <div class="boot-title">hterminal <span id="bootVer">—</span></div>
       <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
       <div class="boot-bar"><i id="bootBar"></i></div>
       <div class="boot-log" id="bootLog">init</div>
@@ -919,7 +919,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   <div class="drawer__user">
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
-      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">0.0.0.2</span></div>
+      <div class="drawer__uname">hterminal <span class="drawer__ver" id="drVersion">—</span></div>
       <div class="drawer__sub" id="drSub">jshel · .home</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
@@ -1073,7 +1073,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 /** 版本号由主线程的 init 消息注入（前端唯一来源是 30-core.js 的 HT_VERSION）。
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
-let HT_VERSION = '0.0.0.2';
+let HT_VERSION = '0.0.1.0';
 
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
@@ -1127,6 +1127,13 @@ function inspect(v, depth, seen) {
   }
   if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
   if (v instanceof Promise) return 'Promise { <pending> }';
+  /* ESM 命名空间对象：`await require('lodash-es@4')` 会回显几百行导出，
+   * 把整个终端刷掉。这里只报「是哪个包、有几个导出」，要看细节自己去点。 */
+  if (v && v[Symbol.toStringTag] === 'Module') {
+    const ks = Object.keys(v);
+    return ANSI.gray + 'Module(' + ks.length + ' exports) { ' + ks.slice(0, 8).join(', ')
+      + (ks.length > 8 ? ', …' : '') + ' }' + ANSI.reset;
+  }
   if (seen.has(v)) return ANSI.gray + '[Circular]' + ANSI.reset;
   if (depth > 4) return ANSI.gray + '…' + ANSI.reset;
   seen.add(v);
@@ -1818,6 +1825,14 @@ function makeShell(ctx) {
     out((ok ? ANSI.green + '已终止 ' : ANSI.red + '没有这个进程 ') + pid + ANSI.reset + '\r\n');
   }
 
+  /* 清空一切。真正的活在主线程（要处理 IndexedDB 连接、caches、SW），
+   * 这里只负责喊一声。以前 README 让用户「终端里敲 nuke()」，但 Worker 里根本没这个函数，
+   * 敲下去是 `nuke is not defined` —— 这个洞一直没人发现。 */
+  async function nuke() {
+    out(ANSI.yellow + '清除全部本地数据：确认后文件系统、依赖缓存、历史、设置都会没，然后重新加载。' + ANSI.reset + '\r\n');
+    await call('nuke.run').catch(() => {});
+  }
+
   async function df() {
     const u = await call('fs.usage');
     out('Filesystem      Size    Used   Avail  Use%  Mounted\r\n');
@@ -1836,7 +1851,7 @@ function makeShell(ctx) {
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
-      ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  clear()  history()'],
+      ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
@@ -2003,7 +2018,19 @@ function makeShell(ctx) {
     // 窗口 / 系统
     python, py:python, spawn, winOpen, winClose, winList, agentOpen,
     saveFile, askFile, fetchText, openUrl, notify, perm, requestPermission:perm,
-    whoami, uname, date, echo, env, ps, kill, clear, history:historyList, help, exit,
+    /* 别名：README 第 11 节那张表里用的是长名字（remove / move / copy / openWindow …），
+     * 但实现里叫 rm / mv / cp / winOpen。两边对不上，用户照着 README 敲就是 undefined。
+     * 这里把长名字补齐，短名字保留——两套都能用。 */
+    remove:rm, move:mv, copy:cp,
+    openWindow:winOpen, closeWindow:winClose, listWindows:winList,
+    openURL:openUrl,
+    threads:{ list:() => call('proc.list'), kill },
+    settings:{
+      get:(k) => call('settings.get', k),
+      set:(k, v) => call('settings.set', String(k), v),
+      all:() => call('settings.all')
+    },
+    whoami, uname, date, echo, env, ps, kill, nuke, clear, history:historyList, help, exit,
     sleep:(ms) => new Promise(r => setTimeout(r, ms)),
     uuid:() => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2)),
     // 内建对象
@@ -3006,7 +3033,11 @@ builtins.input = _ht_input
 
   const version = py.runPython('sys.version.split()[0]');
   out(ANSI.green + 'Python ' + version + ' on Pyodide' + ANSI.reset + '\r\n');
-  out(ANSI.gray + '输入 exit() 或 Ctrl+D 返回 shell。' + ANSI.reset + '\r\n\r\n');
+  out(ANSI.gray + '输入 exit() 或 Ctrl+D 返回 shell。' + ANSI.reset + '\r\n');
+  /* 说清楚一件事：Pyodide 跑在同一个 Worker 里，没有 SharedArrayBuffer 就没有中断通道，
+   * `while True: pass` 会把整个终端卡死（Ctrl+C 也救不回来，只能刷新页面）。
+   * 与其让用户以为按键坏了，不如先把代价写在脸上。 */
+  out(ANSI.gray + '注意：同步死循环无法中断（Ctrl+C 也不行），卡住了只能刷新页面。' + ANSI.reset + '\r\n\r\n');
   ready = true;
   post({ t:'ready' });
 
@@ -3705,8 +3736,84 @@ const COMPAT = (function () {
   def('less', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
   def('more', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
 
+  /* 下面五条 README 一直列着、实现里却没有：敲下去会被当成 JS 表达式（`xargs is not defined`），
+   * 或者更糟——`sleep 2` 落到 JS 的 sleep(ms) 上，2 毫秒就回来了。趁梳理补齐。 */
+  def('sleep', async (a) => {
+    const t = parseFloat(a.find(x => !x.startsWith('-')) || '0') || 0;
+    await new Promise(r => setTimeout(r, Math.max(0, t) * 1000));
+    return { code: 0 };
+  }, '等待 N 秒');
+
+  def('rev', async (a, stdin) => {
+    const s = a.length ? await readText(await realPath(a[0])) : (stdin || '');
+    return { code: 0, out: String(s).split('\n').map(l => Array.from(l).reverse().join('')).join('\n') };
+  }, '逐行反转');
+
+  def('tee', async (a, stdin) => {
+    const files = a.filter(x => !x.startsWith('-'));
+    for (const f of files) await IO.call('fs.write', await realPath(f), stdin || '', { mime:'text/plain' });
+    return { code: 0, out: stdin || '' };
+  }, '写文件同时放行');
+
+  def('stat', async (a) => {
+    if (!a.length) return { code: 1, err: 'stat: 缺少操作数\n' };
+    let s = '';
+    for (const f of a) {
+      const p = await realPath(f);
+      const st = await IO.call('fs.stat', p).catch(() => null);
+      if (!st) return { code: 1, err: 'stat: 无法访问 ' + f + ': 不存在\n' };
+      s += '  文件: ' + p + '\n  类型: ' + st.kind + '\n  大小: ' + (st.size || 0)
+        + '\n  修改: ' + new Date(st.mtime).toLocaleString('zh-CN') + '\n';
+    }
+    return { code: 0, out: s };
+  }, '文件元数据');
+
+  def('xargs', async (a, stdin) => {
+    const items = String(stdin || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (!items.length) return { code: 0 };
+    const head = a.length ? a : ['echo'];
+    let code = 0;
+    for (const it of items) {
+      /* 逐个跑，输出由内层 execCommandTokens 直接打到终端 */
+      const r = await execCommandTokens(lex(head.concat([it]).join(' ')), '', {});
+      code = (r && r.code) || 0;
+    }
+    return { code };
+  }, '把 stdin 的每行当参数执行命令');
+
+  /* chmod 在真 Linux 上改的是权限位，这里只有一位有意义：x（可执行）。
+   * 可执行 = 文件的 kind 是 'func'，exec() 会把 content 编译成 AsyncFunction。
+   * 写内容不会改 kind（见 30-core.js 的 FS.write），所以 +x 之后再用 vim 改代码，
+   * 存盘也不会把可执行位弄丢。 */
+  def('chmod', async (a) => {
+    const spec = a.find(x => /^[+-][rwxXst]+$/.test(x)) || '';
+    const files = a.filter(x => !/^[+-][rwxXst]+$/.test(x));
+    if (!spec || !files.length) {
+      return { code: 1, err: 'chmod: 用法 chmod +x <文件>（本文件系统只有「可执行」这一位，支持 +x / -x）\n' };
+    }
+    const add = spec[0] === '+';
+    for (const f of files) {
+      const p = await realPath(f);
+      const st = await IO.call('fs.stat', p).catch(() => null);
+      if (!st) return { code: 1, err: 'chmod: ' + f + ': 不存在\n' };
+      if (st.kind === 'dir') return { code: 1, err: 'chmod: ' + f + ': 是目录\n' };
+      const r = await IO.call('fs.read', p);
+      const meta = Object.assign({}, r.meta || {}, add
+        ? { kind: 'func', interpreter: 'js' }
+        : { kind: 'file' });
+      await IO.call('fs.write', p, r.content, meta);
+    }
+    return { code: 0, out: '' };
+  }, '改可执行位（chmod +x / -x）');
+
   def('diff', async (a) => {
     if (a.length < 2) return { code: 1, err: 'diff: 需要两个文件\n' };
+    /* 不存在就报错：以前两个 readText 都 .catch(()=>'')，两个不存在的文件「没有差异」，
+     * 退出码 0，脚本里根本发现不了自己写错了路径。 */
+    for (const f of a.slice(0, 2)) {
+      const st = await IO.call('fs.stat', await realPath(f)).catch(() => null);
+      if (!st) return { code: 2, err: 'diff: ' + f + ': 没有那个文件\n' };
+    }
     const p = await readText(await realPath(a[0])).catch(() => '');
     const q = await readText(await realPath(a[1])).catch(() => '');
     const A = p.split('\n'), B = q.split('\n');
@@ -3998,7 +4105,11 @@ const COMPAT = (function () {
   def('su', async () => ({ err: 'su: 单用户环境\n', code: 1 }), '');
   def('sudo', async (a) => {
     if (!a.length) return { code: 1, err: 'sudo: 需要命令\n' };
-    return execCommandTokens(lex(a.join(' ')), '', { sudo:true });
+    /* 嵌套执行：被包裹的命令自己在最后一节就把 stdout 打出去了，
+     * 这里只把退出码往上带。以前直接 `return execCommandTokens(...)`，
+     * 外层又按 res.out 打一遍，于是 `sudo ls` 会打印两次。 */
+    const r = await execCommandTokens(lex(a.join(' ')), '', { sudo:true });
+    return { code:(r && r.code) || 0, hold: r && r.hold };
   }, '以当前用户执行（本环境无权限模型）');
 
   def('apt', async () => ({ err: 'apt: 本终端用 npm 生态，请用 `install <包名>` 或 install_pkg\n', code: 1 }), '');
@@ -4185,7 +4296,7 @@ const COMPAT = (function () {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.5';
+const HT_VERSION = '0.0.1.0';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -4556,9 +4667,12 @@ print('已放入', p, '，共', lines, '行');`
 Copyright (c) 2026 hterminal contributors
 
 本项目由 AI 智能体生成并维护。第三方组件：
-  xterm.js                 MIT
-  @xterm/addon-fit         MIT
-  Pyodide                  MPL-2.0
+  xterm.js                   MIT
+  @xterm/addon-fit           MIT
+  @xterm/addon-unicode11     MIT
+  marked                     MIT
+  html2canvas                MIT
+  Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
   '.sys.about': { kind:'file', mime:'text/plain', content:`hterminal
 浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
@@ -4861,8 +4975,18 @@ const FS = {
       return { path:p, name:seg, kind:'file', size:String(data || '').length, mtime:rec.mtime, meta };
     }
     let kind = meta.kind || 'file';
-    if (!this.exists(p) && /\.bin\./.test(p)) kind = kind || 'file';
     const old = this.idx.get(p);
+    /* kind 不随「写内容」丢失，这是两处必须一起改的地方：
+     * ①改一个已有的 .bin 函数（比如 vim 里存盘）不能把它降级成普通文本，否则下次 exec 就报
+     *   「不是可执行对象」；
+     * ②新建 .bin.* 默认就是可执行函数——README 说过「.bin 里放的是函数，content 被编译成
+     *   AsyncFunction」。以前这里有一行 `if (!this.exists(p) && /\.bin\./.test(p)) kind = kind || 'file'`，
+     *   等于什么都没做（kind 本来就是 'file'），于是 `write('.bin.hi','return 42')` 之后
+     *   `exec('.bin.hi')` 必然失败。 */
+    if (!meta.kind) {
+      if (old && old.kind && old.kind !== 'dir') kind = old.kind;
+      else if (/^\.bin\./.test(p)) kind = 'func';
+    }
     const rec = {
       path:p, parent:parentPath(p), name:seg, kind,
       content:data == null ? '' : data, meta,
@@ -5189,7 +5313,11 @@ async function askFile(opts) {
   if (!files.length) return opts.multiple ? [] : null;
   const out = [];
   for (const f of files) {
+    /* 名字里不能有点（点就是路径分隔符），但直接把扩展名剁掉会让 a.txt / a.md 撞成同一个
+     * `a`。折中：`hello.txt` → `hello-txt`，既守命名规则，又能一眼看出是什么。 */
     let name = sanitizeName(f.name, 'query');
+    const ext = String(f.name || '').match(/\.([\p{L}\p{N}_-]{1,8})$/u);
+    if (ext && !name.endsWith('-' + ext[1])) name += '-' + ext[1];
     let path = '.queryfile.' + name;
     let n = 2;
     while (FS.exists(path)) { path = '.queryfile.' + name + '-' + n; n++; }
@@ -7709,6 +7837,13 @@ class AgentApp {
         payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
       }
     } else {
+      /* file:// 的 Origin 是 null，后端的 null 校验会直接 403（与恶意 sandbox iframe 无法区分），
+       * 与其让用户看一条 CORS 报错，不如在这里说清楚该怎么办。 */
+      if (location.protocol === 'file:') {
+        throw new Error('这个页面是 file:// 打开的，浏览器把它的 Origin 置为 null，后端会当成跨站请求拒绝。'
+          + '请用 `python3 modelserver.py` 启动后打开 http://127.0.0.1:8787/ ，'
+          + '或在「更多 → 智能体」里勾选「直连 API」。');
+      }
       const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
       if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
       endpoint = base + '/v1/chat/completions';
@@ -7952,7 +8087,7 @@ class AgentApp {
  * 这个文件解决四件事：
  *   1. 依赖只为「第一次」付网费：CDN 脚本与样式抓一次就进 IndexedDB，
  *      以后所有终端、所有窗口共用同一份，不再每个 session 重下一遍。
- *   2. 振动反馈：移动端按键、智能体完成/失败时的短振动。
+ *   2. 振动反馈：**只给方向摇杆**用，键盘输入不震（见下方说明）。
  *   3. 截图：把页面 / 某个元素 / 某个窗口截成 PNG，给智能体做视觉诊断用。
  *   4. TUI 智能体与嵌套 shell：让 AI 和人都能在终端里用函数式接口操作。
  * ==========================================================================*/
@@ -8797,6 +8932,8 @@ const RPC = {
       case 'history.get': return loadHistory();
       case 'history.set': saveHistoryList(a[0] || []); return true;
       case 'settings.get': return Settings.get(a[0]);
+      case 'settings.set': Settings.set(a[0], a[1]); return true;
+      case 'settings.all': return Settings.all();
       case 'pkg.list': return Pkg.list();
       case 'pkg.add': Pkg.add(a[0]); return true;
       case 'pkg.remove': Pkg.remove(a[0]); return true;
@@ -8827,6 +8964,9 @@ const RPC = {
         return true;
       }
       case 'perm.request': return await requestPermission(a[0]);
+      /* 终端里敲 nuke()：清空所有本地数据并重载。真正的清理逻辑在主线程，
+       * Worker 只发一条 RPC——因为 wipeAllStorage 要关 IndexedDB 连接、删库、清 caches。 */
+      case 'nuke.run': { nuke(); return true; }
       case 'notify': {
         const msg = String(a[0] || '');
         if ('Notification' in window && Notification.permission === 'granted') {
@@ -9098,18 +9238,24 @@ const Drawer = {
   async refresh() {
     /* 页面可能已经被 document.write / body.innerHTML 整个拆掉了——那是用户
      * 明确要求的「和 F12 一样」。这时 #st* 全是 null，直接跳过，
-     * 不要每 2 秒往控制台丢一堆 TypeError。 */
+     * 不要每 2 秒往控制台丢一堆 TypeError。
+     *
+     * 注意光在开头判一次不够：await 期间页面照样能被拆掉，回来时
+     * `$('#stUsage')` 已经是 null（0.0.0.4 实测会冒一条
+     * "Cannot set properties of null (setting 'textContent')"）。
+     * 所以这里统一用 set()：拿不到元素就什么都不做。 */
+    const set = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
     if (!document.getElementById('stSession')) return;
     try {
       const u = await FS.usage();
-      $('#stUsage').textContent = (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB';
-      $('#stFiles').textContent = String(FS.idx.size);
+      set('#stUsage', (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB');
+      set('#stFiles', String(FS.idx.size));
     } catch (e) {}
-    $('#stSession').textContent = (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers';
-    $('#stHist').textContent = String(loadHistory().length);
+    set('#stSession', (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
+    set('#stHist', String(loadHistory().length));
     try {
       const d = await DepCache.usage();
-      if ($('#stDeps')) $('#stDeps').textContent = d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空';
+      set('#stDeps', d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空');
     } catch (e) {}
     try {
       const d = await DepCache.list();
@@ -9122,6 +9268,14 @@ const Drawer = {
   },
   async checkBackend() {
     const el = $('#stBackend');
+    if (!el) return;   /* 页面可能已被 document.write 拆掉 */
+    /* file:// 页面的 Origin 是 null，后端一律拒（见 README「双击打开 ≠ 能用后端」）。
+     * 这里不发起请求，直接说清楚状态，免得每次开抽屉都往控制台丢一条 CORS 错误。 */
+    if (location.protocol === 'file:') {
+      el.textContent = 'file:// 下不可用 · 请用 modelserver 打开';
+      el.style.color = 'var(--fg-mute)';
+      return;
+    }
     const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
     if (!base) { el.textContent = '未配置'; return; }
     try {
@@ -9425,6 +9579,13 @@ async function boot() {
     if (bar) bar.style.width = p + '%';
     if (logEl) logEl.textContent = msg;
   };
+
+  /* 版本号先写：启动屏在第一帧就该显示对的号，而不是 HTML 里的占位符。
+   * 只有 30-core.js 的 HT_VERSION 是唯一来源，这里不重复定义。 */
+  ['#tbVer', '#drVersion', '#bootVer'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if (el) el.textContent = HT_VERSION;
+  });
 
   try {
     step('读取设置', 5);

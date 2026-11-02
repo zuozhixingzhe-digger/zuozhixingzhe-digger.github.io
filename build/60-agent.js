@@ -600,6 +600,13 @@ class AgentApp {
         payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
       }
     } else {
+      /* file:// 的 Origin 是 null，后端的 null 校验会直接 403（与恶意 sandbox iframe 无法区分），
+       * 与其让用户看一条 CORS 报错，不如在这里说清楚该怎么办。 */
+      if (location.protocol === 'file:') {
+        throw new Error('这个页面是 file:// 打开的，浏览器把它的 Origin 置为 null，后端会当成跨站请求拒绝。'
+          + '请用 `python3 modelserver.py` 启动后打开 http://127.0.0.1:8787/ ，'
+          + '或在「更多 → 智能体」里勾选「直连 API」。');
+      }
       const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
       if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
       endpoint = base + '/v1/chat/completions';

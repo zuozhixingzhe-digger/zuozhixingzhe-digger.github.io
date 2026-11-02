@@ -27,6 +27,8 @@ const RPC = {
       case 'history.get': return loadHistory();
       case 'history.set': saveHistoryList(a[0] || []); return true;
       case 'settings.get': return Settings.get(a[0]);
+      case 'settings.set': Settings.set(a[0], a[1]); return true;
+      case 'settings.all': return Settings.all();
       case 'pkg.list': return Pkg.list();
       case 'pkg.add': Pkg.add(a[0]); return true;
       case 'pkg.remove': Pkg.remove(a[0]); return true;
@@ -57,6 +59,9 @@ const RPC = {
         return true;
       }
       case 'perm.request': return await requestPermission(a[0]);
+      /* 终端里敲 nuke()：清空所有本地数据并重载。真正的清理逻辑在主线程，
+       * Worker 只发一条 RPC——因为 wipeAllStorage 要关 IndexedDB 连接、删库、清 caches。 */
+      case 'nuke.run': { nuke(); return true; }
       case 'notify': {
         const msg = String(a[0] || '');
         if ('Notification' in window && Notification.permission === 'granted') {
@@ -328,18 +333,24 @@ const Drawer = {
   async refresh() {
     /* 页面可能已经被 document.write / body.innerHTML 整个拆掉了——那是用户
      * 明确要求的「和 F12 一样」。这时 #st* 全是 null，直接跳过，
-     * 不要每 2 秒往控制台丢一堆 TypeError。 */
+     * 不要每 2 秒往控制台丢一堆 TypeError。
+     *
+     * 注意光在开头判一次不够：await 期间页面照样能被拆掉，回来时
+     * `$('#stUsage')` 已经是 null（0.0.0.4 实测会冒一条
+     * "Cannot set properties of null (setting 'textContent')"）。
+     * 所以这里统一用 set()：拿不到元素就什么都不做。 */
+    const set = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
     if (!document.getElementById('stSession')) return;
     try {
       const u = await FS.usage();
-      $('#stUsage').textContent = (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB';
-      $('#stFiles').textContent = String(FS.idx.size);
+      set('#stUsage', (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB');
+      set('#stFiles', String(FS.idx.size));
     } catch (e) {}
-    $('#stSession').textContent = (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers';
-    $('#stHist').textContent = String(loadHistory().length);
+    set('#stSession', (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
+    set('#stHist', String(loadHistory().length));
     try {
       const d = await DepCache.usage();
-      if ($('#stDeps')) $('#stDeps').textContent = d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空';
+      set('#stDeps', d.count ? (d.count + ' 项 · ' + (d.bytes / 1024 / 1024).toFixed(1) + ' MB') : '空');
     } catch (e) {}
     try {
       const d = await DepCache.list();
@@ -352,6 +363,14 @@ const Drawer = {
   },
   async checkBackend() {
     const el = $('#stBackend');
+    if (!el) return;   /* 页面可能已被 document.write 拆掉 */
+    /* file:// 页面的 Origin 是 null，后端一律拒（见 README「双击打开 ≠ 能用后端」）。
+     * 这里不发起请求，直接说清楚状态，免得每次开抽屉都往控制台丢一条 CORS 错误。 */
+    if (location.protocol === 'file:') {
+      el.textContent = 'file:// 下不可用 · 请用 modelserver 打开';
+      el.style.color = 'var(--fg-mute)';
+      return;
+    }
     const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
     if (!base) { el.textContent = '未配置'; return; }
     try {
@@ -655,6 +674,13 @@ async function boot() {
     if (bar) bar.style.width = p + '%';
     if (logEl) logEl.textContent = msg;
   };
+
+  /* 版本号先写：启动屏在第一帧就该显示对的号，而不是 HTML 里的占位符。
+   * 只有 30-core.js 的 HT_VERSION 是唯一来源，这里不重复定义。 */
+  ['#tbVer', '#drVersion', '#bootVer'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if (el) el.textContent = HT_VERSION;
+  });
 
   try {
     step('读取设置', 5);

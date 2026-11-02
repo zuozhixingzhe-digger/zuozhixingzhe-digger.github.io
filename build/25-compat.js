@@ -598,8 +598,84 @@ const COMPAT = (function () {
   def('less', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
   def('more', async (a, stdin) => ({ out: stdin, page: true }), '分页查看');
 
+  /* 下面五条 README 一直列着、实现里却没有：敲下去会被当成 JS 表达式（`xargs is not defined`），
+   * 或者更糟——`sleep 2` 落到 JS 的 sleep(ms) 上，2 毫秒就回来了。趁梳理补齐。 */
+  def('sleep', async (a) => {
+    const t = parseFloat(a.find(x => !x.startsWith('-')) || '0') || 0;
+    await new Promise(r => setTimeout(r, Math.max(0, t) * 1000));
+    return { code: 0 };
+  }, '等待 N 秒');
+
+  def('rev', async (a, stdin) => {
+    const s = a.length ? await readText(await realPath(a[0])) : (stdin || '');
+    return { code: 0, out: String(s).split('\n').map(l => Array.from(l).reverse().join('')).join('\n') };
+  }, '逐行反转');
+
+  def('tee', async (a, stdin) => {
+    const files = a.filter(x => !x.startsWith('-'));
+    for (const f of files) await IO.call('fs.write', await realPath(f), stdin || '', { mime:'text/plain' });
+    return { code: 0, out: stdin || '' };
+  }, '写文件同时放行');
+
+  def('stat', async (a) => {
+    if (!a.length) return { code: 1, err: 'stat: 缺少操作数\n' };
+    let s = '';
+    for (const f of a) {
+      const p = await realPath(f);
+      const st = await IO.call('fs.stat', p).catch(() => null);
+      if (!st) return { code: 1, err: 'stat: 无法访问 ' + f + ': 不存在\n' };
+      s += '  文件: ' + p + '\n  类型: ' + st.kind + '\n  大小: ' + (st.size || 0)
+        + '\n  修改: ' + new Date(st.mtime).toLocaleString('zh-CN') + '\n';
+    }
+    return { code: 0, out: s };
+  }, '文件元数据');
+
+  def('xargs', async (a, stdin) => {
+    const items = String(stdin || '').split('\n').map(x => x.trim()).filter(Boolean);
+    if (!items.length) return { code: 0 };
+    const head = a.length ? a : ['echo'];
+    let code = 0;
+    for (const it of items) {
+      /* 逐个跑，输出由内层 execCommandTokens 直接打到终端 */
+      const r = await execCommandTokens(lex(head.concat([it]).join(' ')), '', {});
+      code = (r && r.code) || 0;
+    }
+    return { code };
+  }, '把 stdin 的每行当参数执行命令');
+
+  /* chmod 在真 Linux 上改的是权限位，这里只有一位有意义：x（可执行）。
+   * 可执行 = 文件的 kind 是 'func'，exec() 会把 content 编译成 AsyncFunction。
+   * 写内容不会改 kind（见 30-core.js 的 FS.write），所以 +x 之后再用 vim 改代码，
+   * 存盘也不会把可执行位弄丢。 */
+  def('chmod', async (a) => {
+    const spec = a.find(x => /^[+-][rwxXst]+$/.test(x)) || '';
+    const files = a.filter(x => !/^[+-][rwxXst]+$/.test(x));
+    if (!spec || !files.length) {
+      return { code: 1, err: 'chmod: 用法 chmod +x <文件>（本文件系统只有「可执行」这一位，支持 +x / -x）\n' };
+    }
+    const add = spec[0] === '+';
+    for (const f of files) {
+      const p = await realPath(f);
+      const st = await IO.call('fs.stat', p).catch(() => null);
+      if (!st) return { code: 1, err: 'chmod: ' + f + ': 不存在\n' };
+      if (st.kind === 'dir') return { code: 1, err: 'chmod: ' + f + ': 是目录\n' };
+      const r = await IO.call('fs.read', p);
+      const meta = Object.assign({}, r.meta || {}, add
+        ? { kind: 'func', interpreter: 'js' }
+        : { kind: 'file' });
+      await IO.call('fs.write', p, r.content, meta);
+    }
+    return { code: 0, out: '' };
+  }, '改可执行位（chmod +x / -x）');
+
   def('diff', async (a) => {
     if (a.length < 2) return { code: 1, err: 'diff: 需要两个文件\n' };
+    /* 不存在就报错：以前两个 readText 都 .catch(()=>'')，两个不存在的文件「没有差异」，
+     * 退出码 0，脚本里根本发现不了自己写错了路径。 */
+    for (const f of a.slice(0, 2)) {
+      const st = await IO.call('fs.stat', await realPath(f)).catch(() => null);
+      if (!st) return { code: 2, err: 'diff: ' + f + ': 没有那个文件\n' };
+    }
     const p = await readText(await realPath(a[0])).catch(() => '');
     const q = await readText(await realPath(a[1])).catch(() => '');
     const A = p.split('\n'), B = q.split('\n');
@@ -891,7 +967,11 @@ const COMPAT = (function () {
   def('su', async () => ({ err: 'su: 单用户环境\n', code: 1 }), '');
   def('sudo', async (a) => {
     if (!a.length) return { code: 1, err: 'sudo: 需要命令\n' };
-    return execCommandTokens(lex(a.join(' ')), '', { sudo:true });
+    /* 嵌套执行：被包裹的命令自己在最后一节就把 stdout 打出去了，
+     * 这里只把退出码往上带。以前直接 `return execCommandTokens(...)`，
+     * 外层又按 res.out 打一遍，于是 `sudo ls` 会打印两次。 */
+    const r = await execCommandTokens(lex(a.join(' ')), '', { sudo:true });
+    return { code:(r && r.code) || 0, hold: r && r.hold };
   }, '以当前用户执行（本环境无权限模型）');
 
   def('apt', async () => ({ err: 'apt: 本终端用 npm 生态，请用 `install <包名>` 或 install_pkg\n', code: 1 }), '');
