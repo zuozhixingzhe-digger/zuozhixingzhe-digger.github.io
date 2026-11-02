@@ -1245,6 +1245,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 改依赖后跑一次 `./check-licenses.sh`：它扫 `build/*.js` 与 `index.html` 里所有 CDN 地址，
 比对 [`licenses/README.md`](licenses/README.md) 的登记表，缺一行就 exit 1。
+`./build.sh` 已经把它放在第一步——**漏登记的依赖构建不出产物**。
 
 ## 12. AI 生成内容声明
 

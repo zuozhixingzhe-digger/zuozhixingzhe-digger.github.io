@@ -5,6 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# 构建前先确认所有 CDN 依赖都在 licenses/README.md 登记过
+# 静默通过，失败才把整张表打出来——不让「漏登记」的产物被构建出来
+if ! ./check-licenses.sh > /tmp/ht-licenses.log 2>&1; then
+  cat /tmp/ht-licenses.log
+  echo "构建中止：有第三方依赖未登记许可证。" >&2
+  exit 1
+fi
+
 python3 - <<'PY'
 parts = []
 for f in ['build/00-head.html', 'build/10-body.html']:
