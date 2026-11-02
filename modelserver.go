@@ -28,7 +28,7 @@ import (
 	"time"
 )
 
-const version = "0.0.0.4"
+const version = "0.0.0.5"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -511,9 +511,19 @@ func firstNonNil(vals ...any) any {
 	return nil
 }
 
+/* originAllowed：只认本机页面。
+ *
+ *   - 空（同源导航 / curl）：允许
+ *   - "null"：拒绝。sandbox iframe / data: 页面的 Origin 就是 null，
+ *     放过它等于任何网站都能用 <iframe sandbox srcdoc="fetch(...)"> 打本地端口。
+ *   - 其它：必须 http(s) 且 host 是本机名。端口不卡死（本地开发常换端口）。
+ */
 func originAllowed(origin string) bool {
-	if origin == "" || origin == "null" {
+	if origin == "" {
 		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(origin), "null") {
+		return false
 	}
 	u, err := url.Parse(origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
@@ -523,8 +533,20 @@ func originAllowed(origin string) bool {
 	return h == "127.0.0.1" || h == "localhost" || h == "::1"
 }
 
+/* securityHeaders：每个响应都带。X-Frame-Options / frame-ancestors 是重点，
+ * 不让任何页面把本服务套进 iframe（点击劫持 + 借道读响应）。 */
+func securityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+}
+
 func cors(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" {
+	if origin := r.Header.Get("Origin"); origin != "" && originAllowed(origin) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
@@ -536,13 +558,20 @@ func cors(w http.ResponseWriter, r *http.Request) {
 func reply(w http.ResponseWriter, r *http.Request, status int, obj any) {
 	raw, _ := json.Marshal(obj)
 	cors(w, r)
+	securityHeaders(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	w.Write(raw)
 }
 
+func deny(w http.ResponseWriter, r *http.Request, reason, detail string) bool {
+	log.Printf("deny %s: %s", reason, detail)
+	reply(w, r, 403, map[string]any{"error": map[string]any{"message": detail, "type": "forbidden"}})
+	return false
+}
+
+/* localOnly：四重校验 —— socket 层 / Host / Origin / Sec-Fetch-Site。 */
 func localOnly(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -550,16 +579,17 @@ func localOnly(w http.ResponseWriter, r *http.Request) bool {
 	}
 	ip := net.ParseIP(host)
 	if ip == nil || !ip.IsLoopback() {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "仅允许本机访问", "type": "forbidden"}})
-		return false
+		return deny(w, r, "peer", "仅允许本机访问")
 	}
 	if !allowedHosts[r.Host] {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "Host 不被允许", "type": "forbidden"}})
-		return false
+		return deny(w, r, "host", "Host 不被允许（只接受 127.0.0.1 / localhost）")
 	}
 	if !originAllowed(r.Header.Get("Origin")) {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "Origin 不被允许", "type": "forbidden"}})
-		return false
+		return deny(w, r, "origin", "Origin 不被允许（"+r.Header.Get("Origin")+"）")
+	}
+	/* Sec-Fetch-Site 是浏览器自己打的标，页面改不了：cross-site 一律拒。 */
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+		return deny(w, r, "fetch-site", "跨站请求被拒绝")
 	}
 	return true
 }
@@ -582,7 +612,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodOptions {
+		if r.Header.Get("Origin") == "" {
+			reply(w, r, 403, map[string]any{"error": map[string]any{"message": "预检必须带 Origin", "type": "forbidden"}})
+			return
+		}
 		cors(w, r)
+		securityHeaders(w)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -594,9 +629,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "找不到 index.html（和本脚本放同一目录）", "type": "not_found"}})
 				return
 			}
+			securityHeaders(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
 			w.WriteHeader(http.StatusOK)
 			w.Write(raw)
@@ -623,6 +658,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Header.Get("X-HTerm-Client") != "hterminal" {
 		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "缺少 X-HTerm-Client", "type": "forbidden"}})
+		return
+	}
+	/* 只收 application/json：text/plain、form-urlencoded 属于「不触发预检的简单请求」 */
+	if ctype := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])); ctype != "application/json" {
+		reply(w, r, 415, map[string]any{"error": map[string]any{"message": "Content-Type 必须是 application/json", "type": "unsupported_media_type"}})
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))

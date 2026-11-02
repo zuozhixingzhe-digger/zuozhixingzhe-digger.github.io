@@ -28,7 +28,7 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
-const VERSION = '0.0.0.4';
+const VERSION = '0.0.0.5';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {
@@ -272,20 +272,39 @@ async function doResponses(body) {
   return [200, fromResponses(data, payload.model)];
 }
 
-/* ---------------------------------------------------------------- HTTP */
+/* ---------------------------------------------------------------- HTTP
+ * 安全边界（缺一不可）：
+ *   1. 只绑 127.0.0.1
+ *   2. Host 必须是本机名 —— 挡 DNS rebinding
+ *   3. Origin 必须是本机页面，且拒绝 "null" —— sandbox iframe 的 Origin 就是 null，
+ *      放过它等于任何网站都能用 <iframe sandbox srcdoc="fetch(...)"> 打本地端口
+ *   4. Sec-Fetch-Site: cross-site 一律拒绝 —— 浏览器自己打的标，页面改不了
+ */
+const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
 function originAllowed(origin) {
-  if (!origin) return true;
-  if (origin === 'null') return true;
+  if (!origin) return true;                       // 同源导航 / curl
+  if (String(origin).trim().toLowerCase() === 'null') return false;
   try {
     const u = new URL(origin);
     if (!['http:', 'https:'].includes(u.protocol)) return false;
-    return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(u.hostname);
+    return LOCAL_NAMES.has(u.hostname);
   } catch (e) { return false; }
+}
+
+function securityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 }
 
 function cors(req, res) {
   const origin = req.headers.origin;
-  if (origin) {
+  if (origin && originAllowed(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
@@ -297,28 +316,29 @@ function cors(req, res) {
 function reply(req, res, status, obj) {
   const raw = Buffer.from(JSON.stringify(obj), 'utf8');
   cors(req, res);
+  securityHeaders(res);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': raw.length,
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff'
+    'Cache-Control': 'no-store'
   });
   res.end(raw);
 }
 
+function deny(req, res, reason, detail) {
+  process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] deny ${reason}: ${detail}\n`);
+  reply(req, res, 403, { error: { message: detail, type: 'forbidden' } });
+  return false;
+}
+
 function localOnly(req, res) {
   const peer = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-  if (!['127.0.0.1', '::1'].includes(peer)) {
-    reply(req, res, 403, { error: { message: '仅允许本机访问', type: 'forbidden' } });
-    return false;
-  }
-  if (!ALLOWED_HOSTS.has(req.headers.host || '')) {
-    reply(req, res, 403, { error: { message: 'Host 不被允许', type: 'forbidden' } });
-    return false;
-  }
-  if (!originAllowed(req.headers.origin)) {
-    reply(req, res, 403, { error: { message: 'Origin 不被允许', type: 'forbidden' } });
-    return false;
+  if (!['127.0.0.1', '::1'].includes(peer)) return deny(req, res, 'peer', '仅允许本机访问');
+  if (!ALLOWED_HOSTS.has(req.headers.host || '')) return deny(req, res, 'host', 'Host 不被允许（只接受 127.0.0.1 / localhost）');
+  const origin = req.headers.origin;
+  if (!originAllowed(origin)) return deny(req, res, 'origin', 'Origin 不被允许（' + origin + '）');
+  if (String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site') {
+    return deny(req, res, 'fetch-site', '跨站请求被拒绝');
   }
   return true;
 }
@@ -341,7 +361,12 @@ const server = http.createServer(async (req, res) => {
   if (!localOnly(req, res)) return;
   try {
     if (req.method === 'OPTIONS') {
+      if (!req.headers.origin) {
+        reply(req, res, 403, { error: { message: '预检必须带 Origin', type: 'forbidden' } });
+        return;
+      }
       cors(req, res);
+      securityHeaders(res);
       res.writeHead(204, { 'Content-Length': 0 });
       res.end();
       return;
@@ -356,11 +381,11 @@ const server = http.createServer(async (req, res) => {
           reply(req, res, 404, { error: { message: '找不到 index.html（和本脚本放同一目录）', type: 'not_found' } });
           return;
         }
+        securityHeaders(res);
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Content-Length': raw.length,
-          'Cache-Control': 'no-store',
-          'X-Content-Type-Options': 'nosniff'
+          'Cache-Control': 'no-store'
         });
         res.end(raw);
         return;
@@ -390,6 +415,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.headers['x-hterm-client'] !== 'hterminal') {
       reply(req, res, 403, { error: { message: '缺少 X-HTerm-Client', type: 'forbidden' } });
+      return;
+    }
+    const ctype = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    if (ctype !== 'application/json') {
+      /* 只收 application/json：text/plain / form-urlencoded 属于「不触发预检的简单请求」，
+         一律挡掉。 */
+      reply(req, res, 415, { error: { message: 'Content-Type 必须是 application/json', type: 'unsupported_media_type' } });
       return;
     }
     let body;

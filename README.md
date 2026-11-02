@@ -1,7 +1,7 @@
 # hterminal
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.0.4**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.0.5**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 431 KB，无构建依赖、无外链脚本、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -666,9 +666,9 @@ python3 modelserver.py
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/` `/index.html` | **直接返回同目录下的 `index.html`**，于是 `python3 modelserver.py` 一条命令就能把这个终端跑在 `http://127.0.0.1:8787` |
-| `GET` | `/health` | `{"ok":true,"version":"0.0.0.2",...}`，前端启动后自动探测 |
+| `GET` | `/health` | `{"ok":true,"version":"0.0.0.5",...}`，前端启动后自动探测 |
 | `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**前后端之间只用这一种** |
-| `OPTIONS` | `*` | CORS 预检，返回 204 |
+| `OPTIONS` | `*` | CORS 预检，返回 204；**必须带 `Origin` 且通过校验**，否则 403 |
 | 其它 | 任意 | **一律 403**，不列目录、不代理静态文件、不返回错误页 HTML |
 
 「只放行这四条」是刻意的：这个服务能读你的密钥，任何多余的静态文件路由都是攻击面。
@@ -680,17 +680,45 @@ python3 modelserver.py
 
 ### 安全模型
 
-只允许本机访问，**三层校验，不靠请求头判断**：
+四条边界，全部在服务端判断，**不依赖前端自律**：
 
-1. **socket 层**：`remoteAddress` 必须是 loopback（`127.0.0.1` / `::1`），`::ffff:` 前缀会先剥掉
-2. **Host 白名单**：必须是 `127.0.0.1:PORT` / `localhost:PORT` / `[::1]:PORT`（防 DNS rebinding）
-3. **Origin 校验**：只允许 `null`（`file://` 打开的页面）或本机 origin
+1. **socket 层**：`remoteAddress` 必须是 loopback（`127.0.0.1` / `::1`），`::ffff:` 前缀先剥掉。
+2. **Host 白名单**：必须是 `127.0.0.1:PORT` / `localhost:PORT` / `[::1]:PORT`。
+   挡 **DNS rebinding**——`evil.com` 解析到 `127.0.0.1` 时浏览器会把这个请求当同源，
+   但 `Host` 头仍然是 `evil.com`，这一层直接拒。
+3. **Origin 白名单**：必须是 `http(s)://127.0.0.1[:port]` / `localhost` / `[::1]`。
+   **`Origin: null` 一律拒绝**——`file://` 页面、`data:` 页面、sandbox iframe 的 Origin 都是 `null`，
+   放过它等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">`
+   绕过同源策略打你的本地端口。
+4. **`Sec-Fetch-Site: cross-site` 一律拒**。这是浏览器自己打的标，页面改不了，
+   等于把「公网网页 → 本地端口」这条最现实的路彻底堵死。
+
+CORS 头只在 Origin 通过校验后**回显该 Origin**，绝不回 `*`，也绝不发 `Allow-Credentials`；
+`OPTIONS` 预检必须带 `Origin`，否则 403。
+
+每个响应（页面、JSON、错误都算）都带：
+
+| 头 | 值 | 作用 |
+| --- | --- | --- |
+| `X-Frame-Options` | `DENY` | 不许被 iframe 套（点击劫持 / 借道读响应） |
+| `Content-Security-Policy` | `frame-ancestors 'none'` | 同上，CSP 版 |
+| `X-Content-Type-Options` | `nosniff` | 禁止 MIME 嗅探 |
+| `Referrer-Policy` | `no-referrer` | 不外泄地址 |
+| `Cross-Origin-Resource-Policy` | `same-origin` | 别的源不能读响应体 |
+| `Cross-Origin-Opener-Policy` | `same-origin` | 隔离 window 引用 |
+| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` | 不给敏感设备 |
+
+请求侧还有两条：
+
+- **必须带 `X-HTerm-Client: hterminal`**——自定义头会触发预检，普通 `<form>` / 裸 `fetch` 打不过来
+- **`Content-Type` 必须是 `application/json`**，其余 415——堵掉 `text/plain` / `form-urlencoded`
+  这类「不预检就能发出去」的简单请求
+
+> **`file://` 打开的前端连不上后端了**（Origin 是 `null`，被拒）。这是故意的：
+> 用后端时请从 `http://127.0.0.1:8787/` 打开。纯前端模式（直连 + 自带密钥）不受影响。
 
 另外：非流式（拒绝 `stream:true`）、body 上限 8 MB、上游超时 `HT_TIMEOUT`。
-
-> 前端不登录、不带 token——因为只有本机能连上，鉴权靠网络位置而不是凭据。
-
-在前端接上：「更多 → 智能体 → 后端地址」填 `http://127.0.0.1:8787`，点「检测」。
+被拒的请求会在 stderr 打一行 `deny origin/host/fetch-site: …`，方便排查。
 
 ## 14. 常见问题
 
@@ -1155,6 +1183,7 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.0.5 | 2026-11-02 | **后端安全加固（三份实现同步）**：①**`Origin: null` 从「放行」改成「拒绝」**——`file://`、`data:`、sandbox iframe 的 Origin 都是 `null`，以前放行等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` 打本地端口。②**新增 `Sec-Fetch-Site: cross-site` 拒绝**——浏览器自己打的标，页面改不了，直接堵死「公网网页 → 本地端口」。③**CORS 头只在 Origin 通过校验后回显**，不再对任意 Origin 回 `Access-Control-Allow-Origin`，也不发 `Allow-Credentials`；`OPTIONS` 必须带 Origin。④**每个响应都带安全头**：`X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cross-Origin-Resource-Policy: same-origin`、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`。⑤**`POST` 要求 `Content-Type: application/json`**（否则 415），堵掉 `text/plain`/`form-urlencoded` 这类不预检的简单请求。⑥**被拒请求在 stderr 留一行 `deny origin/host/fetch-site`**。⑦实测（curl，三份后端一致）：正常 200、`Origin: https://evil.com` 403、`Origin: null` 403、本机 Origin 200 且 ACAO 回显、`Sec-Fetch-Site: cross-site` 403、`Host: evil.com` 403、`text/plain` POST 415、`/etc/passwd` 403；页面响应含全部安全头。 |
 | 0.0.0.4 | 2026-11-02 | **JS 执行环境对齐 F12**：①**删除「文档窗口」这个自作聪明的改道**——`document.write` 现在就是 `document.write`，文档加载完后调用会隐式 `open()` 清空整页，终端一起没，这是浏览器行为，不拦。②**`document.body.innerHTML` 直写宿主**，不再重定向；`el.textContent`/`style`/`classList`/`appendChild`/`insertAdjacentHTML`/`remove()` 全部直达。③**元素句柄换成 Proxy**：`tagName`/`id`/`className`/`children`/`parentNode`/`outerHTML`/`getBoundingClientRect()`/`getComputedStyle(el).color` 都是真属性；`createElement` 在主线程建真游离节点，`appendChild` 才入 DOM。④**同步读靠预取**：执行前从代码里抠出 `querySelector('…')`/`page.q('…')`/`getElementById('…')` 的字面量，一次 `prefetch` 拉回 innerHTML/rect/computed；动态拼接的选择器第一次为空。⑤**事件回放**：`addEventListener` 在主线程注册真实捕获监听，事件描述异步发回 Worker 再调回调（`preventDefault` 无效，跨线程的代价）。⑥**`page.eval(code)`**：主线程间接 `eval`，100% 原生，含「返回最后一条表达式」语义。⑦**window 补齐**：`innerWidth/innerHeight/devicePixelRatio/scrollX/scrollY` 走快照、`requestAnimationFrame`（16ms 定时器）、`matchMedia`、`history`（既列命令历史又带 `length/back/pushState`）、`top/parent/frames === window`、`document.location === location`；`navigator` 不再覆盖成假对象。⑧**`Object.assign(globalThis, api)` 改逐个赋值**，修 Worker 只读访问器导致 shell 起不来的问题；`open()` 支持 URL。⑨实测——`document.write` 后 `#desk` 消失、`<h1 id=hi>` 出现；`body.innerHTML` 后只剩新内容；`createElement`+`appendChild` 真进 `#topbar`；`el.style.color` 真改；`el.addEventListener('click')` 回放后 `document.title` 变 `CLICKED`；`page.eval('1+1')` → 2；`getBoundingClientRect().height` → 54；s1–s14 回归全绿。 |
 | 0.0.0.3 | 2026-11-02 | **修回 JSHeL 的 JS 环境、help 合并、删按键振动**：①**`document.write` 不能执行**——0.0.0.2 的 document 代理只做了读（`title`/`querySelector`），补上 `write` / `writeln` / `open` / `close`：内容累积进一个「文档窗口」，第一次调用开窗、之后更新同一个 `srcdoc`；不写宿主页面（会冲掉终端）。顺便把 `innerHTML` / `textContent` / `value` 做成真属性（get 走 RPC、set 直接下发），`document.body.innerHTML = '…'` 被重定向到文档窗口而不是炸掉主界面。②**`help` 只剩兼容层**——`25-compat.js` 里 `def('help')` 把内置的 `help()` 顶掉了，于是敲 help 只看到 40 个命令名。删掉那一条，改由 JSHeL 的 `help()` 同时输出两段：JSHeL 函数（文件/执行/窗口/系统/DOM/智能体）+ Linux 兼容层命令表。③**删按键振动**——`term.onData` 里那句 `haptic(5)` 去掉，抽屉里的「按键振动」开关与 `Settings.haptic` 一并删除；打字不震。④**摇杆加振动**——`sendDir()` 每次发方向键 `haptic(7)`，节流 60ms（小于 180ms 连发间隔），支持振动的设备上手感对齐参考项目。⑤实测——`help` 同时含「JSHeL 快速参考」与「Linux 兼容层」；`document.write('<h1>DOC-WRITE-OK</h1>')` 开窗并渲染出文本，第二次 write 复用同一窗口；按键 3 次 `vibrate` 计数 0，摇杆拖动计数 4；`document.body.innerHTML` 后主界面 `#desk`/`#topbar` 仍在。 |
 | 0.0.0.2 | 2026-11-01 | **顶栏减负、兼容层、TUI 智能体、窗口动效**：①**顶栏**——左侧品牌/版本/当前目录**全部删掉**，不再是「左中右」而是「从 `⌃` 开始」；版本号移入「更多 → 状态」，当前目录移入提示符。②**提示符**——固定「路径 + `> ` + 空格」，不给设置；`@` 表示当前目录（`cd @`、`cat @.notes`），`~` = `.home`，`..` 上一级，`/` 与 `.` 等价；zsh 模式换成 `%`。③**光标**——照参考项目重做：xterm 光标设全透明，上面叠 `.ht-cursor`，`rAF` 每帧向目标逼近 22%（平滑移动）、聚焦 2px 竖线、失焦 7px 椭圆、备用屏虚线、空闲 1s 呼吸；`cursorBlink:false`，闪烁完全由这一层控制，**不提供设置**。④**外观段**——「字号」改名**终端字号**；新增**显示行数**滑块（`fixedRows`，0 = 自动铺满，对齐参考项目）；新增**按键振动**开关（`navigator.vibrate`，**0.0.0.3 已删**）；背景网格固定一套，光标样式/网格/提示符格式**故意不可配**。⑤**直连**——默认模型从 `gpt-4o-mini` 迁到 **`deepseek-flash`**（只覆盖等于旧默认的值）；API Key 进 `VOLATILE` 列表，`_persisted()` 写盘前剥掉，**只存内存、刷新即失**。⑥**F 键**——`F5`/`F12` 的 `attachCustomKeyEventHandler` 直接 `return false` 交还浏览器；`F11` `preventDefault()` 后调 `toggleFullscreen()`，与顶栏 `⛶` **同一条路径**（软件全屏 `body.fs` + 可用时请求 Fullscreen API），不存在两种全屏。⑦**内嵌浏览器**——智能体传 HTML 时走 `srcdoc`（此前只认 url，于是「打开 HTML」变空白页）；`target=_blank` 与 `window.open` 转**内部新标签**，实在拦不住才外部；`mailto:`/`tel:` 出面板块；修 `postMessage` 用 `location.origin` 被 opaque origin 丢弃的问题（改 `'*'` + `htTok` 校验，同源路径直接调方法）。⑧**Linux 兼容层**（新 `25-compat.js`，约 45 KB）——MiniShell（引号/变量/管道/重定向/通配符/`&&`/`||`）+ 40 余条 coreutils + 全屏 `vim`/`nano` + `zsh` 模式；`isShellLine()` 只看首词是否命令、成员访问必须紧贴点号，因此 `mkdir("a"); write("b")` 仍是 JS、`ls .home` 是 shell；全部自研 MIT，**不打包任何 GPL 二进制**（coreutils/busybox 都是 GPL）。⑨**TUI 智能体**（新 `65-tui.js`）——`agentTui.open/send/queue/stop/status/close`，`open()` 返回短 id（返回 `this` 会把 REPL 刷满 `[object Object]`）；`send` 异步入队立刻返回，`queue` 排队，`stop` 掐断当前轮；与窗口版共用同一套 harness。⑩**DOM 代理**——`document`/`window`/`page` 挂进 Worker：同步读快照（title/location/尺寸），异步 RPC（`page.q`/`el.text()`/`el.rect()`/`el.click()`/`page.openWindow`）；`location` 只读代理，写入静默忽略。⑪**智能体**——最大步数 120（设置可调 0–120）；同轮调用指纹 `stableKey` 去重；`apiMessages()` 强制 `tool_calls` ↔ `tool` 配对（缺的填「已取消」），修「中断后再提问 400」；`agentFetch()` 三级降级（直连 → `r.jina.ai` → `allorigins`），修「取新闻卡在工具调用」；回复用 `marked` + `DOMPurify` 渲染；新增 `screenshot`（html2canvas）/`window_html`/`ui` 三个工具；输入框支持图片附件（多模态 `image_url`）。⑫**依赖缓存**——xterm/addon/字体/html2canvas/marked 首次加载后统一进 IndexedDB（`DepCache`），新终端不再重复下载；抽屉里显示占用并可单独清理。⑬**清除**——`nuke()` 与「清除本页全部数据」改为**彻底清空**：`indexedDB.databases()` 逐个 delete + localStorage/sessionStorage/caches/ServiceWorker，最后 `location.replace`。⑭**窗口动效**——开窗从触发点扩散、关窗溶解收点、最大化外扩/内缩（`.tween` 300ms）、最小化沉入 dock、恢复从 dock 长出；`prefers-reduced-motion` 全部降级。⑮**后端**——三份 `modelserver` 的 `GET /` 与 `/index.html` 直接返回同目录 `index.html`（`no-store`），`/health` 与 `POST /v1/chat/completions` 之外**一律 403**；Go 版加 `scriptDir()`，从任意 cwd 启动都能找到文件。⑯**文件系统**——`write` 校验父目录存在，修掉 `write('.home.a.txt')` 造出 `ls` 永远看不见的幽灵文件（点号既是分隔符又被当扩展名）。⑰**实测**——s1–s13 全绿：顶栏首键 `⌃`、`page.q('#topbar')` 返回 `header/1280`、历史逐条回溯、`ls` 与 `ls('.home')` 一致、F5/F11/F12 的 `defaultPrevented` 为 `false/true/false`、四种窗动效类正确增删、拖拽穿越 iframe 不丢事件、`mailto:` 出面板块且 `target=_blank` 变内部标签、`shot('#desk')` 返回 307 KB dataURL、主题随系统、`write('.home.a.txt')` 报「父目录不存在」而 `.home.atxt` 立即可见。 |
@@ -1168,6 +1197,7 @@ deep 快照——整页 `innerHTML` 好几 MB，跨线程结构化克隆一次�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 12:40 | 后端安全加固：拒绝跨域与 null Origin（0.0.0.5） | `modelserver.py`（`origin_allowed` 拒 null、`security_headers`、`_deny` 日志、`local_only` 四重校验、`Content-Type` 415、`serve_index` 带头）、`modelserver.js`（同上，`LOCAL_NAMES`/`securityHeaders`/`deny`）、`modelserver.go`（同上，`securityHeaders`/`deny`）、`build/30-core.js`（版本）、`IDEAS.md`（许可证待办）、`README.md`（13 章安全模型重写、日志） | curl 三份后端：正常 200、evil Origin 403、null Origin 403、本机 Origin 200+ACAO、cross-site 403、坏 Host 403、text/plain POST 415、任意路径 403；`X-Frame-Options`/`frame-ancestors`/`CORP`/`COOP`/`Referrer-Policy`/`Permissions-Policy` 均在。Go `go build` 通过、JS `node --check` 通过 | `main` |
 | 2026-11-02 12:10 | DOM 与 F12 对齐：真写、真节点、同步预取、事件回放（0.0.0.4） | `build/20-worker.js`（重写 DOM 代理：`DOMC` 镜像 + `nodeProxy` Proxy 句柄 + `prefetchDom` + `document` 重写 + `windowShim`、`Object.assign` 改逐个赋值、`open()` 认 URL、`self.onmessage` 加 `dom-event`）、`build/65-tui.js`（`DomRpc` 重写：`docWrite` 真调、`_tagAs` 预分配 ref、`snap`/`prefetch`/`queryAs`/`allIn`/`createAs`/`cloneAs`/`evalPage`/`listen` 事件转发、`_desc` 截断）、`build/40-term.js`（`_domSink` 注册与注销）、`build/70-boot.js`（`refresh` 加 null 守卫）、`build/30-core.js`（版本号）、`modelserver.{py,js,go}`（版本）、`IDEAS.md`（许可证待办）、`README.md`（5.3 重写、踩坑 27–29、日志） | 无头 Chromium：`document.write` 清空整页（`#desk` 消失、`#hi` 出现）、`body.innerHTML` 直写、`createElement`+`appendChild` 真入 `#topbar`、`style.color`/`classList`/`insertAdjacentHTML`/`remove` 生效、`el.addEventListener('click')` 回放后 `document.title=CLICKED`、`page.eval('1+1')=2`、`getBoundingClientRect().height=54`、`getComputedStyle().height=54px`、`matchMedia` 正确；s1–s14 回归全绿 | `main` |
 | 2026-11-02 08:30 | 修回 JS 环境 / help 合并 / 振动归位（0.0.0.3） | `build/20-worker.js`（`document.write/writeln/open/close`、`innerHTML`/`textContent`/`value` 属性、`help()` 输出两段命令）、`build/25-compat.js`（删 `def('help')`）、`build/65-tui.js`（`haptic` 去掉 Settings 判断、新增 `docWrite`/`setHtml` RPC）、`build/40-term.js`（删 `onData` 里的振动、`sendDir` 加 `haptic(7)`）、`build/10-body.html`（删按键振动开关）、`build/70-boot.js`（删 setHaptic 绑定）、`build/30-core.js`（删 `haptic` 默认值、版本号）、`modelserver.{py,js,go}`（版本）、`README.md` | 无头 Chromium：`document.write` 开窗渲染 `DOC-WRITE-OK`、二次 write 复用同一窗口、`document.body.innerHTML` 后主界面仍在；`help` 同时含「JSHeL 快速参考」与「Linux 兼容层」；键入 3 字符 `vibrate` 计数 0、摇杆拖动计数 4；`1+1`/`const`/`await ls()`/`page.q`/`document.title` 均正常 | `main` |
 | 2026-11-01 23:55 | 顶栏减负 / 兼容层 / TUI 智能体 / 窗动效 / HSL 记录（0.0.0.2） | `build/00-head.html`（删 `.tb-left` 系列、`.ht-cursor`、`body.fs`、`htWinIn/Out/Min/Restore` keyframes、`.ag-att`/markdown 样式、抽屉页脚随内容滚）、`build/10-body.html`（顶栏从 `⌃` 起、终端字号/显示行数/按键振动、步数 120、F 键说明）、`build/20-worker.js`（`convertEol` 后的历史游标修正、`prompt()` 固定格式、compat 挂载、`agentTui`、`shell`、`jshel`、DOM 代理）、`build/25-compat.js`（新增：MiniShell + coreutils + vim/nano + zsh）、`build/30-core.js`（`DEFAULTS`/`VOLATILE`/`_persisted`、`normPath` 重写、`rows`、`agentModel` 迁移、`write` 父目录校验）、`build/40-term.js`（自定义光标层、F5/F11/F12、`fixedRows`、`#desk` 相对拖拽、`loadScriptCached`、窗动效）、`build/50-apps.js`（sandbox、`srcdoc`、`htTok`、内部新标签、`window.open` patch）、`build/60-agent.js`（工具 `screenshot/window_html/ui`、`apiMessages` 配对、120 步、`stableKey`、三级降级、Markdown、多模态）、`build/65-tui.js`（新增：`AgentTuiHost` + DomRpc + `shot`）、`build/70-boot.js`（抽屉绑定、`wipeAllStorage`、`DepCache`、RPC 新增 `agent.*`/`dom.op`/`shot.*`、`toggleFullscreen` 统一）、`build.sh`、`modelserver.{py,js,go}`（根路径 + 403 + `scriptDir`）、`IDEAS.md`（新增：HSL 想法）、`README.md` | 无头 Chromium（s1–s13）：顶栏首键 `⌃`、`page.q('#topbar')` → `header/1280`、历史逐条回溯、`ls`/`ls('.home')` 一致、F 键 `defaultPrevented` `false/true/false`、窗动效类正确增删、拖拽穿 iframe、`mailto:` 面板块、`target=_blank` 内部标签、`shot` 307 KB、主题跟随、`write('.home.a.txt')` 报父目录不存在 | `main` |

@@ -36,7 +36,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.0.4"
+VERSION = "0.0.0.5"
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -317,19 +317,34 @@ def do_responses(body):
 
 
 # ------------------------------------------------------------------ HTTP
+# 安全边界（三条，缺一不可）：
+#   1. socket 层只绑 127.0.0.1，外面进不来
+#   2. Host 头必须是本机名，挡 DNS rebinding（evil.com 解析到 127.0.0.1 也没用）
+#   3. Origin / Sec-Fetch-Site 必须是「本机页面」，挡任意公网网页借浏览器打本地端口
 ALLOWED_HOSTS = {"127.0.0.1:%d" % PORT, "localhost:%d" % PORT, "[::1]:%d" % PORT}
+LOCAL_NAMES = ("127.0.0.1", "localhost", "::1")
 
 
 def origin_allowed(origin):
+    """Origin 只认本机页面。
+
+    - 缺省（同源导航、curl、服务端调用）：允许
+    - "null"：**拒绝**。sandbox iframe / data: 页面的 Origin 就是 null，
+      不拒的话任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">`
+      绕过同源策略打本地服务。
+    - 其它：必须是 http(s) 且 host 是本机名。端口不卡死（本地开发常换端口），
+      但公网域名一律不认。
+    """
     if not origin:
         return True
-    if origin == "null":
-        return True
+    if origin.strip().lower() == "null":
+        return False
     try:
         from urllib.parse import urlparse
         u = urlparse(origin)
-        host = (u.hostname or "").lower()
-        return u.scheme in ("http", "https") and host in ("127.0.0.1", "localhost", "::1")
+        if u.scheme not in ("http", "https"):
+            return False
+        return (u.hostname or "").lower() in LOCAL_NAMES
     except Exception:
         return False
 
@@ -341,45 +356,74 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), (fmt % args)))
 
+    def security_headers(self):
+        """每个响应都带。X-Frame-Options / frame-ancestors 是重点：
+        不让任何页面把本服务套进 iframe（点击劫持 + 借道读响应）。"""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
     def cors(self):
+        """只对「已经通过 Origin 校验」的请求回 CORS 头，绝不回显任意 Origin，
+        也绝不发 Allow-Credentials。"""
         origin = self.headers.get("Origin")
-        if origin:
+        if origin and origin_allowed(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-HTerm-Provider, X-HTerm-Client")
         self.send_header("Access-Control-Max-Age", "600")
 
-    def reply(self, status, obj):
+    def reply(self, status, obj, extra=None):
         raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.cors()
+        self.security_headers()
+        if extra:
+            for k, v in extra.items():
+                self.send_header(k, v)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(raw)
 
+    def _deny(self, reason, detail):
+        sys.stderr.write("[%s] deny %s: %s\n" % (time.strftime("%H:%M:%S"), reason, detail))
+        self.reply(403, {"error": {"message": detail, "type": "forbidden"}})
+        return False
+
     def local_only(self):
-        # 双重校验：socket 层 + Host 头（防 DNS rebinding）
+        """四重校验：socket 层 / Host / Origin / Sec-Fetch-Site。"""
         peer = self.client_address[0]
         if peer not in ("127.0.0.1", "::1"):
-            self.reply(403, {"error": {"message": "仅允许本机访问", "type": "forbidden"}})
-            return False
-        if self.headers.get("Host", "") not in ALLOWED_HOSTS:
-            self.reply(403, {"error": {"message": "Host 不被允许", "type": "forbidden"}})
-            return False
-        if not origin_allowed(self.headers.get("Origin")):
-            self.reply(403, {"error": {"message": "Origin 不被允许", "type": "forbidden"}})
-            return False
+            return self._deny("peer", "仅允许本机访问")
+        host = self.headers.get("Host", "")
+        if host not in ALLOWED_HOSTS:
+            return self._deny("host", "Host 不被允许（只接受 127.0.0.1 / localhost）")
+        origin = self.headers.get("Origin")
+        if not origin_allowed(origin):
+            return self._deny("origin", "Origin 不被允许（%s）" % origin)
+        # Sec-Fetch-Site 是浏览器自己打的标，页面改不了：
+        # cross-site 一律拒绝，等于把「公网网页 → 本地端口」这条路彻底堵死。
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        if site == "cross-site":
+            return self._deny("fetch-site", "跨站请求被拒绝")
         return True
 
     def do_OPTIONS(self):
         if not self.local_only():
             return
+        if not self.headers.get("Origin"):
+            self.reply(403, {"error": {"message": "预检必须带 Origin", "type": "forbidden"}})
+            return
         self.send_response(204)
         self.cors()
+        self.security_headers()
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -395,10 +439,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"error": {"message": "找不到 index.html（把它和本脚本放在同一目录）", "type": "not_found"}})
             return
         self.send_response(200)
+        self.security_headers()
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(raw)
 
@@ -438,6 +482,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.headers.get("X-HTerm-Client", "") != "hterminal":
             self.reply(403, {"error": {"message": "缺少 X-HTerm-Client", "type": "forbidden"}})
+            return
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            # 只收 application/json：挡住 text/plain、form-urlencoded 这类
+            # 「不触发预检就能发出去」的简单请求。
+            self.reply(415, {"error": {"message": "Content-Type 必须是 application/json", "type": "unsupported_media_type"}})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
