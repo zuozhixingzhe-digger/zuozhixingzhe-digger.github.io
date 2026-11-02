@@ -711,6 +711,36 @@ function makeShell(ctx) {
     } catch (e) { throw new Error('编译失败 ' + name + ': ' + e.message); }
   }
 
+  /* ---- spotfs 六个 syscall（worker 侧） ----
+   * c/n/a/r 直接转发；x 和 d 要落地：x 返回的是「动作描述」，
+   * 由这里决定是执行 JS、开浏览器、进目录、请求权限还是结束进程。 */
+  async function sptc(p, data, meta) { return call('fs.sptc', abs(p), data, meta || null); }
+  async function sptn(p, opts) { return call('fs.sptn', abs(p), opts || {}); }
+  async function spta(p, data) { return call('fs.spta', abs(p), data); }
+  async function sptr(p) { return call('fs.sptr', abs(p)); }
+  async function sptd(p) {
+    const r = await call('fs.sptd', abs(p));
+    if (r && r.act === 'kill') return kill(r.pid);
+    return r;
+  }
+  async function sptx(p, ...args) {
+    const d = await call('fs.sptx', abs(p), args);
+    if (!d || !d.act) return d;
+    if (d.act === 'enter') { await cd(d.path); return { kind:'dir', path:d.path }; }
+    if (d.act === 'js') { const fn = compileFunction(d.source, d.path); return fn(...args); }
+    if (d.act === 'html') return call('win.open', { type:'browser', html:d.html, title:baseName(d.path) });
+    if (d.act === 'object') return d.value;
+    if (d.act === 'app') return call('win.open', { app:d.app, path:d.path, args });
+    if (d.act === 'perm') return call('perm.request', d.perm);
+    if (d.act === 'package') return loadPackage(d.spec);
+    if (d.act === 'device') { const st = await fsstat(d.path); return deviceOpen(d.path, st); }
+    return d;
+  }
+  /* 名字转义在主线程实现（TextEncoder 两边都有，但真相只有一份） */
+  async function spotEsc(s) { return call('fs.escape', String(s == null ? '' : s)); }
+  async function spotUnesc(s) { return call('fs.unescape', String(s == null ? '' : s)); }
+  async function spotExport(s) { return call('fs.exportName', String(s == null ? '' : s)); }
+
   /* ---- 包 ---- */
   async function install(spec) { return loadPackage(spec); }
   async function uninstall(spec) {
@@ -791,13 +821,15 @@ function makeShell(ctx) {
       ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
+      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  —— 六个原子操作'],
+      ['转义', 'spotEscape(s) 名字→-xx…；spotUnescape 还原；spotExportName 导出去掉病态字符；拖拽/上传共用 importFiles()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
       ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
-      ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
+      ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
     ];
     for (const [k, v] of lines) {
@@ -957,6 +989,9 @@ function makeShell(ctx) {
       return fswrite(abs(p), String(r.content || '') + String(d));
     },
     mkdir, rm, mv, cp, stat, exists, tree, find, head, tail, grep, open, exec, run, du, df, mount,
+    /* spotfs 六个 syscall（canonical）+ 名字转义 */
+    sptc, sptn, spta, sptr, sptx, sptd,
+    spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport,
     // 包
     install, uninstall, require:requirePkg, pkg:{ install, remove:uninstall, list:() => call('pkg.list'), require:requirePkg },
     // 窗口 / 系统
@@ -979,7 +1014,8 @@ function makeShell(ctx) {
     uuid:() => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2)),
     // 内建对象
     console:con,
-    fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm },
+    fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
+         sptc, sptn, spta, sptr, sptx, sptd, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
     envVars:{},
     __state:state

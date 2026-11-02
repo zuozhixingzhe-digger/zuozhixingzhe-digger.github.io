@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.2';
+const HT_VERSION = '0.0.1.3';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -190,6 +190,9 @@ function confirmDlg(title, text, danger) {
  * 分隔符是 `.`，根是 `.`；每一段必须像标识符：字母/中文开头，后续字母数字 _ -。
  * 不区分大小写 —— 内部一律小写存储。 */
 const SEG_RE = /^[\p{L}][\p{L}\p{N}_-]{0,63}$/u;
+/* spot 转义名：-xx 打头，后面是「字面字母数字」或「-HH」的重复。
+ * 它本来就不像标识符，必须放行，否则拖进来的文件根本写不进去。 */
+const SPOT_NAME_RE = /^-[xX]{2}(?:[A-Za-z0-9]|-[0-9A-Fa-f]{2})+$/;
 const RESERVED = new Set(['', '.', '..']);
 function normPath(p, cwd) {
   cwd = cwd || '.home';
@@ -248,6 +251,7 @@ function baseName(p) {
 }
 function checkName(name) {
   const n = String(name || '').trim();
+  if (SPOT_NAME_RE.test(n)) return n.length > 240 ? '名称太长（转义名最多 240）' : null;
   if (!SEG_RE.test(n)) return '名称必须以字母或中文开头，只能包含字母、中文、数字、下划线、短横线';
   if (n.length > 64) return '名称太长（最多 64）';
   return null;
@@ -260,8 +264,65 @@ function sanitizeName(name, fallback) {
   return n.slice(0, 48);
 }
 
+/* ---------------------------------------------------------------- spotfs 名字转义
+ * spotfs 是「节点对象图」，不是 ext4：节点名必须能塞进点分路径（"." 是分隔符）。
+ * 外部文件（拖进来、导入的 ext4 镜像）名字五花八门，规则是：
+ *   - ASCII 字母/数字 → 原样；其余（短横线、下划线、点、斜线、空格、中文、控制符……）
+ *     逐个 UTF-8 字节写成 -HH（大写十六进制）；
+ *   - 名字首位是数字也算「要转义」——首位那一位写成 -HH；
+ *   - 只要发生过任何转义（或首位数字），整个名字加前缀 -XX 当哨兵，表示「我转义过」。
+ * -XX 里的 X 不是十六进制，所以永远不会和 -HH 撞车。
+ * 如果原名本来就全是字母数字且不以数字开头，就原样带进来，不加前缀。
+ * 导出（拖出去 / 另存）时反向解析；遇到目标文件系统不允许的字符（/ \ : * ? " < > | 控制符），
+ * 在对应位置保留 -HH 写法即可。
+ */
+/* 哨兵写成小写 -xx：spotfs 大小写不敏感、内部一律小写存储（normPath 会 toLowerCase），
+ * 大写 -XX 经过路径规范化也会变成 -xx，索性统一成小写，避免「写的和存的对不上」。
+ * 解析时两种大小写都接受。 */
+const SPOT_SENTINEL = '-xx';
+function spotEscape(raw) {
+  const bytes = new TextEncoder().encode(String(raw == null ? '' : raw));
+  let out = '', escaped = false;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i], ch = String.fromCharCode(b);
+    const alnum = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122);
+    const leadingDigit = (i === 0 && b >= 48 && b <= 57);
+    if (alnum && !leadingDigit) out += ch;
+    else { out += '-' + b.toString(16).padStart(2, '0'); escaped = true; }
+  }
+  if (!out) return 'empty';
+  return escaped ? SPOT_SENTINEL + out : out;
+}
+function spotUnescape(stored) {
+  let s = String(stored == null ? '' : stored);
+  if (!/^-[xX]{2}/.test(s)) return s;   // 没转义过，原样
+  s = s.slice(3);
+  const bytes = [];
+  for (let i = 0; i < s.length;) {
+    if (s[i] === '-' && /^-[0-9A-Fa-f]{2}$/.test(s.slice(i, i + 3))) {
+      bytes.push(parseInt(s.slice(i + 1, i + 3), 16)); i += 3; continue;
+    }
+    const ch = s[i];
+    for (const b of new TextEncoder().encode(ch)) bytes.push(b); i++;
+  }
+  try { return new TextDecoder().decode(new Uint8Array(bytes)); } catch (e) { return s; }
+}
+/* 目标文件系统（NTFS / ext4）不接受的字符：导出时保留 -HH。
+ * 其余已转义的字符尽可能还原成人类可读的原名。 */
+const SPOT_EXPORT_BAD = /[\\/:*?"<>|\x00-\x1F]/;
+function spotExportName(stored) {
+  const raw = spotUnescape(stored);
+  let out = '';
+  for (const ch of raw) {
+    if (SPOT_EXPORT_BAD.test(ch)) {
+      for (const b of new TextEncoder().encode(ch)) out += '-' + b.toString(16).toUpperCase().padStart(2, '0');
+    } else out += ch;
+  }
+  return out || 'file';
+}
+
 /* ---------------------------------------------------------------- 内置文件系统内容 */
-const DIRS = ['.home', '.bin', '.app', '.dev', '.proc', '.pkg', '.config', '.agent', '.sys', '.perm', '.temp', '.queryfile', '.localstorage'];
+const DIRS = ['.home', '.bin', '.app', '.dev', '.proc', '.pkg', '.config', '.agent', '.sys', '.perm', '.temp', '.queryfile', '.savefile', '.localstorage'];
 const APP_DEFS = [
   { name:'shell', title:'终端', desc:'新的 JS shell 窗口', type:'shell', icon:'▣' },
   { name:'browser', title:'浏览器', desc:'窗口里的真浏览器（iframe）', type:'browser', icon:'◎' },
@@ -320,11 +381,22 @@ const SEED_FILES = {
     content:`HTerMinaL 的几条“世界观”：
 
 1. 一切皆文件。文件可以是文本、函数、应用、设备、权限、包、线程、会话。
-2. 文件系统尽量扁平。所有目录都挂在根 "." 下，路径用 "." 分隔。
-3. 文件名必须像标识符：字母/中文开头，只含字母、中文、数字、_、-；不区分大小写。
+2. 文件系统叫 spotfs：它是一张「节点对象图」，不是 ext4。没有 inode、没有权限位、没有属主。
+   节点分 dir / file / func / app / device / grant / package / proc / link 这些种类。
+3. 路径用 "." 分隔，根是 "."。节点名必须能塞进点分路径，所以外部文件名会转义：
+   字母数字原样；其余（短横线、下划线、点、斜杠、空格、中文……）按 UTF-8 字节写成 -HH，
+   整个名字前加 -XX 哨兵；导出时再解析回去（目标系统不接受的字符保留 -HH）。
 4. 浏览器就是沙箱。这里不再套一层安全沙箱，执行 JS 不需要许可。
 5. 多线程。每个终端、每个 Python、每个窗口应用都跑在独立的 Worker 里。
 6. 数据都在你本地。IndexedDB + localStorage，没有云端。
+
+spotfs 只有六个原子操作（其余命令都是它们的组合）：
+  c  sptc(p, data)   覆盖写入（只覆盖已有节点，不新建）
+  n  sptn(p, opts)   新建；.queryfile 下 = 向你要文件；.savefile 下 = 关闭时保存到本机
+  a  spta(p, data)   末尾追加
+  x  sptx(p)         执行：JS 脚本 / HTML 页面 / 对象 / 目录 / 权限，自动判别
+  r  sptr(p)         读内容（文件）或索引（目录、对象）
+  d  sptd(p)         删除：文件删、目录递归删、进程结束、链接解除
 
 常用目录：
   .home         你的文件
@@ -338,7 +410,8 @@ const SEED_FILES = {
   .sys          系统信息（只读）
   .perm         授权（摄像头 / 通知等）
   .temp         临时文件（刷新即失）
-  .queryfile    你通过“询问文件”交进来的文件
+  .queryfile    你通过“询问文件”/拖拽交进来的文件
+  .savefile     在这里新建并写入，关闭时保存到本机，然后节点消失
   .localstorage localStorage 的镜像
 
 试试：
@@ -789,6 +862,131 @@ const FS = {
     return true;
   },
 
+  /* ---------------- spotfs：六个 syscall ----------------
+   * spotfs 是「节点对象图」，不是 ext4；没有权限位，没有 inode。
+   *   c cover   sptc(p, data, meta)  覆盖写入：只能覆盖已存在的非目录节点
+   *   n new     sptn(p, opts)        新建：目录下建节点 / .queryfile 请求文件 / .savefile 待保存
+   *   a append  spta(p, data)        在末尾追加
+   *   x execute sptx(p, args)        执行：返回「动作描述」，由当前环境落地
+   *   r read    sptr(p)              读内容（文件）或索引（目录/对象）
+   *   d delete  sptd(p)              删除：文件删 / 目录递归 / 进程杀 / 链接删
+   */
+  async sptc(p, data, meta) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptc: 不存在，不能覆盖（新建请用 sptn）: ' + p);
+    if (st.kind === 'dir') throw new Error('sptc: 不能覆盖目录: ' + p);
+    if (st.kind === 'device') {
+      /* 设备节点：写入即交给设备。这里只记录「写过」，真正的副作用在 worker 侧设备层。 */
+      return { path:p, kind:'device', device:(st.meta || {}).device, wrote:String(data == null ? '' : data).length };
+    }
+    return this.write(p, data, Object.assign({}, st.meta || {}, meta || {}));
+  },
+
+  async sptn(p, opts) {
+    p = normPath(p);
+    opts = opts || {};
+    if (this.exists(p)) throw new Error('sptn: 已存在，请用 sptc 覆盖: ' + p);
+    const par = parentPath(p);
+    if (par !== '.' && !this.exists(par)) throw new Error('sptn: 父目录不存在: ' + par);
+    /* .queryfile 下的「新建」= 向用户要一个文件 */
+    if (par === '.queryfile') {
+      const got = await askFile({ multiple:false, accept:opts.accept });
+      return got ? { path:got, kind:'queryfile' } : null;
+    }
+    /* .savefile 下的「新建」= 登记一个「关闭时保存」的节点 */
+    const meta = Object.assign({ hint: opts.hint || '保存到本机' }, opts.meta || {});
+    if (par === '.savefile') meta.saveOnClose = true;
+    const kind = opts.kind || (/^\.bin\./.test(p) ? 'func' : 'file');
+    return this.write(p, opts.data == null ? '' : opts.data,
+      Object.assign({ kind, mime: opts.mime || guessMime(p, opts.data) }, meta));
+  },
+
+  async spta(p, data) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('spta: 不存在: ' + p);
+    if (st.kind === 'dir') throw new Error('spta: 不能追加到目录: ' + p);
+    const r = await this.read(p);
+    const old = r.content;
+    if (old instanceof ArrayBuffer) {
+      const base = new Uint8Array(old);
+      const add = data instanceof ArrayBuffer ? new Uint8Array(data) : new TextEncoder().encode(String(data == null ? '' : data));
+      const out = new Uint8Array(base.length + add.length);
+      out.set(base); out.set(add, base.length);
+      return this.write(p, out.buffer, st.meta);
+    }
+    return this.write(p, String(old == null ? '' : old) + String(data == null ? '' : data), st.meta);
+  },
+
+  async sptr(p) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptr: 不存在: ' + p);
+    if (st.kind === 'dir') {
+      const rows = await this.list(p);
+      return { path:p, kind:'dir', index:rows.map(r => ({ name:r.name, path:r.path, kind:r.kind, size:r.size })) };
+    }
+    if (st.kind === 'device') return { path:p, kind:'device', device:(st.meta || {}).device };
+    if (st.kind === 'grant') return { path:p, kind:'grant', perm:(st.meta || {}).perm };
+    if (st.kind === 'object') {
+      const r = await this.read(p);
+      let v = r.content;
+      try { v = JSON.parse(String(v || 'null')); } catch (e) {}
+      return { path:p, kind:'object', value:v };
+    }
+    const r = await this.read(p);
+    return { path:p, kind:st.kind, content:r.content, meta:r.meta };
+  },
+
+  async sptx(p, args) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptx: 不存在: ' + p);
+    if (st.kind === 'dir') return { act:'enter', path:p };
+    if (st.kind === 'func') {
+      const r = await this.read(p);
+      return { act:'js', path:p, source:(r.meta && r.meta.source) || String(r.content || '') };
+    }
+    if (st.kind === 'app') return { act:'app', path:p, app:(st.meta || {}).app || st.name, args:args || [] };
+    if (st.kind === 'device') return { act:'device', path:p, device:(st.meta || {}).device };
+    if (st.kind === 'grant') return { act:'perm', path:p, perm:(st.meta || {}).perm };
+    if (st.kind === 'package') return { act:'package', path:p, spec:(st.meta || {}).spec };
+    const r = await this.read(p);
+    const mime = String((r.meta && r.meta.mime) || '');
+    if (st.kind === 'object') {
+      let v = r.content;
+      try { v = JSON.parse(String(v || 'null')); } catch (e) {}
+      return { act:'object', path:p, value:v };
+    }
+    if (/html/i.test(mime)) return { act:'html', path:p, html:String(r.content || '') };
+    return { act:'file', path:p, content:r.content, meta:r.meta };
+  },
+
+  async sptd(p) {
+    p = normPath(p);
+    if (p === '.' || DIRS.includes(p)) throw new Error('sptd: 不能删除系统目录: ' + p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptd: 不存在: ' + p);
+    /* 进程：结束（只有强制结束） */
+    if (st.kind === 'proc') return { act:'kill', pid:Number(baseName(p)) };
+    /* .savefile：删除 = 先保存到本机，再从文件系统消失 */
+    if (parentPath(p) === '.savefile') { await this.flushSavefile(p); return true; }
+    await this.remove(p, true);
+    return true;
+  },
+
+  /* .savefile 里的节点：导出到本机后从 spotfs 删除 */
+  async flushSavefile(p) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) return false;
+    const r = await this.read(p);
+    await saveFileRaw(spotExportName(baseName(p)), r.content, (r.meta && r.meta.mime) || 'application/octet-stream');
+    await this.remove(p, true);
+    return true;
+  },
+
   async usage() {
     let est = {};
     try { est = await navigator.storage.estimate(); } catch (e) {}
@@ -1010,6 +1208,42 @@ async function saveFile(name, content, mime) {
   downloadBlob(sanitizeName(name || 'download', 'download'), blob);
   toast('已保存 ' + (name || 'download'));
   return true;
+}
+/* 导出时**不**再过 sanitizeName：名字已经由 spotExportName 处理过，
+ * 再走一遍会把 -XX 哨兵前的短横线剥掉（sanitizeName 会 trim 首尾的 -）。 */
+async function saveFileRaw(name, content, mime) {
+  let blob;
+  if (content instanceof Blob) blob = content;
+  else if (content instanceof ArrayBuffer) blob = new Blob([content], { type:mime || 'application/octet-stream' });
+  else blob = new Blob([String(content == null ? '' : content)], { type:mime || 'text/plain;charset=utf-8' });
+  downloadBlob(name || 'download', blob);
+  toast('已保存 ' + (name || 'download'));
+  return true;
+}
+
+/* 把外部 File 列表导入 spotfs：名字走 spotEscape，内容按文本/二进制分流。
+ * 被 drop / 上传 / 导入共同复用，保证「同一个文件不管从哪进来，落点规则一致」。 */
+async function importFiles(files, dir) {
+  dir = normPath(dir || '.home');
+  const join = (d, n) => (d === '.' ? '' : d + '.') + n;
+  const out = [];
+  for (const f of files) {
+    const raw = f.name || 'file';
+    let stored = spotEscape(raw);
+    let p = join(dir, stored), n = 2;
+    while (FS.exists(p)) { stored = spotEscape(raw + '-' + n); p = join(dir, stored); n++; }
+    const isText = /^text\//.test(f.type || '') ||
+      /\.(txt|md|json|js|mjs|cjs|ts|csv|log|yml|yaml|xml|html|htm|css|py|sh|ini|toml)$/i.test(raw) ||
+      (f.size < 262144 && !f.type);
+    const content = isText ? await f.text() : await f.arrayBuffer();
+    await FS.write(p, content, {
+      mime: f.type || (isText ? 'text/plain' : 'application/octet-stream'),
+      hint: raw, binary: !isText, origin: 'drop', spotName: stored
+    });
+    out.push(p);
+  }
+  if (out.length) EventBus.emit('fs', { type:'import', dir, count:out.length });
+  return out;
 }
 function pickFiles(opts) {
   opts = opts || {};

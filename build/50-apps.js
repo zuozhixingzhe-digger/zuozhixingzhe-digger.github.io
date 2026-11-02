@@ -422,6 +422,7 @@ class FilesApp {
     this.el = container;
     this.path = normPath((opts && opts.path) || '.home');
     this.sel = null;
+    this._blobs = new Map();   // path -> {url, name, mime}，拖出去时用
     this.el.innerHTML = `<div class="fm">
       <div class="fm-bar">
         <button class="btn" data-a="up" title="上级">↑</button>
@@ -442,7 +443,54 @@ class FilesApp {
     this.prevEl = $('.fm-prev', this.el);
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
     this._off = EventBus.on('fs', () => { if (document.contains(this.el)) this.load(); });
+    this._bindDrop();
     this.load();
+  }
+
+  /* 把外部文件拖进文件管理器 = 导入到当前目录 */
+  _bindDrop() {
+    const root = $('.fm', this.el);
+    if (!root) return;
+    root.__app = this;
+    root.addEventListener('dragover', (e) => {
+      if (!_hasFiles(e)) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      root.classList.add('drop');
+    });
+    root.addEventListener('dragleave', (e) => {
+      if (!root.contains(e.relatedTarget)) root.classList.remove('drop');
+    });
+    root.addEventListener('drop', async (e) => {
+      if (!_hasFiles(e)) return;
+      e.preventDefault();
+      e.__htDropHandled = true;      // 告诉全局：这个 drop 已经有人收
+      root.classList.remove('drop');
+      const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+      if (!files.length) return;
+      try {
+        const paths = await importFiles(files, this.path);
+        toast('已导入 ' + paths.length + ' 个文件到 ' + this.path);
+        await this.load();
+      } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+    });
+  }
+
+  /* 拖出去：dragstart 必须同步 setData，所以在 pointerdown 时就把内容读成 Blob URL 备好。
+   * Chrome 认 DownloadURL=mime:filename:url —— 拖到桌面/资源管理器即落盘。 */
+  async _prefetchBlob(p) {
+    if (this._blobs.has(p)) return;
+    try {
+      const st = await FS.stat(p);
+      if (!st || st.kind === 'dir') return;
+      const r = await FS.read(p);
+      let blob;
+      if (r.content instanceof Blob) blob = r.content;
+      else if (r.content instanceof ArrayBuffer) blob = new Blob([r.content], { type:(r.meta && r.meta.mime) || 'application/octet-stream' });
+      else blob = new Blob([String(r.content == null ? '' : r.content)], { type:(r.meta && r.meta.mime) || 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      this._blobs.set(p, { url, name:spotExportName(baseName(p)), mime:blob.type || 'application/octet-stream' });
+    } catch (e) {}
   }
   async act(a) {
     try {
@@ -470,6 +518,20 @@ class FilesApp {
     $$('.fm-row', this.listEl).forEach(row => {
       row.onclick = () => this.select(row.dataset.p);
       row.ondblclick = () => this.open(row.dataset.p);
+      const p = row.dataset.p;
+      row.draggable = true;
+      /* pointerdown 是 dragstart 之前唯一能安全预读的时机 */
+      row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
+      row.addEventListener('dragstart', (e) => {
+        row.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/plain', p);
+        const c = this._blobs.get(p);
+        if (c) {
+          try { e.dataTransfer.setData('DownloadURL', c.mime + ':' + c.name + ':' + c.url); } catch (err) {}
+        }
+      });
+      row.addEventListener('dragend', () => row.classList.remove('dragging'));
     });
   }
   async select(p) {
@@ -516,14 +578,8 @@ class FilesApp {
   async upload() {
     const files = await pickFiles({ multiple:true });
     if (!files.length) return;
-    for (const f of files) {
-      const name = sanitizeName(f.name, 'upload');
-      let p = joinPath(this.path, name), n = 2;
-      while (FS.exists(p)) { p = joinPath(this.path, name + '-' + n); n++; }
-      const text = /^text\//.test(f.type) || f.size < 131072;
-      await FS.write(p, text ? await f.text() : await f.arrayBuffer(), { mime:f.type || 'application/octet-stream', hint:f.name, binary:!text });
-    }
-    toast('已上传 ' + files.length + ' 个文件');
+    const paths = await importFiles(files, this.path);
+    toast('已上传 ' + paths.length + ' 个文件');
     await this.load();
   }
   async del() {
@@ -539,9 +595,13 @@ class FilesApp {
     const st = await FS.stat(this.sel);
     if (!st || st.kind === 'dir') { toast('目录不能直接下载', true); return; }
     const r = await FS.read(this.sel);
-    await saveFile(baseName(this.sel), r.content, r.meta && r.meta.mime);
+    await saveFileRaw(spotExportName(baseName(this.sel)), r.content, r.meta && r.meta.mime);
   }
-  dispose() { this._off && this._off(); }
+  dispose() {
+    this._off && this._off();
+    for (const c of this._blobs.values()) { try { URL.revokeObjectURL(c.url); } catch (e) {} }
+    this._blobs.clear();
+  }
 }
 
 /* ---------------------------------------------------------------- 编辑器 */

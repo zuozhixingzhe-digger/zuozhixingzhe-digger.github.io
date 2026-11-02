@@ -479,9 +479,17 @@ class AgentApp {
     if (zone) {
       ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add('drop'); }));
       ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove('drop'); }));
-      zone.addEventListener('drop', (e) => {
+      zone.addEventListener('drop', async (e) => {
         const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
-        if (files.length) this.addFiles(files);
+        if (!files.length) return;
+        e.__htDropHandled = true;      // 全局遮罩只管收，不再重复导入
+        e.preventDefault();
+        /* 先落盘到 .queryfile（这样 read_file 能读到、刷新不丢），再挂到对话上 */
+        try {
+          const paths = await importFiles(files, '.queryfile');
+          if (paths.length) toast('已存入 ' + paths.length + ' 个文件到 .queryfile');
+        } catch (err) { toast('存入失败：' + (err && err.message || err), true); }
+        this.addFiles(files);
       });
     }
   }

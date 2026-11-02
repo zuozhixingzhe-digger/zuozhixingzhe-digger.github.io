@@ -69,6 +69,16 @@ const RPC = {
       case 'fs.copy': return await FS.copy(a[0], a[1]);
       case 'fs.usage': return await FS.usage();
       case 'fs.mounts': return FS.mounts();
+      /* spotfs 六个 syscall（worker 侧的命令都落到这里） */
+      case 'fs.sptc': return await FS.sptc(a[0], a[1], a[2] || null);
+      case 'fs.sptn': return await FS.sptn(a[0], a[1] || {});
+      case 'fs.spta': return await FS.spta(a[0], a[1]);
+      case 'fs.sptr': return await FS.sptr(a[0]);
+      case 'fs.sptx': return await FS.sptx(a[0], a[1] || []);
+      case 'fs.sptd': return await FS.sptd(a[0]);
+      case 'fs.escape': return spotEscape(a[0]);
+      case 'fs.unescape': return spotUnescape(a[0]);
+      case 'fs.exportName': return spotExportName(a[0]);
       case 'history.get': return loadHistory();
       case 'history.set': saveHistoryList(a[0] || []); return true;
       case 'settings.get': return Settings.get(a[0]);
@@ -717,6 +727,65 @@ function installKeys() {
   }, true);
 }
 
+/* ---------------------------------------------------------------- 拖拽导入
+ * 外部文件拖进窗口 = 导入 spotfs。落点：
+ *   智能体输入框 → .queryfile（并附加到对话）
+ *   文件管理器    → 它当前的目录
+ *   其它任何地方  → .home
+ * 拖拽过程中的遮罩与「松手导入到 X」提示也在这里管。
+ * 拖出去（导出到本机）不在这里：那是文件管理器行自己的 dragstart（DownloadURL）。 */
+function _hasFiles(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt || !dt.types) return false;
+  const types = Array.from(dt.types);
+  return types.includes('Files') || types.includes('application/x-moz-file');
+}
+function _dropTarget(el) {
+  const ag = el && el.closest && el.closest('.ag-input');
+  if (ag) return { label:'.queryfile（并附加到对话）', dir:'.queryfile' };
+  const fm = el && el.closest && el.closest('.fm');
+  if (fm && fm.__app && fm.__app.path) return { label:fm.__app.path, dir:fm.__app.path };
+  return { label:'.home', dir:'.home' };
+}
+function initDropImport() {
+  const veil = document.getElementById('dropVeil');
+  const label = document.getElementById('dropTargetLabel');
+  let depth = 0;
+  const hide = () => { depth = 0; if (veil) veil.classList.remove('on'); };
+
+  window.addEventListener('dragenter', (e) => {
+    if (!_hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    if (label) label.textContent = _dropTarget(e.target).label;
+    if (veil) veil.classList.add('on');
+  }, true);
+  window.addEventListener('dragover', (e) => {
+    if (!_hasFiles(e)) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+    if (label) label.textContent = _dropTarget(e.target).label;
+  }, true);
+  window.addEventListener('dragleave', (e) => {
+    if (!_hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0 && veil) veil.classList.remove('on');
+  }, true);
+  window.addEventListener('drop', async (e) => {
+    if (!_hasFiles(e)) return;
+    e.preventDefault();
+    hide();
+    if (e.__htDropHandled) return;   // 某个应用已经自己收下了
+    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+    if (!files.length) return;
+    const t = _dropTarget(e.target);
+    try {
+      const paths = await importFiles(files, t.dir);
+      toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
+    } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+  }, false);
+}
+
 /* ---------------------------------------------------------------- 引导 */
 async function boot() {
   const bootEl = document.getElementById('boot');
@@ -760,6 +829,7 @@ async function boot() {
     installWindowAPI();
     initTopbarKeys();
     installKeys();
+    initDropImport();
 
     step('启动底层终端', 12);
     TerminalManager.bootDesktop();
