@@ -271,7 +271,15 @@ class LineEditor {
     if (this.closed) return;
     if (this.raw) { try { this.raw(data); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); } return; }
     if (this.busy) {
-      if (data.includes('\x03')) { this.interrupted = true; out('^C\r\n'); writeErr('（同步执行无法中断；若是异步任务，请等待其检查 hterm.interrupted）\r\n'); }
+      if (data.includes('\x03')) {
+        this.interrupted = true;
+        out('^C\r\n');
+        /* 交给宿主决定能不能真的中断（智能体 TUI 可以，同步 eval 不行）。
+         * 返回 true = 已经处理掉了，不再打印「无法中断」这句。 */
+        let handled = false;
+        try { handled = !!(this.o.onInterrupt && this.o.onInterrupt()); } catch (e) {}
+        if (!handled) writeErr('（同步执行无法中断；若是异步任务，请等待其检查 hterm.interrupted）\r\n');
+      }
       return;
     }
     let i = 0;
@@ -317,7 +325,17 @@ class LineEditor {
       if (ch === '\r' || ch === '\n') { i += 1; this.enqueueSubmit(); continue; }
       if (ch === '\x7f' || ch === '\b') { this.backspace(); i += 1; continue; }
       if (ch === '\x03') { i += 1; out('^C\r\n'); this.clearLine(); this.promptStr = this.promptText(); out(this.promptStr); continue; }
-      if (ch === '\x04') { i += 1; if (!this.buf) { this.closed = true; out('\r\n'); if (this.o.onEOF) this.o.onEOF(); } else this.delete(); continue; }
+      if (ch === '\x04') {
+        i += 1;
+        if (!this.buf) {
+          /* Ctrl+D 在 agent 模式里是「退出这一层」，不是「关掉终端」。
+           * 宿主返回 true 表示它自己处理了（并且会补提示符）。 */
+          let handled = false;
+          try { handled = !!(this.o.onCtrlD && this.o.onCtrlD()); } catch (e) {}
+          if (!handled) { this.closed = true; out('\r\n'); if (this.o.onEOF) this.o.onEOF(); }
+        } else this.delete();
+        continue;
+      }
       if (ch === '\x0c') { i += 1; out('\x1b[2J\x1b[H'); this.promptStr = this.promptText(); this.redraw(); continue; }
       if (ch === '\x15') { i += 1; this.clearLine(); continue; }
       if (ch === '\x17') { i += 1; this.delWord(); continue; }
@@ -827,7 +845,7 @@ function makeShell(ctx) {
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
-      ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
+      ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
       ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
@@ -1820,18 +1838,49 @@ async function bootShell(init) {
     globalThis.history = h0;
   } catch (e) {}
 
+  /* 三种模式并列，看提示符就知道自己在哪一层：
+   *   `.home> `          JSHeL（只当 JS 求值）
+   *   `.home $ `         HSL（只当 shell 命令行）
+   *   `agent> `          智能体 TUI（整行发给智能体）
+   */
+  const AGENT_PROMPT = ANSI.cyan + 'agent' + ANSI.reset + '> ';
+
   const editor = new LineEditor({
-    prompt: () => (api.__state.mode === 'hsl' ? api.__state.cwd + ' $ ' : api.__state.cwd + '> '),
+    prompt: () => {
+      if (api.__state.mode === 'agent') return AGENT_PROMPT;
+      if (api.__state.mode === 'hsl') return api.__state.cwd + ' $ ';
+      return api.__state.cwd + '> ';
+    },
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
+    /* Ctrl+C 在 agent 模式里= 中断当前这一轮（智能体那边的 stop），
+     * 而不是打一行「同步执行无法中断」。 */
+    onInterrupt: () => {
+      if (api.__state.mode !== 'agent') return false;
+      agentTui.stop();
+      return true;
+    },
+    /* Ctrl+D 在 agent 模式里= 退出 agent，回到原来那一层，不关终端 */
+    onCtrlD: () => {
+      if (api.__state.mode !== 'agent') return false;
+      agentTui.close();
+      editor.promptStr = editor.promptText();
+      out(editor.promptStr);
+      return true;
+    },
     onSubmit: async (line) => {
       if (!line.trim()) return;
-      /* 两种模式，两条完全分开的路，中间没有「猜一下这行是什么」：
+      /* 三条完全分开的路，中间没有「猜一下这行是什么」：
+       *   agent → 整行发给智能体（不认 JS，也不认 shell）
+       *   hsl   → 只当 shell 命令行（`1+1` 是「命令未找到」）
        *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
-       *   hsl   → 只当 shell 命令行（不认 JS 语法，`1+1` 是「命令未找到」）
        * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
        * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
+      if (api.__state.mode === 'agent') {
+        await agentTui.line(line);
+        return;
+      }
       if (api.__state.mode === 'hsl') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
@@ -1850,61 +1899,200 @@ async function bootShell(init) {
   /* ---------------------------------------------------------------- TUI 智能体
    * 在终端里用智能体：不占窗口，直接打字。
    *
-   * 故意拆成几个函数而不是塞进一个大方法：
-   *   agentTui.open()    进入（打印横幅）
-   *   agentTui.send(t)   发一条，等它跑完（可 await）
-   *   agentTui.queue(t)  排队；忙的时候自动串行，返回的 Promise 在这一条跑完时 resolve
-   *   agentTui.stop()    立刻中断当前轮，并清空队列
-   *   agentTui.close()   退出
-   * 另外给了短名字 agent(t)，等价于 send——AI 自己写起来更短。
+   * 关键点：**open() 是真的切模式**，不是打印个横幅就完事。
+   * 以前只打横幅、mode 还是 jshel，于是下一行立刻回到 `.home>`——
+   * 用户看到的就是「进去一下就自己退出来」。现在 mode 变成 'agent'，
+   * 提示符变 `agent> `，后面每一行都发给智能体，直到 :q / Ctrl+D。
+   *
+   *   agentTui.open()    进入交互模式
+   *   agent('…')         问一句（不带参数 = 进模式）
+   *   agentTui.stop()    中断当前轮，并清空队列
+   *   agentTui.close()   退出，回到进来之前那一层
    */
+  const AGENT_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+
+  /* 终端是定宽等宽字体，这里按显示宽度折行：中日韩算 2 列。
+   * Worker 里没有 DOM 量宽度的办法，用码点近似——和 LineEditor 一致。 */
+  function agentWidth(s) {
+    let w = 0;
+    for (const ch of String(s)) {
+      const cp = ch.codePointAt(0);
+      w += (cp >= 0x1100 && (
+        cp <= 0x115f || cp === 0x2329 || cp === 0x232a ||
+        (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) ||
+        (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6) ||
+        (cp >= 0x1f300 && cp <= 0x1f64f) ||
+        (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+        (cp >= 0x20000 && cp <= 0x3fffd))) ? 2 : 1;
+    }
+    return w;
+  }
+  function agentWrap(text, indent, width) {
+    const pad = ' '.repeat(indent || 0);
+    const max = Math.max(20, (width || 80) - (indent || 0));
+    const outLines = [];
+    for (const raw of String(text == null ? '' : text).replace(/\r/g, '').split('\n')) {
+      if (!raw) { outLines.push(''); continue; }
+      let cur = '', w = 0;
+      for (const ch of raw) {
+        const cw = agentWidth(ch);
+        if (w + cw > max) { outLines.push(pad + cur); cur = ''; w = 0; }
+        cur += ch; w += cw;
+      }
+      outLines.push(pad + cur);
+    }
+    return outLines.join('\r\n');
+  }
+
   const agentTui = {
     on: false,
+    _back: 'jshel',
     _q: [],
     _busy: false,
+    _spin: null,
+    _t0: 0,
+
     open() {
-      if (!this.on) {
-        this.on = true;
-        out('\r\n' + ANSI.cyan + '┌─ agent（TUI）' + ANSI.reset + '\r\n');
-        out(ANSI.gray + '│  直接输入任务，Enter 发送\r\n');
-        out(ANSI.gray + '│  agentTui.stop() 中断 · agentTui.queue("…") 排队 · agentTui.close() 退出\r\n');
-        out(ANSI.cyan + '└─' + ANSI.reset + '\r\n');
-        /* 接上历史，并明说接上了——否则刷新后一片空白，用户会以为对话丢了 */
-        call('agent.status').then(st => {
-          if (st && st.messages) out(ANSI.gray + '│  已接上历史会话：' + st.messages + ' 条消息' + ANSI.reset + '\r\n');
-        }).catch(() => {});
+      if (this.on) {
+        out(ANSI.gray + '（已经在 agent 里了；:q 退出，:stop 中断）' + ANSI.reset + '\r\n');
+        return undefined;
       }
-      /* 返回短字符串而不是 this：JSHeL 会把表达式值打印出来，
-       * 返回对象会刷一整屏方法签名，看着像报错。 */
-      return 'agent TUI 已就绪';
+      this.on = true;
+      /* 记住从哪一层进来的：HSL 里进来就回 HSL，否则回 JSHeL。
+       * 只记一个值而不是布尔——布尔表达不了「原来在第几层」。 */
+      this._back = api.__state.mode === 'hsl' ? 'hsl' : 'jshel';
+      api.__state.mode = 'agent';
+      editor.promptStr = AGENT_PROMPT;
+
+      const w = Math.max(24, Math.min(72, (api.__state.cols || 80) - 2));
+      const rule = '─'.repeat(Math.max(4, w - 9));
+      out('\r\n' + ANSI.cyan + '── agent ' + rule + ANSI.reset + '\r\n');
+      out(ANSI.gray + agentWrap('直接输入任务，Enter 发送。:q 退出 · :stop 中断 · :help 命令 · Ctrl+C 中断当前轮 · Ctrl+D 退出', 2, api.__state.cols) + ANSI.reset + '\r\n');
+      out(ANSI.cyan + '─'.repeat(w) + ANSI.reset + '\r\n');
+      /* 接上历史，并明说接上了——否则刷新后一片空白，用户会以为对话丢了 */
+      call('agent.status').then(st => {
+        if (st && st.messages) out(ANSI.gray + agentWrap('已接上历史会话：' + st.messages + ' 条消息', 2, api.__state.cols) + ANSI.reset + '\r\n');
+      }).catch(() => {});
+      /* 不返回值：JSHeL 会把表达式的值打印出来，返回 'agent' 会在横幅下面
+       * 多出一个孤零零的 "agent"，看着像报错。 */
+      return undefined;
     },
+
+    /* 一行的入口：先认本地命令，再交给模型。本地命令用 : 开头，
+     * 不和正常说话抢词（"exit" / "quit" 也认，那是终端里的肌肉记忆）。 */
+    async line(text) {
+      const s = String(text == null ? '' : text).trim();
+      if (!s) return '';
+      if (/^(:q|:quit|:exit|\/q|\/quit|\/exit|exit|quit)$/i.test(s)) { this.close(); return ''; }
+      if (/^(:help|\/help)$/i.test(s)) { this.helpOut(); return ''; }
+      if (/^(:stop|\/stop)$/i.test(s)) { await this.stop(); return ''; }
+      if (/^(:clear|\/clear)$/i.test(s)) { out('\x1b[2J\x1b[H'); return ''; }
+      if (/^(:new|\/new)$/i.test(s)) {
+        try { await call('agent.reset'); out(ANSI.gray + '已新建会话（旧会话仍在 IndexedDB 里）' + ANSI.reset + '\r\n'); }
+        catch (e) { out(ANSI.red + '! ' + (e && e.message || e) + ANSI.reset + '\r\n'); }
+        return '';
+      }
+      return await this._run(s);
+    },
+
+    helpOut() {
+      const rows = [
+        ['直接打字', 'Enter 发送，整行交给智能体'],
+        [':stop', '中断当前这一轮'],
+        [':new', '清空上下文，开一段新会话'],
+        [':clear', '清屏（不删历史）'],
+        [':q', '退出 agent，回到进来之前那一层'],
+        ['Ctrl+C', '中断当前轮（等同于 :stop）'],
+        ['Ctrl+D', '退出（等同于 :q）'],
+        ['↑ / ↓', '翻命令历史']
+      ];
+      out('\r\n' + ANSI.cyan + 'agent 里的命令' + ANSI.reset + '\r\n');
+      for (const [k, v] of rows) {
+        out('  ' + ANSI.yellow + k.padEnd(10) + ANSI.reset + ANSI.gray + v + ANSI.reset + '\r\n');
+      }
+      out('\r\n');
+    },
+
+    _startSpin() {
+      this._stopSpin();
+      this._t0 = Date.now();
+      let i = 0;
+      out(ANSI.gray + '  ' + AGENT_FRAMES[0] + ' 思考中…' + ANSI.reset);
+      this._spin = setInterval(() => {
+        i = (i + 1) % AGENT_FRAMES.length;
+        const sec = ((Date.now() - this._t0) / 1000).toFixed(0);
+        out('\r\x1b[K' + ANSI.gray + '  ' + AGENT_FRAMES[i] + ' 思考中… ' + sec + 's' + ANSI.reset);
+      }, 110);
+    },
+    _stopSpin() {
+      if (!this._spin) return;
+      clearInterval(this._spin);
+      this._spin = null;
+      out('\r\x1b[K');
+    },
+
     async _run(text) {
       const t = String(text == null ? '' : text).trim();
       if (!t) return '';
-      out(ANSI.gray + 'you ' + ANSI.reset + t + '\r\n');
-      out(ANSI.gray + '… 思考中' + ANSI.reset);
+      /* 用户那一行是行编辑器回显的，这里不再重复打印，直接出结果 */
+      this._busy = true;
+      this._startSpin();
       let r;
       try {
         r = await call('agent.turn', t);
       } catch (e) {
-        out('\r\x1b[K' + ANSI.red + '! ' + (e && e.message || e) + ANSI.reset + '\r\n');
+        this._stopSpin();
+        this._busy = false;
+        out(ANSI.red + '! ' + (e && e.message || e) + ANSI.reset + '\r\n');
         return '';
       }
-      out('\r\x1b[K');
-      for (const m of (r && r.messages) || []) {
-        if (m.role === 'assistant' && m.content) out(String(m.content).replace(/\r?\n/g, '\r\n') + '\r\n');
-        if (m.role === 'tool') out(ANSI.gray + '  ← ' + m.name + ': ' + String(m.content || '').replace(/\r?\n/g, ' ⏎ ').slice(0, 400) + ANSI.reset + '\r\n');
+      this._stopSpin();
+      this._busy = false;
+
+      const msgs = (r && r.messages) || [];
+      let tools = 0, printed = 0;
+      for (const m of msgs) {
+        if (m.role === 'assistant' && m.content) {
+          out(agentWrap(m.content, 2, api.__state.cols) + '\r\n');
+          printed++;
+        } else if (m.role === 'assistant' && m.tool_calls && m.tool_calls.length) {
+          printed++;
+          for (const tc of m.tool_calls) {
+            const name = (tc.function && tc.function.name) || tc.name || 'tool';
+            const args = String((tc.function && tc.function.arguments) || tc.args || '').replace(/\s+/g, ' ');
+            out(ANSI.gray + agentWrap('→ ' + name + ' ' + args.slice(0, 120), 2, api.__state.cols) + ANSI.reset + '\r\n');
+          }
+        } else if (m.role === 'tool') {
+          tools++; printed++;
+          const body = String(m.content || '').replace(/\r?\n/g, ' ⏎ ').slice(0, 180);
+          out(ANSI.gray + agentWrap('← ' + (m.name || 'tool') + ': ' + body, 2, api.__state.cols) + ANSI.reset + '\r\n');
+        } else if (m.role === 'system') {
+          /* 重复防护的警告备注：只给用户看，不进模型请求 */
+          printed++;
+          out(ANSI.yellow + agentWrap('⚠ ' + String(m.content || ''), 2, api.__state.cols) + ANSI.reset + '\r\n');
+        } else if (m.role === 'error') {
+          printed++;
+          out(ANSI.red + agentWrap('! ' + String(m.content || ''), 2, api.__state.cols) + ANSI.reset + '\r\n');
+        }
       }
-      out('\r\n');
+      if (!printed) out(ANSI.gray + '  （没有输出）' + ANSI.reset + '\r\n');
+
+      const sec = ((Date.now() - this._t0) / 1000).toFixed(1);
+      out(ANSI.gray + '  ─ ' + sec + 's' + (tools ? ' · ' + tools + ' 次工具调用' : '') + ANSI.reset + '\r\n\r\n');
       return (r && r.text) || '';
     },
+
     async send(text) {
-      if (!this.on) this.open();
+      /* 不带参数 = 进交互模式；带参数 = 就问这一句，不改变模式 */
+      if (text == null || String(text).trim() === '') return this.open();
       if (this._busy) return await this.queue(text);
       return await this._run(text);
     },
     queue(text) {
-      if (!this.on) this.open();
       return new Promise((resolve) => {
         this._q.push({ text: String(text == null ? '' : text), resolve });
         this._drain();
@@ -1912,25 +2100,30 @@ async function bootShell(init) {
     },
     async _drain() {
       if (this._busy) return;
-      this._busy = true;
       while (this._q.length) {
         const item = this._q.shift();
         try { item.resolve(await this._run(item.text)); }
         catch (e) { item.resolve(''); }
       }
-      this._busy = false;
     },
     async stop() {
       this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
       try { await call('agent.stop'); } catch (e) {}
-      out(ANSI.yellow + '■ 已请求停止' + ANSI.reset + '\r\n');
+      out(ANSI.yellow + '■ 已请求停止当前轮' + ANSI.reset + '\r\n');
       return true;
     },
     status() { return call('agent.status'); },
     close() {
+      if (!this.on) { out(ANSI.gray + 'agent 没有在运行' + ANSI.reset + '\r\n'); return false; }
       this.on = false;
-      this._q.length = 0;
-      out(ANSI.gray + '已退出 agent（会话仍在 .agent.session）' + ANSI.reset + '\r\n');
+      this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
+      this._stopSpin();
+      this._busy = false;
+      /* 回原来那一层：HSL 进的就回 HSL，否则回 JSHeL。
+       * 提示符由 promptText() 重算，调用方（submit 的 finally / onCtrlD）负责补上。 */
+      api.__state.mode = this._back === 'hsl' ? 'hsl' : 'jshel';
+      editor.promptStr = editor.promptText();
+      out(ANSI.gray + '已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）' + ANSI.reset + '\r\n');
       return true;
     }
   };

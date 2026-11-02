@@ -396,16 +396,55 @@ whoami xargs yes
 
 ### 5.2 内建 TUI 智能体
 
-除了窗口版智能体，还有一个跑在终端里的（同一个会话、同一套 harness，只是换个渲染面）：
+除了窗口版智能体，还有一个跑在终端里的（同一个会话、同一套 harness，只是换个渲染面）。
+
+它不是「打印个横幅」——**`open()` 是真的换一层**：提示符从 `.home> ` 变成 `agent> `，
+之后每一行都发给智能体，直到你退出。这一点之前是坏的：`open()` 只打横幅、模式没变，
+所以下一行立刻回到 `.home>`，看上去就是「进去一下就自己退出来」。
 
 ```text
-> agentTui.open()          // 进入，打印横幅；返回一句短提示（不是对象）
-> agentTui.send('看下 .home 里有什么')   // 发一条，等它跑完，可以 await
-> agentTui.queue('再统计行数')            // 排队：忙时自动串行，上一轮完才发
-> agentTui.stop()          // 立刻中断当前轮，并清空队列
-> agentTui.close()         // 退出
-> agent('……')              // 短名，等价于 send
+.home> agentTui.open()
+── agent ────────────────────────────────────────────────
+  直接输入任务，Enter 发送。:q 退出 · :stop 中断 · :help 命令 · Ctrl+C 中断当前轮 · Ctrl+D 退出
+────────────────────────────────────────────────────────
+agent> .home 里有什么
+  → ls .home
+  ← ls: .home.readme  .home.welcome
+  .home 下有两个文件：readme 和 welcome。
+  ─ 1.4s · 1 次工具调用
+
+agent> :q
+已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）
+.home>
 ```
+
+| 输入 | 行为 |
+| --- | --- |
+| 任意文字 | 整行发给智能体（**不**当 JS 求值，也不当 shell 命令） |
+| `:stop` / `Ctrl+C` | 中断当前轮（走 `AbortController`，不等模型超时） |
+| `:new` | 清空上下文，开一段新会话（旧会话仍在 IndexedDB） |
+| `:clear` | 清屏（不删历史） |
+| `:q` / `exit` / `Ctrl+D` | 退出，回到进来之前那一层 |
+| `:help` | 上面这张表 |
+
+**三种模式并列**，看提示符就知道自己在哪一层，不存在「猜这一行是什么」：
+
+| 提示符 | 模式 | 一行交给谁 |
+| --- | --- | --- |
+| `.home> ` | JSHeL | JS 求值（`ls -la` 是语法错误） |
+| `.home $ ` | HSL | shell 命令行（`1+1` 是「命令未找到」） |
+| `agent> ` | 智能体 | 整行发给模型 |
+
+函数接口仍然可用，给脚本用、不切模式：
+
+```js
+await agentTui.send('看下 .home 里有什么')   // 发一条，等它跑完
+await agentTui.queue('再统计行数')           // 排队：忙时自动串行
+agentTui.stop()                              // 中断当前轮，并清空队列
+agentTui.status()                            // { running, messages }
+```
+
+`agent('……')` 是 `send` 的短名；`agent()` 不带参数等于 `open()`。
 
 没有 id、没有多实例：**一个终端一个 TUI 会话**，这是刻意的——多实例会让「当前会话」这个概念
 打架（窗口版和 TUI 共用 `ht-agent` 里的 `sid = 'main'`，一个 `sid` 只能有一份消息流）。
@@ -758,6 +797,7 @@ settings.get(k) / settings.set(k, v) / settings.all()
 pkg.install(spec) / pkg.list() / pkg.remove(spec)
 agent.open() / agent.send(text) / agent.export() / agent.clear()
 agentTui.open() / agentTui.send(t) / agentTui.queue(t) / agentTui.stop() / agentTui.close()
+                            // open() 会把 REPL 切进 agent 模式（提示符变 agent>），不是只打横幅
 
 // —— HSL / 嵌套自己 ——
 hsl()                       // 进交互式 Linux 风格 shell（可嵌套）
@@ -1467,6 +1507,16 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 `dragstart` 里同步 `setData('DownloadURL', mime:原名:url)`，缓存没命中就只带 `text/plain`（不阻塞、不报错）。
 `dispose()` 时统一 `revokeObjectURL`，不然每拖一次泄一个。
 
+**40. 「进入模式」不是打印一句话——状态没变，用户看到的就是闪退**
+`agentTui.open()` 原来只 `out()` 了一个横幅就 `return`，`state.mode` 仍是 `jshel`、
+提示符仍是 `.home> `。于是第一次回车就回到 JS 求值，用户的理解只能是「进去了又自己退出来」。
+**根因不是渲染，是状态**：凡是叫 `open()` 的东西，必须真的改变某个被下游读取的状态。
+**修法**：`mode` 从二值扩成三值（`jshel`/`hsl`/`agent`），`open()` 改 `mode` + 重画提示符，
+`onSubmit` 按 `mode` 三路分派；退出时靠 `_back` 回到进来之前那一层，而不是硬编码回 JSHeL。
+顺带两条：`Ctrl+C` / `Ctrl+D` 在内建模式里必须有语义（中断 / 退出），
+所以给 `LineEditor` 加了 `onInterrupt` / `onCtrlD` 两个钩子——否则「忙」的时候
+`Ctrl+C` 只会打一句「同步执行无法中断」，而那时正是最需要中断的时候。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1496,6 +1546,7 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSL 进来就回 HSL）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
 | 0.0.1.3 | 2026-11-02 | **拖拽导入/导出 + spotfs 节点文件系统**：①**拖进来 = 导入**——外部文件拖到窗口出现全屏虚线遮罩（图标浮动动画 + 「松手导入到 X」），松手即进 spotfs：智能体输入框 → `.queryfile` 并挂到对话，文件管理器 → 当前目录，其它地方 → `.home`；`dragenter/leave` 用计数避免闪。②**拖出去 = 下载**——文件管理器每行 `draggable`，`pointerdown` 预读成 Blob URL，`dragstart` 同步 `setData('DownloadURL', 'mime:原名:url')`，拖到桌面/资源管理器即落盘。③**spotfs 六个 syscall**——`sptc`(cover，只覆盖不新建) / `sptn`(new，`.queryfile` 下=向用户要文件、`.savefile` 下=关闭时保存) / `spta`(append) / `sptx`(execute:JS/HTML/对象/目录/权限/包/设备，自动判别) / `sptr`(read:内容或索引) / `sptd`(delete:文件/目录递归/进程结束)；worker 侧 `sptx` 把「动作描述」落地（编译执行 JS、开浏览器、`cd`、请求权限、`kill`）。④**名字转义**——UTF-8 字节级：字母数字原样，其余（`-` `_` `.` `/` 空格 中文 控制符）写 `-HH`，首位数字也转义，整体加 `-xx` 哨兵；导出反向解析，目标系统不接受的字符保留 `-HH`；`checkName` 放行 `-xx…` 转义名；`normPath` 一律小写，所以哨兵/十六进制在存储层是小写（解析时大小写都认）。⑤**`.savefile`**——新建并写入，关闭/删除时 `saveFileRaw(原名)` 导出后节点消失。⑥**统一入口**——`importFiles()` 被拖拽、上传、`askFile` 复用；`saveFileRaw` 专用于导出（不走 `sanitizeName`，否则会把 `-xx` 前的短横线剥掉）。⑦**文档/种子**——`.home.readme` 改写为 spotfs 世界观（六操作、转义、`.savefile`）；README 第 7 章新增 spotfs / 转义 / 拖拽三节，第 11 章补 `spt*`。⑧**实测**——转义往返 `hello world.txt ↔ -xxhello-20world-2etxt`、`a/b.txt → a-2Fb.txt`（导出）、`readme` 原样、`123abc ↔ -xx-3123abc`；六 syscall 覆盖/新建/追加/读/删/目录索引全对，`sptc` 对不存在、`sptn` 对已存在都正确报错；`.savefile` 存在→`saveOnClose`→导出删除；文件管理器 drop 生成 `-xxhello-20world-2etxt`、`#desk` drop 生成 `-xxg-20note-2emd`、智能体 drop 进 `.queryfile` 且附件 +1；遮罩显隐、`DownloadURL=text/plain:export me.txt:blob:…` 均正确。 |
 | 0.0.1.2 | 2026-11-02 | **智能体「重复生成防护」**：①在 harness 循环里新增**输出签名**（`_turnSig`）——带工具调用时压成「工具名(参数指纹)」链，纯文本取正文前缀；连续三次签名相同判定陷入重复循环。②第 3 次重复时**卡断本轮**（不再执行这一轮的工具调用/文本），并**自动以 user 身份向模型追问一句「【自动检查】你已连续 3 次输出基本相同的内容，疑似陷入重复循环……请改用不同参数或换工具，不要重复刚才完全相同的动作」**，然后让它带着追问继续跑（reset 后从 0 重数，不每轮都追问）。③`AGENT_SYSTEM` 补一句：收到「连续 3 次重复输出」提示时立刻换思路而非继续重复。④`messages` 里插入的「⚠ 已连续 3 次输出相同内容」是 `system` 角色、只渲染给用户看（`render()` 走 `msg sys` 样式），**不进发给模型的请求**（`apiMessages()` 跳过 `system`）；追问句是 `user` 角色，正常发。⑤把过去散落的「去重」收口——单轮内同工具同参数 `seen>=2` 不重执行、连续相同正文 `_pushAssistant` 折叠、跨轮相同签名 `REPEAT_LIMIT=3` 卡断追问，三层各管一段。 |
 | 0.0.1.1 | 2026-11-02 | **把「自作聪明」的地方全部退回浏览器，把「学不像」的地方全部删掉**：①**原生 API 一律转发，不重造**——`alert`/`confirm`/`prompt`/`open`/`print`/`close`/`focus`/`blur`/`stop`/`scrollTo`/`scrollBy` 在 Worker 里都没有，现在统一走 `native` RPC 转回主线程调 `window[name]` 本人：`alert` 是浏览器弹窗（不是 toast）、`confirm` 是浏览器确认框（返回真的 `true/false`）、`prompt` 是浏览器输入框、`print()` 真的开打印对话框、`window.open` 真的开新标签。`NATIVE_ALLOWED` 白名单之外的转发直接抛错；顺手删掉 `globalThis.print = (...a) => out(...)`——那条一直在抢注打印对话框。两条物理限制写进文档：跨线程没有同步通道（要 SAB + COOP/COEP，`file://` 必然没有），所以 `confirm`/`prompt` 返回 Promise；`window.open` 返回 `WindowProxy`，克隆不回来只能给 `null`。②**JSHeL 与 HSL 彻底分家**——删掉 `isShellLine()` 那套「首词猜」：它让同一行代码的行为取决于命令表里恰好有没有同名命令。现在 `state.mode === 'hsl'` 整行交 COMPAT，否则只走 `api.run()`（纯 JS）。JSHeL 里敲 `ls -la` / `nano readme` 是 `SyntaxError` / `ReferenceError`，外加一句「X 是 HSL 命令，`hsl()` 进 shell」。③**HSL 嵌套改用栈**——`HSL: [{cwd, env}]`，`hslPush()` 压栈、`hslPop()` 弹栈并恢复 cwd + `ENV`；`exit` 弹一层，退到空才回 JSHeL。老版把模式存成布尔量，第二次进入只是把同一个标记又设一遍（提示符不变、`exit` 一次退到底、进去前改过的目录回不来）——**布尔量表达不了「第几层」**。④**删掉没有意义的移植**——`apt`（这里不是 Debian）、`ping`（浏览器不发 ICMP）、`bash`/`sh`（GPL 且学不像）、`su`/`sudo`（单用户最高权限）、`npm`/`pip`（只会打印一行的桩）、`chmod`（没有权限位）；**`zsh` 彻底删除**（含许可证段落）——「学的不像那么干脆彻底不学了」，交互层改名 **HSL** 并由 `def('hsl')` 提供。⑤**文件系统删掉 rwx**——`ls -l` 改成 `kind  size  mtime  name`（`dir`/`file`/`func`/`app`/`dev`/`pkg`），画一排 `-rw-r--r--` 只会让人以为 `chmod` 有用；`.perm` 的语义从「权限位」正名为「授权申请单」（摄像头/通知）。⑥**新增 `fastfetch` / `neofetch`**——`sysFacts()` 现场汇总 `sys.info` + `fs.usage` + `proc.list` + `.pkg`，六行 ASCII logo，拿不到的字段写 `n/a` 不编；`--no-logo` 只要文字。⑦**`vim` / `nano` 重写**——DECSET 1049 备用屏 + **按绝对坐标逐行重画**（`\x1b[{n};1H\x1b[2K`，一个换行符都不发）：内容高度等于终端高度时，末尾那个 `\r\n` 会触发滚动把整屏顶上去一行，nano「显示不正常」就是这个；顶栏/状态栏改用显式配色 `\x1b[100;97m`（SGR 7 反显换的是默认前景/背景，浅色主题下就是黑字压深底）；中文按显示宽度排版（`CW`/`dw`/`sliceW`/`padW`/`skipW`/`xToCol`），中英混排不再错行；`LineEditor` 两处 `finally` 加 `&& !this.raw`，全屏期间不再补提示符（否则 `.home $ ` 正好盖在标题栏上）；`resize` 时重画全屏应用。⑧**支持鼠标**——DECSET 1000 + 1006（SGR 坐标），正则认 `\x1b[<b;x;yM/m`：点正文哪一行哪一列光标就到哪（按显示宽度反算列），滚轮上下滚三行；退出顺序不能反：`[?1000l[?1006l[?25h[?1049l`（先关鼠标报告再离开备用屏）。⑨**对话持久化**——新增 `AgentStore`（独立库 **`ht-agent`**：`sessions` keyPath `id`、`messages` keyPath `['sid','seq']` + `sid` 索引）；> 40 KB 的 dataURL 自动转 Blob 存，读回再转回；**先 prepare 再开事务**（事务里 `await` 会让事务提前提交，抛 `TransactionInactiveError`），事务回调只做同步 `put/delete`；800 ms 防抖 + 轮末/清空/导入/关窗 `flushSession()`；首次启动从 `.agent.session` JSONL 迁移一次，之后那份只作可导出镜像；`AgentTuiHost.status()` 改走 `HeadlessAgent.ensure()`，没开过 TUI 也能看到历史条数。⑩**产品名统一为 `HTerMinaL`**——按 `\bhterminal\b(?!\s*[./])` 全仓替换，避开路径与文件名（`X-HTerm-Client` 这类 HTTP 头值不算展示文案，保留）。⑪**文档**——5.1 整节改写为 HSL（JSHeL vs HSL 对照、嵌套栈、支持能力、命令表、路径按 cwd、全屏应用、fastfetch、「没有 rwx」、「删掉的没意义移植」表）；新增 5.3「原生 API：只转发，不重造」；第 6 章开头写明「不是 ext4：没有 inode、没有 rwx、没有属主」；踩坑 `29 → 36`。⑫**实测**——`alert`/`confirm`/`prompt` 被 Playwright 的 `dialog` 事件捕获为 `alert:hello native` / `confirm:really?` / `prompt:name?`（证明是浏览器自己的框）、`1+1`→`2`、`ls -la`→`SyntaxError`+指路、`hsl('ls -la')` 正常、`hsl('uname')`→`HTerMinaL`、`hsl`→`cd /`→`hsl`→`exit` 回到第 1 层且目录回 `.home`→`exit` 回 JSHeL、10 条删掉的命令在 `help` 里全部消失、`fastfetch` 九项信息全真值、nano 点第 5 行第 8 列后输入落点正确、vim `:wq` 后 `cat` 内容正确、刷新后智能体显示「已恢复 4 条消息（最后更新 …）」。 |
@@ -1515,6 +1566,7 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 20:55 | 0.0.1.4：修「TUI 智能体进去就自己退出来」——`open()` 只打横幅不切模式 | `build/20-worker.js`（`AGENT_PROMPT`；`prompt()` 三路；`onSubmit` 新增 `mode==='agent'` 分支；`LineEditor` 新增 `onInterrupt` / `onCtrlD` 钩子并接进 `feed()`；`agentTui` 重写：`open/_run/line/send/queue/_drain/stop/close/helpOut` + `agentWidth/agentWrap` 折行 + `_startSpin/_stopSpin` 帧动画 + `_back` 记忆来路）、`build/30-core.js`（版本 0.0.1.4）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.2 重写、§11 注明、开发日志、操作记录、踩坑第 40 条） | 无头 Chromium：`agentTui.open()` 后提示符变 `agent> ` 且停住；`:help` / `:q` 正常；未配置后端时错误留在 TUI 内不退出；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；mock 慢模型下 `Ctrl+C` 0.7s 中断并回提示符（`■ 已请求停止当前轮`）；窗口版 `agentOpen()` 仍存活；无 pageerror | `main` |
 | 2026-11-02 17:45 | 0.0.1.3：拖拽导入/导出 + spotfs（六 syscall + 名字转义 + `.savefile`） | `build/30-core.js`（`spotEscape/spotUnescape/spotExportName`、`SPOT_NAME_RE`、`checkName` 放行转义名、`DIRS` 加 `.savefile`、`FS.sptc/sptn/spta/sptr/sptx/sptd`、`flushSavefile`、`saveFileRaw`、`importFiles`、种子 readme 改 spotfs）、`build/70-boot.js`（`initDropImport` + 遮罩 + `_hasFiles/_dropTarget`、RPC `fs.spt*`/`fs.escape|unescape|exportName`、boot 调用）、`build/20-worker.js`（`sptc/sptn/spta/sptr/sptx/sptd` + `spotEsc/spotUnesc/spotExport`，`api`/`api.fs` 暴露）、`build/50-apps.js`（FilesApp `_bindDrop`/`_prefetchBlob`/draggable 行/`DownloadURL`、`upload`/`download` 走 `importFiles`/`saveFileRaw`）、`build/60-agent.js`（drop → `.queryfile` + 附件）、`build/00-head.html`（`#dropVeil` 与动画）、`build/10-body.html`（遮罩 DOM）、`build/30-core.js`+`modelserver.{py,js,go}`（版本）、`README.md`（第 7 章三节、第 11 章、日志、踩坑 38-39） | playwright：转义往返 5 例、六 syscall 全通过、`.savefile` 导出删除、FilesApp/#desk/智能体三种 drop 落点正确、遮罩显隐、`DownloadURL` 格式正确、无 pageerror | `main` |
 | 2026-11-02 15:30 | 0.0.1.2：智能体重复生成防护（连续 3 次相同输出 → 卡断 + 自动追问） | `build/60-agent.js`（`_turnSig` 输出签名、`_injectRepeatNudge` 自动追问、`run()` 循环内 `REPEAT_LIMIT=3` 计数与卡断、`render()` 处理 `system` 备注、`apiMessages()` 跳过 `system`、`AGENT_SYSTEM` 补一句）、`build/30-core.js`（`HT_VERSION`）、`modelserver.{py,js,go}`（版本）、`README.md`（9 章日志、10 章记录、12 章说明、踩坑 37） | 待 playwright 回归：构造一个会连续 3 次调同一工具的会话，确认第 3 次被卡断、日志出现「⚠ 已连续 3 次输出相同内容」、会话里多出一条 user 角色「【自动检查】…」、模型带着追问再跑一轮 | `main` |
 | 2026-11-02 13:50 | 0.0.1.1：原生 API 全部转发、JSHeL/HSL 彻底分家、HSL 栈嵌套、删无意义移植、fastfetch、nano/vim 重写 + 鼠标、对话持久化、产品名统一 | `build/20-worker.js`（`nativeCall` 转发 + `NATIVE_ALLOWED`、删 `globalThis.print`、`KEYS` 增删、`onSubmit` 按 mode 分流、删 `isShellLine` 与语法指路提示、`hsl()`/`hsl.run`、`setMode`/`onEditorResize`、`LineEditor` 两处 `finally` 判 `raw`、resize 重画全屏、`help()` 重写）、`build/25-compat.js`（HSL 栈 `hslPush/pop/depth`、`def('hsl')`/`exit`、删 9 条命令、`longFmt` 去 rwx、`fastfetch`/`neofetch`、`makeEditor` 重写：双宽排版 + 绝对定位 + 显式配色 + 鼠标、`realPath` 按 cwd、`tryExternal` 只认 `.bin`）、`build/70-boot.js`（`nativeCall` + `sysInfo` + `native`/`sys.info` RPC、`Drawer.refresh` 填 `#stAgent`）、`build/60-agent.js`（新增 `AgentStore`：`ht-agent` 库、Blob 打包、先 prepare 后开事务、800ms 防抖 `flushSession`、从 JSONL 迁移）、`build/65-tui.js`（`status()` 走 `HeadlessAgent.ensure()`）、`build/30-core.js`（`HT_VERSION`、种子 readme/welcome、`.perm` 措辞）、`build/10-body.html`（抽屉「对话」行）、`build/{00-head,40-term,50-apps}.js`（产品名）、`modelserver.{py,js,go}`（版本）、`README.md`（5.1 重写、5.3 新增、6 章开头、踩坑 36 条、日志）、`IDEAS.md`、`licenses/README.md` | playwright：`dialog` 事件抓到 `alert/confirm/prompt` 三条真原生框；`1+1`→`2`；`ls -la`/`nano readme` → 语法/引用错误 + 「是 HSL 命令」提示；`hsl('uname')`→`HTerMinaL`；`hsl`→`cd /`→`hsl`→`exit`（回第 1 层、目录回 `.home`）→`exit`（回 JSHeL）→`1+1`→`2`；`help` 里 10 条删掉的命令全无、`fastfetch`/`neofetch` 在；`fastfetch` 九项全真值；nano 顶栏可见、状态栏 `4/28 行 · 8 列`、鼠标点第 5 行第 8 列输入落点正确、`^X` 干净退出；vim `:wq` 后 `cat newfile` 为 `hello\nworld`；`ll` 表头无 rwx；`AgentStore.save('main',4条)`→`{sessions:1,messages:4}`、`indexedDB.databases()` 含 `ht-agent`、`reload()` 后显示「已恢复 4 条消息」 | `main` |
@@ -1574,7 +1626,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 36 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 40 条）由 AI 与人类共同排查完成
 
 这意味着：
 
