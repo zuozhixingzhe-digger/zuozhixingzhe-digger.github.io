@@ -940,10 +940,7 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
       <div class="drawer__row"><span>终端字号</span><input id="setFont" type="range" min="9" max="26" step="1" aria-label="终端字号"><b id="setFontVal">14</b></div>
       <div class="drawer__row"><span>显示行数</span><input id="setRows" type="range" min="0" max="80" step="1" aria-label="显示行数"><b id="setRowsVal">自动</b></div>
       <div class="drawer__row"><span>行高</span><input id="setLine" type="range" min="10" max="20" step="1"><b id="setLineVal">1.2</b></div>
-      <div class="drawer__row"><span>按键振动</span>
-        <label class="sw" title="按键 / 响铃时短振动"><input type="checkbox" id="setHaptic"><i></i></label>
-      </div>
-      <div class="drawer__note">主题跟随系统，系统切换深/浅色时自动跟随。「显示行数」固定终端高度（0 = 自动铺满），与参考项目一致。</div>
+      <div class="drawer__note">主题跟随系统，系统切换深/浅色时自动跟随。「显示行数」固定终端高度（0 = 自动铺满），与参考项目一致。键盘输入不振动；方向摇杆有轻微振动反馈（支持的设备上）。</div>
     </section>
 
     <section class="drawer__section">
@@ -1832,14 +1829,26 @@ function makeShell(ctx) {
       ['', 'hterminal · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
-      ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()'],
+      ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  clear()  history()'],
+      ['DOM', 'document.title  document.write(html)  document.querySelector(sel)  page.q(sel)  page.wins()  page.toast(t)'],
+      ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
       ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
       ['提示', '表达式直接回车即可；多行用反斜杠续行；Ctrl+C 取消行；Ctrl+D 退出。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
       out(ANSI.yellow + k.padEnd(6, ' ') + ANSI.reset + v + '\r\n');
+    }
+    /* 兼容层命令单独一段。以前这里被 compat 的 help 整个顶掉，
+     * 敲 help 只看到 40 个命令名，会以为 JSHeL 的函数没了。 */
+    const cc = (typeof COMPAT !== 'undefined' && COMPAT.commands) ? Object.keys(COMPAT.commands).sort() : [];
+    if (cc.length) {
+      out('\r\n' + ANSI.bold + ANSI.cyan + 'Linux 兼容层' + ANSI.reset + ANSI.gray + '（可直接敲，也可 `zsh` 进原生模式）' + ANSI.reset + '\r\n');
+      for (let i = 0; i < cc.length; i += 6) {
+        out('  ' + cc.slice(i, i + 6).map(n => n.padEnd(11)).join('') + '\r\n');
+      }
+      out(ANSI.gray + '  管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd) 均可用' + ANSI.reset + '\r\n');
     }
   }
 
@@ -2039,6 +2048,29 @@ function makeElHandle(sel, c) {
     },
     toString() { return '[Element ' + sel + ']'; }
   };
+  /* innerHTML / textContent 做成真属性：读走 RPC（Promise），写直接下发。
+   * 对 body / html 的写**不**落到宿主页面——那会把整个终端冲掉，
+   * 改为走 document.write 的文档窗口，看得见效果又不会炸现场。 */
+  const writeish = (v) => {
+    const s = String(v == null ? '' : v);
+    if (sel === 'body' || sel === 'html' || sel === '.') return c('dom.op', 'docWrite', [s]);
+    return op('setHtml', s);
+  };
+  Object.defineProperty(h, 'innerHTML', {
+    get: () => op('html'),
+    set: (v) => { writeish(v); },
+    configurable: true
+  });
+  Object.defineProperty(h, 'textContent', {
+    get: () => op('text'),
+    set: (v) => { op('setText', String(v == null ? '' : v)); },
+    configurable: true
+  });
+  Object.defineProperty(h, 'value', {
+    get: () => op('attr', 'value'),
+    set: (v) => { op('setValue', String(v == null ? '' : v)); },
+    configurable: true
+  });
   return h;
 }
 
@@ -2075,7 +2107,16 @@ function installDomProxy(call) {
   };
 
   /* document 外壳：querySelector 返回句柄；title/readyState 走 async 方法，
-   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。 */
+   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。
+   *
+   * document.write 是真能用的：内容写进一个「文档窗口」，第一次 write 开窗，
+   * 之后每次 write 更新同一个窗口的 srcdoc。**不会**往宿主页面 document 上写——
+   * 那会把整个终端冲掉（浏览器里 document.write 本来就是「打开新文档」的语义，
+   * 这里只是把「新文档」落到一个窗口里，更符合直觉也不炸现场）。 */
+  let docBuf = '';
+  /* 返回 undefined：浏览器的 document.write 也不返回值，
+   * 回一个 {ok:…} 只会让 REPL 每敲一行都刷一串对象。 */
+  const docPush = (s) => { docBuf += s; c('docWrite', docBuf).catch(() => {}); };
   const document = {
     get title() { return page._titleCache || ''; },
     set title(v) { page._titleCache = String(v); c('setTitle', String(v)); },
@@ -2088,6 +2129,12 @@ function installDomProxy(call) {
     get head() { return makeElHandle('head', call); },
     addEventListener: () => { /* worker 里监听 DOM 事件没有意义，静默吞掉 */ },
     removeEventListener: () => {},
+    /* —— 真·document.write —— */
+    write(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('')); },
+    writeln(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('') + '\n'); },
+    open() { docBuf = ''; },
+    close() { docPush(''); },
+    get __html() { return docBuf; },
     location: {
       get href() { return page._urlCache || ''; },
       reload: () => call('page.reload').catch(() => {})
@@ -3098,12 +3145,9 @@ const COMPAT = (function () {
     return r;
   }, '执行脚本');
 
-  def('help', async () => {
-    const names = Object.keys(CMDS).sort();
-    const lines = [];
-    for (let i = 0; i < names.length; i += 6) lines.push('  ' + names.slice(i, i + 6).map(n => n.padEnd(10)).join(''));
-    return { out: `\n${CYAN}hterminal 兼容层${R} — 这些命令可以在 JSHeL 里直接用，也可以 zsh 进入原生模式\n\n${lines.join('\n')}\n\n${DIM}管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd)、alias 均可用。${R}\n` };
-  }, '命令列表');
+  /* help 不在这里定义：JSHeL 自己有一个 help()，会把两套命令一起列出来。
+   * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
+   * 会以为 JSHeL 的函数全没了。 */
 
   /* ---------------------------------------------------------------- 编辑器 */
   function makeEditor(filePath, mode) {
@@ -3560,7 +3604,7 @@ const COMPAT = (function () {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.2';
+const HT_VERSION = '0.0.0.3';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -3596,7 +3640,7 @@ const Settings = {
     /* 光标形态与闪烁不提供设置：固定照参考项目那套（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）。
      * 背景网格也不提供设置，固定开着（很淡，只为看清桌面边界）。
      * rows = 固定显示行数，0 表示自动铺满。 */
-    font: 14, lineHeight: 12, rows: 0, haptic: '1',
+    font: 14, lineHeight: 12, rows: 0,
     cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
@@ -4932,7 +4976,7 @@ function initTopbarKeys() {
     let active = false, joyPid = null, joyDir = null, joyTimer = null, joyRadius = 0;
     const setArrow = d => arrows.forEach(el => el.classList.toggle('joy-arrow--on', !!d && el.dataset.dir === d));
     const arrowKey = { up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight' };
-    const sendDir = d => sendKeyToTerm(Keys.seq(arrowKey[d]));
+    const sendDir = d => { sendKeyToTerm(Keys.seq(arrowKey[d])); haptic(7); };
     const center = () => {
       const r = joyBase.getBoundingClientRect();
       joyRadius = Math.max(6, r.width / 2 - 4);
@@ -5080,8 +5124,6 @@ class TerminalSession {
     } catch (e) { console.warn('fit 失败', e); }
     this.term.onData(d => {
       this._post({ t:'in', data:Keys.shape(d) });
-      // 短振动只在「像一次按键」时触发：粘贴一大段不抖，控制序列也不抖
-      if (d.length <= 2 && d.charCodeAt(0) > 0x1f) haptic(5);
       this._cursorIdle();
     });
     this.term.onResize(({ cols, rows }) => this._post({ t:'resize', cols, rows }));
@@ -7329,16 +7371,16 @@ class AgentApp {
  * ==========================================================================*/
 
 /* ---------------------------------------------------------------- 振动反馈 */
-/* 只在「像一次按键」时抖一下；很轻，且始终尊重用户的系统设置（navigator.vibrate
- * 在没有权限或桌面端会静默失败，这里包一层 try）。 */
+/* 只有摇杆用：方向变化时抖一下，连发时轻抖。键盘输入**不**振动——
+ * 打字时手本来就在键上，再震一下纯属干扰（这是被用户点名删掉的逻辑）。
+ * navigator.vibrate 在桌面端 / 无权限时静默失败，这里包一层 try。 */
 let _hapticAt = 0;
 function haptic(ms) {
   try {
-    if (typeof Settings !== 'undefined' && Settings.get('haptic') === '0') return;
     if (!navigator.vibrate) return;
     const now = Date.now();
-    /* 连打时节流：40ms 内不重复抖，否则输入快的用户手机会一直嗡嗡 */
-    if (now - _hapticAt < 40) return;
+    /* 节流 60ms：小于摇杆连发间隔（180ms），所以每次连发都能感到，但不会重叠加长 */
+    if (now - _hapticAt < 60) return;
     _hapticAt = now;
     navigator.vibrate(Math.max(3, Math.min(30, ms || 6)));
   } catch (e) {}
@@ -7709,6 +7751,7 @@ const DomRpc = {
       case 'attr': { const el = this._el(args[0]); return el ? el.getAttribute(args[1]) : null; }
       case 'setAttr': { const el = this._el(args[0]); if (!el) return false; el.setAttribute(args[1], String(args[2])); return true; }
       case 'setText': { const el = this._el(args[0]); if (!el) return false; el.textContent = String(args[1]); return true; }
+      case 'setHtml': { const el = this._el(args[0]); if (!el) return false; el.innerHTML = String(args[1]); return true; }
       case 'setValue': { const el = this._el(args[0]); if (!el) return false; el.value = String(args[1]); el.dispatchEvent(new Event('input', { bubbles:true })); el.dispatchEvent(new Event('change', { bubbles:true })); return true; }
       case 'click': { const el = this._el(args[0]); if (!el) return false; el.click(); return true; }
       case 'addClass': { const el = this._el(args[0]); if (!el) return false; el.classList.add(String(args[1])); return true; }
@@ -7742,6 +7785,24 @@ const DomRpc = {
       case 'toast': { toast(String(args[0] || '')); return true; }
       case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
       case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }
+      /* Worker 里的 document.write：写到「文档窗口」的 srcdoc。
+       * 第一次调用开窗，之后更新同一窗口；不碰宿主页面的 document。 */
+      case 'docWrite': {
+        const html = String(args[0] == null ? '' : args[0]);
+        let w = this._docWin;
+        if (!w || !w.el || !w.el.isConnected) {
+          w = WindowManager.open({ type:'browser', title:'document', html });
+          this._docWin = w;
+          this._docHtml = html;
+          return { ok:true, win:true, id:w && w.id, length:html.length };
+        }
+        this._docHtml = html;
+        try {
+          const app = WindowManager.windows.get(w.id);
+          if (app && app.content && app.content.loadHtml) app.content.loadHtml(html, 'document');
+        } catch (e) {}
+        return { ok:true, win:false, id:w.id, length:html.length };
+      }
       case 'wins': return WindowManager.list();
       default: throw new Error('dom.op 不支持：' + name);
     }
@@ -7986,7 +8047,6 @@ const Drawer = {
       if (!el) return;
       el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
     };
-    bindSwitch('setHaptic', 'haptic', '1', '0');
     if ($('#setCdn')) $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
     // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
     bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
@@ -8029,7 +8089,6 @@ const Drawer = {
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
     if ($('#setRows')) { $('#setRows').value = String(Settings.get('rows') || 0); }
     if ($('#setRowsVal')) { const r = Number(Settings.get('rows')) || 0; $('#setRowsVal').textContent = r ? r + ' 行' : '自动'; }
-    if ($('#setHaptic')) $('#setHaptic').checked = Settings.get('haptic') === '1';
     if ($('#setCdn')) $('#setCdn').value = Settings.get('cdn');
     $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');

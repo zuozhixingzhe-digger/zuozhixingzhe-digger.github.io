@@ -268,7 +268,7 @@ function initTopbarKeys() {
     let active = false, joyPid = null, joyDir = null, joyTimer = null, joyRadius = 0;
     const setArrow = d => arrows.forEach(el => el.classList.toggle('joy-arrow--on', !!d && el.dataset.dir === d));
     const arrowKey = { up:'ArrowUp', down:'ArrowDown', left:'ArrowLeft', right:'ArrowRight' };
-    const sendDir = d => sendKeyToTerm(Keys.seq(arrowKey[d]));
+    const sendDir = d => { sendKeyToTerm(Keys.seq(arrowKey[d])); haptic(7); };
     const center = () => {
       const r = joyBase.getBoundingClientRect();
       joyRadius = Math.max(6, r.width / 2 - 4);
@@ -416,8 +416,6 @@ class TerminalSession {
     } catch (e) { console.warn('fit 失败', e); }
     this.term.onData(d => {
       this._post({ t:'in', data:Keys.shape(d) });
-      // 短振动只在「像一次按键」时触发：粘贴一大段不抖，控制序列也不抖
-      if (d.length <= 2 && d.charCodeAt(0) > 0x1f) haptic(5);
       this._cursorIdle();
     });
     this.term.onResize(({ cols, rows }) => this._post({ t:'resize', cols, rows }));

@@ -619,12 +619,9 @@ const COMPAT = (function () {
     return r;
   }, '执行脚本');
 
-  def('help', async () => {
-    const names = Object.keys(CMDS).sort();
-    const lines = [];
-    for (let i = 0; i < names.length; i += 6) lines.push('  ' + names.slice(i, i + 6).map(n => n.padEnd(10)).join(''));
-    return { out: `\n${CYAN}hterminal 兼容层${R} — 这些命令可以在 JSHeL 里直接用，也可以 zsh 进入原生模式\n\n${lines.join('\n')}\n\n${DIM}管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd)、alias 均可用。${R}\n` };
-  }, '命令列表');
+  /* help 不在这里定义：JSHeL 自己有一个 help()，会把两套命令一起列出来。
+   * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
+   * 会以为 JSHeL 的函数全没了。 */
 
   /* ---------------------------------------------------------------- 编辑器 */
   function makeEditor(filePath, mode) {

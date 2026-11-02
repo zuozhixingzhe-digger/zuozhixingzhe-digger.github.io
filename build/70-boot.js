@@ -236,7 +236,6 @@ const Drawer = {
       if (!el) return;
       el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
     };
-    bindSwitch('setHaptic', 'haptic', '1', '0');
     if ($('#setCdn')) $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
     // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
     bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
@@ -279,7 +278,6 @@ const Drawer = {
     $('#setLineVal').textContent = (Number(Settings.get('lineHeight')) / 10).toFixed(1);
     if ($('#setRows')) { $('#setRows').value = String(Settings.get('rows') || 0); }
     if ($('#setRowsVal')) { const r = Number(Settings.get('rows')) || 0; $('#setRowsVal').textContent = r ? r + ' 行' : '自动'; }
-    if ($('#setHaptic')) $('#setHaptic').checked = Settings.get('haptic') === '1';
     if ($('#setCdn')) $('#setCdn').value = Settings.get('cdn');
     $('#setAgentDirect').checked = Settings.get('agentMode') === 'direct';
     $('#setAgentUrl').value = Settings.get('agentUrl');

@@ -12,16 +12,16 @@
  * ==========================================================================*/
 
 /* ---------------------------------------------------------------- 振动反馈 */
-/* 只在「像一次按键」时抖一下；很轻，且始终尊重用户的系统设置（navigator.vibrate
- * 在没有权限或桌面端会静默失败，这里包一层 try）。 */
+/* 只有摇杆用：方向变化时抖一下，连发时轻抖。键盘输入**不**振动——
+ * 打字时手本来就在键上，再震一下纯属干扰（这是被用户点名删掉的逻辑）。
+ * navigator.vibrate 在桌面端 / 无权限时静默失败，这里包一层 try。 */
 let _hapticAt = 0;
 function haptic(ms) {
   try {
-    if (typeof Settings !== 'undefined' && Settings.get('haptic') === '0') return;
     if (!navigator.vibrate) return;
     const now = Date.now();
-    /* 连打时节流：40ms 内不重复抖，否则输入快的用户手机会一直嗡嗡 */
-    if (now - _hapticAt < 40) return;
+    /* 节流 60ms：小于摇杆连发间隔（180ms），所以每次连发都能感到，但不会重叠加长 */
+    if (now - _hapticAt < 60) return;
     _hapticAt = now;
     navigator.vibrate(Math.max(3, Math.min(30, ms || 6)));
   } catch (e) {}
@@ -392,6 +392,7 @@ const DomRpc = {
       case 'attr': { const el = this._el(args[0]); return el ? el.getAttribute(args[1]) : null; }
       case 'setAttr': { const el = this._el(args[0]); if (!el) return false; el.setAttribute(args[1], String(args[2])); return true; }
       case 'setText': { const el = this._el(args[0]); if (!el) return false; el.textContent = String(args[1]); return true; }
+      case 'setHtml': { const el = this._el(args[0]); if (!el) return false; el.innerHTML = String(args[1]); return true; }
       case 'setValue': { const el = this._el(args[0]); if (!el) return false; el.value = String(args[1]); el.dispatchEvent(new Event('input', { bubbles:true })); el.dispatchEvent(new Event('change', { bubbles:true })); return true; }
       case 'click': { const el = this._el(args[0]); if (!el) return false; el.click(); return true; }
       case 'addClass': { const el = this._el(args[0]); if (!el) return false; el.classList.add(String(args[1])); return true; }
@@ -425,6 +426,24 @@ const DomRpc = {
       case 'toast': { toast(String(args[0] || '')); return true; }
       case 'dialog': { const ok = await confirmDlg(String(args[0] || '确认'), String(args[1] || ''), false); return !!ok; }
       case 'openWindow': { const w = WindowManager.open(args[0] || {}); return w ? { id:w.id, type:w.type } : null; }
+      /* Worker 里的 document.write：写到「文档窗口」的 srcdoc。
+       * 第一次调用开窗，之后更新同一窗口；不碰宿主页面的 document。 */
+      case 'docWrite': {
+        const html = String(args[0] == null ? '' : args[0]);
+        let w = this._docWin;
+        if (!w || !w.el || !w.el.isConnected) {
+          w = WindowManager.open({ type:'browser', title:'document', html });
+          this._docWin = w;
+          this._docHtml = html;
+          return { ok:true, win:true, id:w && w.id, length:html.length };
+        }
+        this._docHtml = html;
+        try {
+          const app = WindowManager.windows.get(w.id);
+          if (app && app.content && app.content.loadHtml) app.content.loadHtml(html, 'document');
+        } catch (e) {}
+        return { ok:true, win:false, id:w.id, length:html.length };
+      }
       case 'wins': return WindowManager.list();
       default: throw new Error('dom.op 不支持：' + name);
     }

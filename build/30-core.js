@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.0.2';
+const HT_VERSION = '0.0.0.3';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -41,7 +41,7 @@ const Settings = {
     /* 光标形态与闪烁不提供设置：固定照参考项目那套（竖线 / 失焦椭圆 / 备用屏虚线 / 空闲呼吸）。
      * 背景网格也不提供设置，固定开着（很淡，只为看清桌面边界）。
      * rows = 固定显示行数，0 表示自动铺满。 */
-    font: 14, lineHeight: 12, rows: 0, haptic: '1',
+    font: 14, lineHeight: 12, rows: 0,
     cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */

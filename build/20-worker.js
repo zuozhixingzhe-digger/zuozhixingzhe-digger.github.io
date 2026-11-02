@@ -767,14 +767,26 @@ function makeShell(ctx) {
       ['', 'hterminal · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
-      ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()'],
+      ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  clear()  history()'],
+      ['DOM', 'document.title  document.write(html)  document.querySelector(sel)  page.q(sel)  page.wins()  page.toast(t)'],
+      ['智能体', 'agentTui.open()  agentTui.send(t)  agentTui.queue(t)  agentTui.stop()  agent("…")'],
       ['真相', '一切皆文件。.home 是你的家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包。'],
       ['提示', '表达式直接回车即可；多行用反斜杠续行；Ctrl+C 取消行；Ctrl+D 退出。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
       out(ANSI.yellow + k.padEnd(6, ' ') + ANSI.reset + v + '\r\n');
+    }
+    /* 兼容层命令单独一段。以前这里被 compat 的 help 整个顶掉，
+     * 敲 help 只看到 40 个命令名，会以为 JSHeL 的函数没了。 */
+    const cc = (typeof COMPAT !== 'undefined' && COMPAT.commands) ? Object.keys(COMPAT.commands).sort() : [];
+    if (cc.length) {
+      out('\r\n' + ANSI.bold + ANSI.cyan + 'Linux 兼容层' + ANSI.reset + ANSI.gray + '（可直接敲，也可 `zsh` 进原生模式）' + ANSI.reset + '\r\n');
+      for (let i = 0; i < cc.length; i += 6) {
+        out('  ' + cc.slice(i, i + 6).map(n => n.padEnd(11)).join('') + '\r\n');
+      }
+      out(ANSI.gray + '  管道 | 、重定向 > >> < 、&& || ; 、* ? 通配符、$VAR、$(cmd) 均可用' + ANSI.reset + '\r\n');
     }
   }
 
@@ -974,6 +986,29 @@ function makeElHandle(sel, c) {
     },
     toString() { return '[Element ' + sel + ']'; }
   };
+  /* innerHTML / textContent 做成真属性：读走 RPC（Promise），写直接下发。
+   * 对 body / html 的写**不**落到宿主页面——那会把整个终端冲掉，
+   * 改为走 document.write 的文档窗口，看得见效果又不会炸现场。 */
+  const writeish = (v) => {
+    const s = String(v == null ? '' : v);
+    if (sel === 'body' || sel === 'html' || sel === '.') return c('dom.op', 'docWrite', [s]);
+    return op('setHtml', s);
+  };
+  Object.defineProperty(h, 'innerHTML', {
+    get: () => op('html'),
+    set: (v) => { writeish(v); },
+    configurable: true
+  });
+  Object.defineProperty(h, 'textContent', {
+    get: () => op('text'),
+    set: (v) => { op('setText', String(v == null ? '' : v)); },
+    configurable: true
+  });
+  Object.defineProperty(h, 'value', {
+    get: () => op('attr', 'value'),
+    set: (v) => { op('setValue', String(v == null ? '' : v)); },
+    configurable: true
+  });
   return h;
 }
 
@@ -1010,7 +1045,16 @@ function installDomProxy(call) {
   };
 
   /* document 外壳：querySelector 返回句柄；title/readyState 走 async 方法，
-   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。 */
+   * 同时把最近一次拿到的值挂成属性（读一下能看个大概，不会 undefined）。
+   *
+   * document.write 是真能用的：内容写进一个「文档窗口」，第一次 write 开窗，
+   * 之后每次 write 更新同一个窗口的 srcdoc。**不会**往宿主页面 document 上写——
+   * 那会把整个终端冲掉（浏览器里 document.write 本来就是「打开新文档」的语义，
+   * 这里只是把「新文档」落到一个窗口里，更符合直觉也不炸现场）。 */
+  let docBuf = '';
+  /* 返回 undefined：浏览器的 document.write 也不返回值，
+   * 回一个 {ok:…} 只会让 REPL 每敲一行都刷一串对象。 */
+  const docPush = (s) => { docBuf += s; c('docWrite', docBuf).catch(() => {}); };
   const document = {
     get title() { return page._titleCache || ''; },
     set title(v) { page._titleCache = String(v); c('setTitle', String(v)); },
@@ -1023,6 +1067,12 @@ function installDomProxy(call) {
     get head() { return makeElHandle('head', call); },
     addEventListener: () => { /* worker 里监听 DOM 事件没有意义，静默吞掉 */ },
     removeEventListener: () => {},
+    /* —— 真·document.write —— */
+    write(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('')); },
+    writeln(...parts) { docPush(parts.map(x => String(x == null ? '' : x)).join('') + '\n'); },
+    open() { docBuf = ''; },
+    close() { docPush(''); },
+    get __html() { return docBuf; },
     location: {
       get href() { return page._urlCache || ''; },
       reload: () => call('page.reload').catch(() => {})

@@ -1,9 +1,9 @@
 # hterminal
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.0.2**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.0.3**（四段式版本号，默认末位 +1，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 378 KB，无构建依赖、无外链脚本、可直接双击打开）。
+`hterminal` 是一个**完全自包含的单文件网页**（`index.html`，约 381 KB，无构建依赖、无外链脚本、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
 
@@ -167,8 +167,10 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 
 右侧滑出，分八段：**状态 · 外观 · 终端 · 文件系统 · 软件包 · 智能体 · 快捷键 · 数据**。
 `Esc` 或点遮罩关闭。外观段只有四项：主题（只读，跟系统）、**终端字号**、**显示行数**（固定高度，
-0 = 自动铺满）、行高、按键振动。光标样式、背景网格、提示符格式**故意不提供设置**——
+0 = 自动铺满）、行高。光标样式、背景网格、提示符格式**故意不提供设置**——
 它们属于「这个终端长什么样」，一旦可配就会有人配出难看的组合。
+（0.0.0.2 曾有「按键振动」开关，0.0.0.3 删了：打字时手在键上，再震是干扰；
+振动只保留给方向摇杆。）
 
 ## 4. 快捷键
 
@@ -200,8 +202,9 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 终端内部的语义键保持不抢：`Ctrl+C`（取消当前行）、`Ctrl+D`（退出）、`Ctrl+L`（清屏）、`Ctrl+A/E/U/K/W/Z/R`。
 输入框里的 `Ctrl+A/C/V/X/Z/Y` 也不抢。开发者工具留门：`Ctrl+Shift+I/J/C`、`F12`。
 
-**按键振动**：外观段有开关（默认开），按键与响铃触发 `navigator.vibrate(8~18ms)`；
-不支持的设备静默忽略。
+**振动反馈只给摇杆**：拖动摇杆 / 连发方向键时 `navigator.vibrate(7ms)`，节流 60ms
+（小于 180ms 连发间隔，所以每次都能感到）。**键盘输入不振动**——打字时手本来就在键上，
+再震一下纯属干扰。桌面浏览器没有振动马达，`navigator.vibrate` 不存在时静默跳过。
 
 **底层终端只有一个**。它如果因为任何原因终止（`exit()`、`Ctrl+D`、Worker 异常），
 会自动回到浏览器上一级页面（有真实来源页时）或刷新整个页面（否则）。
@@ -293,6 +296,13 @@ Worker 里**没有 DOM**，但在终端里敲 `document.title` 能拿到值、`d
 
 `window` 上挂的是同一套东西（`window.document === document`），`location` 是只读的代理，
 写入会被忽略而不是抛错——Worker 里改 URL 没有意义。
+
+**`document.write` / `writeln` / `open` / `close` 是真能跑出效果的**：内容累积进一个
+「文档窗口」，第一次调用开窗，之后每次更新同一个窗口的 `srcdoc`。为什么不写到宿主页面上：
+浏览器里 `document.write` 本来就是「打开一个新文档」，而在这里往宿主 `document.write`
+会把整个终端冲掉、会话直接丢失。落在一个窗口里既符合语义，又不会自毁。
+`document.body.innerHTML = '…'` 走同一条路（对 `body`/`html` 的写被重定向到文档窗口），
+其它元素的 `innerHTML`/`textContent`/`value` 是真正的 setter，直接改页面对应节点。
 
 ## 6. 文件系统
 
@@ -883,7 +893,7 @@ xterm 自己的光标设成 **`rgba(0,0,0,0)`**（不可见），另起一个 `.
 
 ```bash
 ./build.sh
-# index.html: 386983 bytes
+# index.html: 390251 bytes
 ```
 
 脚本做的事：拼接分片 → 内联 Worker 源码（`20` + `25`）→ 写出 `index.html` → `node --check` 校验主线程与 Worker 两份 JS。
@@ -1075,7 +1085,8 @@ Worker 的 `location` 是只读访问器，`Object.assign` 赋值直接抛 `Type
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
-| 0.0.0.2 | 2026-11-01 | **顶栏减负、兼容层、TUI 智能体、窗口动效**：①**顶栏**——左侧品牌/版本/当前目录**全部删掉**，不再是「左中右」而是「从 `⌃` 开始」；版本号移入「更多 → 状态」，当前目录移入提示符。②**提示符**——固定「路径 + `> ` + 空格」，不给设置；`@` 表示当前目录（`cd @`、`cat @.notes`），`~` = `.home`，`..` 上一级，`/` 与 `.` 等价；zsh 模式换成 `%`。③**光标**——照参考项目重做：xterm 光标设全透明，上面叠 `.ht-cursor`，`rAF` 每帧向目标逼近 22%（平滑移动）、聚焦 2px 竖线、失焦 7px 椭圆、备用屏虚线、空闲 1s 呼吸；`cursorBlink:false`，闪烁完全由这一层控制，**不提供设置**。④**外观段**——「字号」改名**终端字号**；新增**显示行数**滑块（`fixedRows`，0 = 自动铺满，对齐参考项目）；新增**按键振动**开关（`navigator.vibrate`）；背景网格固定一套，光标样式/网格/提示符格式**故意不可配**。⑤**直连**——默认模型从 `gpt-4o-mini` 迁到 **`deepseek-flash`**（只覆盖等于旧默认的值）；API Key 进 `VOLATILE` 列表，`_persisted()` 写盘前剥掉，**只存内存、刷新即失**。⑥**F 键**——`F5`/`F12` 的 `attachCustomKeyEventHandler` 直接 `return false` 交还浏览器；`F11` `preventDefault()` 后调 `toggleFullscreen()`，与顶栏 `⛶` **同一条路径**（软件全屏 `body.fs` + 可用时请求 Fullscreen API），不存在两种全屏。⑦**内嵌浏览器**——智能体传 HTML 时走 `srcdoc`（此前只认 url，于是「打开 HTML」变空白页）；`target=_blank` 与 `window.open` 转**内部新标签**，实在拦不住才外部；`mailto:`/`tel:` 出面板块；修 `postMessage` 用 `location.origin` 被 opaque origin 丢弃的问题（改 `'*'` + `htTok` 校验，同源路径直接调方法）。⑧**Linux 兼容层**（新 `25-compat.js`，约 45 KB）——MiniShell（引号/变量/管道/重定向/通配符/`&&`/`||`）+ 40 余条 coreutils + 全屏 `vim`/`nano` + `zsh` 模式；`isShellLine()` 只看首词是否命令、成员访问必须紧贴点号，因此 `mkdir("a"); write("b")` 仍是 JS、`ls .home` 是 shell；全部自研 MIT，**不打包任何 GPL 二进制**（coreutils/busybox 都是 GPL）。⑨**TUI 智能体**（新 `65-tui.js`）——`agentTui.open/send/queue/stop/status/close`，`open()` 返回短 id（返回 `this` 会把 REPL 刷满 `[object Object]`）；`send` 异步入队立刻返回，`queue` 排队，`stop` 掐断当前轮；与窗口版共用同一套 harness。⑩**DOM 代理**——`document`/`window`/`page` 挂进 Worker：同步读快照（title/location/尺寸），异步 RPC（`page.q`/`el.text()`/`el.rect()`/`el.click()`/`page.openWindow`）；`location` 只读代理，写入静默忽略。⑪**智能体**——最大步数 120（设置可调 0–120）；同轮调用指纹 `stableKey` 去重；`apiMessages()` 强制 `tool_calls` ↔ `tool` 配对（缺的填「已取消」），修「中断后再提问 400」；`agentFetch()` 三级降级（直连 → `r.jina.ai` → `allorigins`），修「取新闻卡在工具调用」；回复用 `marked` + `DOMPurify` 渲染；新增 `screenshot`（html2canvas）/`window_html`/`ui` 三个工具；输入框支持图片附件（多模态 `image_url`）。⑫**依赖缓存**——xterm/addon/字体/html2canvas/marked 首次加载后统一进 IndexedDB（`DepCache`），新终端不再重复下载；抽屉里显示占用并可单独清理。⑬**清除**——`nuke()` 与「清除本页全部数据」改为**彻底清空**：`indexedDB.databases()` 逐个 delete + localStorage/sessionStorage/caches/ServiceWorker，最后 `location.replace`。⑭**窗口动效**——开窗从触发点扩散、关窗溶解收点、最大化外扩/内缩（`.tween` 300ms）、最小化沉入 dock、恢复从 dock 长出；`prefers-reduced-motion` 全部降级。⑮**后端**——三份 `modelserver` 的 `GET /` 与 `/index.html` 直接返回同目录 `index.html`（`no-store`），`/health` 与 `POST /v1/chat/completions` 之外**一律 403**；Go 版加 `scriptDir()`，从任意 cwd 启动都能找到文件。⑯**文件系统**——`write` 校验父目录存在，修掉 `write('.home.a.txt')` 造出 `ls` 永远看不见的幽灵文件（点号既是分隔符又被当扩展名）。⑰**实测**——s1–s13 全绿：顶栏首键 `⌃`、`page.q('#topbar')` 返回 `header/1280`、历史逐条回溯、`ls` 与 `ls('.home')` 一致、F5/F11/F12 的 `defaultPrevented` 为 `false/true/false`、四种窗动效类正确增删、拖拽穿越 iframe 不丢事件、`mailto:` 出面板块且 `target=_blank` 变内部标签、`shot('#desk')` 返回 307 KB dataURL、主题随系统、`write('.home.a.txt')` 报「父目录不存在」而 `.home.atxt` 立即可见。 |
+| 0.0.0.3 | 2026-11-02 | **修回 JSHeL 的 JS 环境、help 合并、删按键振动**：①**`document.write` 不能执行**——0.0.0.2 的 document 代理只做了读（`title`/`querySelector`），补上 `write` / `writeln` / `open` / `close`：内容累积进一个「文档窗口」，第一次调用开窗、之后更新同一个 `srcdoc`；不写宿主页面（会冲掉终端）。顺便把 `innerHTML` / `textContent` / `value` 做成真属性（get 走 RPC、set 直接下发），`document.body.innerHTML = '…'` 被重定向到文档窗口而不是炸掉主界面。②**`help` 只剩兼容层**——`25-compat.js` 里 `def('help')` 把内置的 `help()` 顶掉了，于是敲 help 只看到 40 个命令名。删掉那一条，改由 JSHeL 的 `help()` 同时输出两段：JSHeL 函数（文件/执行/窗口/系统/DOM/智能体）+ Linux 兼容层命令表。③**删按键振动**——`term.onData` 里那句 `haptic(5)` 去掉，抽屉里的「按键振动」开关与 `Settings.haptic` 一并删除；打字不震。④**摇杆加振动**——`sendDir()` 每次发方向键 `haptic(7)`，节流 60ms（小于 180ms 连发间隔），支持振动的设备上手感对齐参考项目。⑤实测——`help` 同时含「JSHeL 快速参考」与「Linux 兼容层」；`document.write('<h1>DOC-WRITE-OK</h1>')` 开窗并渲染出文本，第二次 write 复用同一窗口；按键 3 次 `vibrate` 计数 0，摇杆拖动计数 4；`document.body.innerHTML` 后主界面 `#desk`/`#topbar` 仍在。 |
+| 0.0.0.2 | 2026-11-01 | **顶栏减负、兼容层、TUI 智能体、窗口动效**：①**顶栏**——左侧品牌/版本/当前目录**全部删掉**，不再是「左中右」而是「从 `⌃` 开始」；版本号移入「更多 → 状态」，当前目录移入提示符。②**提示符**——固定「路径 + `> ` + 空格」，不给设置；`@` 表示当前目录（`cd @`、`cat @.notes`），`~` = `.home`，`..` 上一级，`/` 与 `.` 等价；zsh 模式换成 `%`。③**光标**——照参考项目重做：xterm 光标设全透明，上面叠 `.ht-cursor`，`rAF` 每帧向目标逼近 22%（平滑移动）、聚焦 2px 竖线、失焦 7px 椭圆、备用屏虚线、空闲 1s 呼吸；`cursorBlink:false`，闪烁完全由这一层控制，**不提供设置**。④**外观段**——「字号」改名**终端字号**；新增**显示行数**滑块（`fixedRows`，0 = 自动铺满，对齐参考项目）；新增**按键振动**开关（`navigator.vibrate`，**0.0.0.3 已删**）；背景网格固定一套，光标样式/网格/提示符格式**故意不可配**。⑤**直连**——默认模型从 `gpt-4o-mini` 迁到 **`deepseek-flash`**（只覆盖等于旧默认的值）；API Key 进 `VOLATILE` 列表，`_persisted()` 写盘前剥掉，**只存内存、刷新即失**。⑥**F 键**——`F5`/`F12` 的 `attachCustomKeyEventHandler` 直接 `return false` 交还浏览器；`F11` `preventDefault()` 后调 `toggleFullscreen()`，与顶栏 `⛶` **同一条路径**（软件全屏 `body.fs` + 可用时请求 Fullscreen API），不存在两种全屏。⑦**内嵌浏览器**——智能体传 HTML 时走 `srcdoc`（此前只认 url，于是「打开 HTML」变空白页）；`target=_blank` 与 `window.open` 转**内部新标签**，实在拦不住才外部；`mailto:`/`tel:` 出面板块；修 `postMessage` 用 `location.origin` 被 opaque origin 丢弃的问题（改 `'*'` + `htTok` 校验，同源路径直接调方法）。⑧**Linux 兼容层**（新 `25-compat.js`，约 45 KB）——MiniShell（引号/变量/管道/重定向/通配符/`&&`/`||`）+ 40 余条 coreutils + 全屏 `vim`/`nano` + `zsh` 模式；`isShellLine()` 只看首词是否命令、成员访问必须紧贴点号，因此 `mkdir("a"); write("b")` 仍是 JS、`ls .home` 是 shell；全部自研 MIT，**不打包任何 GPL 二进制**（coreutils/busybox 都是 GPL）。⑨**TUI 智能体**（新 `65-tui.js`）——`agentTui.open/send/queue/stop/status/close`，`open()` 返回短 id（返回 `this` 会把 REPL 刷满 `[object Object]`）；`send` 异步入队立刻返回，`queue` 排队，`stop` 掐断当前轮；与窗口版共用同一套 harness。⑩**DOM 代理**——`document`/`window`/`page` 挂进 Worker：同步读快照（title/location/尺寸），异步 RPC（`page.q`/`el.text()`/`el.rect()`/`el.click()`/`page.openWindow`）；`location` 只读代理，写入静默忽略。⑪**智能体**——最大步数 120（设置可调 0–120）；同轮调用指纹 `stableKey` 去重；`apiMessages()` 强制 `tool_calls` ↔ `tool` 配对（缺的填「已取消」），修「中断后再提问 400」；`agentFetch()` 三级降级（直连 → `r.jina.ai` → `allorigins`），修「取新闻卡在工具调用」；回复用 `marked` + `DOMPurify` 渲染；新增 `screenshot`（html2canvas）/`window_html`/`ui` 三个工具；输入框支持图片附件（多模态 `image_url`）。⑫**依赖缓存**——xterm/addon/字体/html2canvas/marked 首次加载后统一进 IndexedDB（`DepCache`），新终端不再重复下载；抽屉里显示占用并可单独清理。⑬**清除**——`nuke()` 与「清除本页全部数据」改为**彻底清空**：`indexedDB.databases()` 逐个 delete + localStorage/sessionStorage/caches/ServiceWorker，最后 `location.replace`。⑭**窗口动效**——开窗从触发点扩散、关窗溶解收点、最大化外扩/内缩（`.tween` 300ms）、最小化沉入 dock、恢复从 dock 长出；`prefers-reduced-motion` 全部降级。⑮**后端**——三份 `modelserver` 的 `GET /` 与 `/index.html` 直接返回同目录 `index.html`（`no-store`），`/health` 与 `POST /v1/chat/completions` 之外**一律 403**；Go 版加 `scriptDir()`，从任意 cwd 启动都能找到文件。⑯**文件系统**——`write` 校验父目录存在，修掉 `write('.home.a.txt')` 造出 `ls` 永远看不见的幽灵文件（点号既是分隔符又被当扩展名）。⑰**实测**——s1–s13 全绿：顶栏首键 `⌃`、`page.q('#topbar')` 返回 `header/1280`、历史逐条回溯、`ls` 与 `ls('.home')` 一致、F5/F11/F12 的 `defaultPrevented` 为 `false/true/false`、四种窗动效类正确增删、拖拽穿越 iframe 不丢事件、`mailto:` 出面板块且 `target=_blank` 变内部标签、`shot('#desk')` 返回 307 KB dataURL、主题随系统、`write('.home.a.txt')` 报「父目录不存在」而 `.home.atxt` 立即可见。 |
 | 0.0.0.1 | 2026-11-01 | **修错位、换顶栏、直连可用**：①**输出错位（截图里编号跑到右边）**——根因是 `convertEol:false` 且只发 `\n`，LF 只下移不回列，下一行从上一行末尾继续写；改 `convertEol:true`。同时补 `@xterm/addon-unicode11`（`activeVersion='11'`、`allowProposedApi:true`）修 CJK/emoji 宽度漂移，字体栈改严格等宽（去掉 `ui-monospace`/`SF Mono`，启动时 canvas 实测 M/i/W/0）。②**顶栏**——删掉左上角纯装饰的 `>_` 图标；「更多」从 `☰` 换成 `≥` 并留在右侧；中部新增**圆盘摇杆**（拖动发方向键、保持 180ms 连发、`setPointerCapture`），移除原来那四个 `←↑↓→` 按钮；宽屏改 `space-evenly` 均匀分布、窄屏均分铺满且隐藏 `.tb-left`。③**光标**——对齐参考项目：`bar` + 不闪烁 + 失焦描边 + 宽度 2；设置里可选 `bar/block/underline` 与闪烁开关。④**窗口拖拽**——标题栏/缩放手柄改 `setPointerCapture`（指针进 iframe 不再断流）+ `touch-action:none` + 拖动期 `iframe{pointer-events:none}`；`_startResize` 改用 `#desk` 相对坐标，修掉「一改大小就往下跳 54px」。⑤**ERR_UNKNOWN_URL_SCHEME**——新增 `classifyUrl()` 白名单，`mailto:/tel:/intent://` 等不再进 `iframe.src`，改为「需要外部应用」面板；iframe 加 `sandbox`；同源页面注入 `click`/`window.open` 拦截。⑥**主题**——删除手动选择，`matchMedia` 自动跟随系统并监听变化；「光标闪烁」「背景网格」「直连 API」「深度思考」全部改成开关。⑦**智能体直连**——可跳过 modelserver 由浏览器直接请求 OpenAI 兼容端点，密钥存本机并常驻风险警告；默认 `deepseek-flash`（`https://api.deepseek.com`），默认关闭思考模式（需要时可开，且正确回传 `reasoning_content`，否则带 tools 会 400）。⑧**实测**——多行输出 L1/L2/L3 均从第 0 列起；摇杆发送 3×`\x1b[B`；拖动 +120/+60 精确、穿越 iframe 时 +220 不丢事件；东侧改宽 +120 且 left 不变；`mailto:`/`tel:` 只出面板块、`src` 不含协议；390×844 顶栏 46px 零溢出；系统切深浅即时跟随；DeepSeek 直连纯对话 760ms、工具调用 1256ms、思考模式 5 轮工具 5606ms，均无 400。 |
 | 0.0.0.0 | 2026-11-01 | **首版：确立版本号规则并把界面重做成参考项目的三段式**：①**版本号**——改为四段式 `X.Y.Z.W`，起始 `0.0.0.0`，以后每次默认末位加一；前端唯一来源是 `build/30-core.js` 的 `HT_VERSION`，Worker 通过 `init` 消息取（不再各自硬编码），顶栏/抽屉/启动屏/`.sys.version`/`uname` 全部读同一处；三份后端 `VERSION` 同步。②**顶栏**——原先是右上角一撮悬浮按钮，终端没有「顶」，不像一个终端应用；现改为整条 `header.topbar`：左品牌+版本+当前目录，中 `⌃⌥⇧ │ ␛ ⇥ │ ←↑↓→` 符号控制键，右 `▦` 应用启动器 / `⛶` 全屏 / `☰` 更多。③**修饰键**——完整实现参考项目的规则：短按切换锁定、按住临时生效、按住期间有输入则松手解锁；锁定 `⌃` 后敲 `c` 就是 `Ctrl+C`，手机终于能中断长任务。④**应用启动器**——新增 `▦` 弹出菜单（终端/浏览器/文件/编辑器/Python/智能体/更多），带快捷键提示。⑤**抽屉**——重排为 `drawer__user`（`>_` 头像 + 名称 + 版本 + 副标题）+ 八段 `drawer__section` + `drawer__foot`，标签列固定 72px 对齐。⑥**特殊字符**——新增 `--mono-sym` 符号字体栈与 `font-variant-emoji:text`，防止 `⌃⌥⛶` 被渲染成彩色 emoji 或缺字形；纯装饰图标（品牌）改内联 SVG。⑦**HTML 规范**——viewport 加 `maximum-scale=1,minimum-scale=1,user-scalable=no,viewport-fit=cover`；补 `theme-color`（明暗两条）、`format-detection`、`apple-mobile-web-app-*`；加 `<noscript>`；骨架改语义标签 `header/main/aside/footer`。⑧**修复**——顶栏出现后窗口 `style.top`（相对 `#desk`）与 `getBoundingClientRect()`（相对视口）混用，导致拖动多跳一截、最大化还原下移一格；浅色主题下 `bright*` 未跟主题走导致粗体标题看不清。⑨**实测**——顶栏锁定 `⌃`+`c` 捕获 `\u0003`、`⇥`/`␛` 分别 `\t`/`\u001b`；最大化尺寸 = `#desk`（1280×766）、还原 820×540、拖动位移与鼠标位移一致（+120/+60）；手机 390×844 顶栏 46px 且 `#ctrlRow` 零溢出；导入导出回环、Python 进出、`Ctrl+D` 重载、三份后端 `/health` 全部通过。 |
 | — | — | （更早的历史见 git log；本表自 0.0.0.0 起建立） |
@@ -1086,6 +1097,7 @@ Worker 的 `location` 是只读访问器，`Object.assign` 赋值直接抛 `Type
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-02 08:30 | 修回 JS 环境 / help 合并 / 振动归位（0.0.0.3） | `build/20-worker.js`（`document.write/writeln/open/close`、`innerHTML`/`textContent`/`value` 属性、`help()` 输出两段命令）、`build/25-compat.js`（删 `def('help')`）、`build/65-tui.js`（`haptic` 去掉 Settings 判断、新增 `docWrite`/`setHtml` RPC）、`build/40-term.js`（删 `onData` 里的振动、`sendDir` 加 `haptic(7)`）、`build/10-body.html`（删按键振动开关）、`build/70-boot.js`（删 setHaptic 绑定）、`build/30-core.js`（删 `haptic` 默认值、版本号）、`modelserver.{py,js,go}`（版本）、`README.md` | 无头 Chromium：`document.write` 开窗渲染 `DOC-WRITE-OK`、二次 write 复用同一窗口、`document.body.innerHTML` 后主界面仍在；`help` 同时含「JSHeL 快速参考」与「Linux 兼容层」；键入 3 字符 `vibrate` 计数 0、摇杆拖动计数 4；`1+1`/`const`/`await ls()`/`page.q`/`document.title` 均正常 | `main` |
 | 2026-11-01 23:55 | 顶栏减负 / 兼容层 / TUI 智能体 / 窗动效 / HSL 记录（0.0.0.2） | `build/00-head.html`（删 `.tb-left` 系列、`.ht-cursor`、`body.fs`、`htWinIn/Out/Min/Restore` keyframes、`.ag-att`/markdown 样式、抽屉页脚随内容滚）、`build/10-body.html`（顶栏从 `⌃` 起、终端字号/显示行数/按键振动、步数 120、F 键说明）、`build/20-worker.js`（`convertEol` 后的历史游标修正、`prompt()` 固定格式、compat 挂载、`agentTui`、`shell`、`jshel`、DOM 代理）、`build/25-compat.js`（新增：MiniShell + coreutils + vim/nano + zsh）、`build/30-core.js`（`DEFAULTS`/`VOLATILE`/`_persisted`、`normPath` 重写、`rows`、`agentModel` 迁移、`write` 父目录校验）、`build/40-term.js`（自定义光标层、F5/F11/F12、`fixedRows`、`#desk` 相对拖拽、`loadScriptCached`、窗动效）、`build/50-apps.js`（sandbox、`srcdoc`、`htTok`、内部新标签、`window.open` patch）、`build/60-agent.js`（工具 `screenshot/window_html/ui`、`apiMessages` 配对、120 步、`stableKey`、三级降级、Markdown、多模态）、`build/65-tui.js`（新增：`AgentTuiHost` + DomRpc + `shot`）、`build/70-boot.js`（抽屉绑定、`wipeAllStorage`、`DepCache`、RPC 新增 `agent.*`/`dom.op`/`shot.*`、`toggleFullscreen` 统一）、`build.sh`、`modelserver.{py,js,go}`（根路径 + 403 + `scriptDir`）、`IDEAS.md`（新增：HSL 想法）、`README.md` | 无头 Chromium（s1–s13）：顶栏首键 `⌃`、`page.q('#topbar')` → `header/1280`、历史逐条回溯、`ls`/`ls('.home')` 一致、F 键 `defaultPrevented` `false/true/false`、窗动效类正确增删、拖拽穿 iframe、`mailto:` 面板块、`target=_blank` 内部标签、`shot` 307 KB、主题跟随、`write('.home.a.txt')` 报父目录不存在 | `main` |
 | 2026-11-01 22:05 | 错位/顶栏/光标/拖拽/协议/主题/直连（0.0.0.1） | `build/00-head.html`（摇杆与开关/分段样式、无 logo、顶栏三段重排、`win-drag`、`.br-notice`）、`build/10-body.html`（顶栏结构、外观与智能体设置）、`build/30-core.js`（`Settings` 新增 `cursorStyle/agentMode/agentDirectUrl/agentKey/agentThinking`、`systemTheme`/`watchSystemTheme`）、`build/40-term.js`（`convertEol`、`unicode11`、`isStrictMono`/`xtermFont`、`_startDrag`/`_startResize` 重写、摇杆逻辑）、`build/50-apps.js`（`classifyUrl`/`schemeOf`、协议面板、iframe `sandbox`、同源注入）、`build/60-agent.js`（直连分支、`reasoning_content` 回传）、`build/70-boot.js`（开关/分段绑定、`syncAgentMode`、主题启动）、`modelserver.{py,js,go}`（版本）、`README.md`（顶栏图、直连说明、5.6/5.7、踩坑 15-17、日志） | 无头 Chromium：L1/L2/L3 均从第 0 列起；摇杆向下发 3×`\x1b[B` 且箭头高亮；拖动 +120/+60 精确、穿越 iframe +220 不丢事件；东侧改宽 +120 且 `left` 不变；`mailto:`/`tel:` 只出面板块且 `iframe.src` 不含协议；390×844 顶栏 46px、`docW=390`；`prefers-color-scheme` 切换即时跟；DeepSeek 直连 760/1256/5606 ms，工具与思考模式均无 400 | `main` |
 | 2026-11-01 20:20 | 版本号规则 + 前端布局重做（0.0.0.0） | `build/00-head.html`（整份重写）、`build/10-body.html`（整份重写）、`build/40-term.js`（新增 `Keys`/`initTopbarKeys`/`deskBox`，窗口坐标改桌面相对）、`build/70-boot.js`（`AppMenu`/`toggleFullscreen`/抽屉类名/版本注入）、`build/30-core.js`（`HT_VERSION`、`applyGrid`）、`build/20-worker.js`（`state.version`）、`modelserver.{py,js,go}`（版本）、`README.md`（重写为两部分 + 开发日志 + 本表） | 无头 Chromium：启动无 pageerror；`⌃` 锁定+`c`→`\u0003`；`⇥`/`␛`→`\t`/`\u001b`；启动器开文件窗口；最大化＝桌面尺寸、拖动位移精确；390×844 顶栏 46px 零溢出；浅色主题粗体可读；导入导出回环、Python 进出、`Ctrl+D` 重载、三份后端 `/health` 均返回 `0.0.0.0` | `main` |
