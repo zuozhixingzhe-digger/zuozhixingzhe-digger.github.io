@@ -5219,7 +5219,7 @@ const COMPAT = (function () {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.8';
+const HT_VERSION = '0.0.1.9';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -7166,6 +7166,13 @@ class TerminalSession {
     host.appendChild(el);
     this.cur = { el, x:0, y:0, tx:0, ty:0, init:false, raf:0, idle:0, hollow:false, alt:false };
     this.term.onCursorMove(() => this._cursorPlace());
+    /* 光标不是画在屏幕上的贴纸，它属于某一行某一列。
+     * onCursorMove 只在「光标自己动了」时触发；用户滚动回看历史时 viewportY 变了、
+     * 光标一行没动——过去这里就漏了，光标停在旧像素上，内容从它身上滚过去。
+     * 所以滚动与尺寸变化都要重算，并且**直接跳到位**：
+     * 滚动是内容整体位移，再给 22% 阻尼缓动就成了「飘过去」，反而更假。 */
+    this.term.onScroll(() => this._cursorSnap());
+    this.term.onResize(() => this._cursorSnap());
 
     const ta = this.term.textarea;
     if (ta) {
@@ -7199,6 +7206,14 @@ class TerminalSession {
     if (c && !c.raf) c.raf = requestAnimationFrame(() => this._cursorTick());
   }
 
+  /* 滚动会一行一行地触发；直接在这里量 DOM 等于每行强制一次 layout，
+   * `seq 1 5000` 能把主线程拖住。合并到下一帧，最多一次。 */
+  _cursorSnap() {
+    const c = this.cur;
+    if (!c || c.snapRaf) return;
+    c.snapRaf = requestAnimationFrame(() => { c.snapRaf = 0; this._cursorPlace(true); });
+  }
+
   /* 阻尼缓动：每帧向目标逼近 22%。快速移动（按方向键连翻）时追不上，
    * 停手后再平滑收敛——这就是「平滑移动」的手感来源。 */
   _cursorTick() {
@@ -7214,13 +7229,14 @@ class TerminalSession {
     else c.raf = 0;
   }
 
-  _cursorPlace() {
+  _cursorPlace(snap) {
     const c = this.cur, t = this.term;
     if (!c || !t || !t.element) return;
     const buf = t.buffer.active;
     /* cursorY 是「当前显示基准」上的相对行，baseY 是基准的绝对偏移，
      * viewportY 是视口顶端的绝对行——三者推出光标在视口内的行号。
-     * 滚动之后这个算法依然准，不依赖任何尺寸测量。 */
+     * 滚动之后这个算法依然准，不依赖任何尺寸测量。
+     * 越界就藏起来：用户回看历史时光标确实不在屏幕上，硬画在边上是在撒谎。 */
     const vRow = buf.cursorY + buf.baseY - buf.viewportY;
     if (vRow < 0 || vRow >= t.rows) { c.el.style.display = 'none'; return; }
     c.el.style.display = '';
@@ -7243,10 +7259,19 @@ class TerminalSession {
     c.el.style.height = cellH + 'px';
     const px = offX + buf.cursorX * cellW + 1 - w / 2;
     const py = offY + vRow * cellH;
-    if (!c.init) { c.x = c.tx = px; c.y = c.ty = py; c.init = true; }
-    const moved = px !== c.tx || py !== c.ty;
-    c.tx = px; c.ty = py;
-    if (moved) this._cursorIdle();
+    /* 滚动/resize：取消还在跑的缓动，一步到位 */
+    if (snap && c.raf) { cancelAnimationFrame(c.raf); c.raf = 0; }
+    if (!c.init || snap) {
+      c.x = c.tx = px;
+      c.y = c.ty = py;
+      c.init = true;
+      c.el.style.left = px + 'px';
+      c.el.style.top = py + 'px';
+    } else {
+      const moved = px !== c.tx || py !== c.ty;
+      c.tx = px; c.ty = py;
+      if (moved) this._cursorIdle();
+    }
     this._cursorRaf();
   }
 
@@ -7397,6 +7422,7 @@ class TerminalSession {
     try { this._ro && this._ro.disconnect(); } catch (e) {}
     try { clearTimeout(this.cur && this.cur.idle); } catch (e) {}
     try { if (this.cur && this.cur.raf) cancelAnimationFrame(this.cur.raf); } catch (e) {}
+    try { if (this.cur && this.cur.snapRaf) cancelAnimationFrame(this.cur.snapRaf); } catch (e) {}
     try { this.term && this.term.dispose(); } catch (e) {}
     this.term = null;
     this.cur = null;

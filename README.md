@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.8**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.9**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -371,11 +371,11 @@ whoami xargs yes
 #### `fastfetch` / `neofetch`
 
 ```text
-██╗  ██╗████████╗    HTerMinaL 0.0.1.8
+██╗  ██╗████████╗    HTerMinaL 0.0.1.9
 ██║  ██║╚══██╔══╝    ──────────────────────────
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
-██║  ██║   ██║       Kernel     JSHeL 0.0.1.8
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.9
 ╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
 ```
 
@@ -1445,8 +1445,33 @@ xterm 自己的光标设成 **`rgba(0,0,0,0)`**（不可见），另起一个 `.
 | 备用屏 | 虚线（`--dashed`），失焦时变点线 | 进 vim / nano / alternate buffer |
 | 空闲 | 呼吸（`--breathing`，1.8s `cubic-bezier(.45,0,.55,1)`） | 1 秒没有输入、没有选区 |
 
-移动是**阻尼缓动**：每帧 `x += (tx - x) * 0.22`，差小于 0.35px 时吸附到位并停掉 rAF。
-所以连按方向键时光标会「追不上」，停手后平滑收敛——这就是想要的手感。
+位置不是「记一个像素然后原地发光」，而是每次都从 buffer 坐标算出来：
+
+```js
+const vRow = buf.cursorY + buf.baseY - buf.viewportY;      // 光标在视口里的第几行
+if (vRow < 0 || vRow >= term.rows) { el.style.display = 'none'; return; }  // 滚出视口就藏
+const px = offX + buf.cursorX * cellW + 1 - w / 2;         // 列
+const py = offY + vRow * cellH;                            // 行
+```
+
+`cursorX` 给列，`vRow` 给行；`cellW/cellH` 由 `.xterm-screen` 的实测尺寸除以 `cols/rows` 得到，
+字体、缩放、窗口一变就重算，不缓存。
+
+要盯三个事件，少一个就会「光标钉在画布上」：
+
+| 事件 | 什么时候触发 | 怎么处理 |
+| --- | --- | --- |
+| `onCursorMove` | 打字、换行、程序移动光标 | 阻尼缓动（22%/帧） |
+| `onScroll` | 滚轮、输出把内容顶上去 | **直接跳位**，合并到下一帧（`_cursorSnap`） |
+| `onResize` | 字体 / 窗口 / 行数变化 | 同上 |
+
+滚动要跳、不要缓动：滚动是内容整体位移，光标属于内容。给它 22% 的阻尼，看起来就是
+「内容滚过去了，光标飘过来」——反而暴露了它是画上去的。滚出视口时 `display:none`，
+滚回来立刻出现，不硬画在边缘——那等于对用户撒谎「光标还在这儿」。
+
+`onScroll` 是**一行一行**触发的，直接在回调里量 DOM 等于每行强制一次 layout，
+`seq 1 5000` 就能把主线程拖住；`_cursorSnap()` 用 rAF 合并，一帧最多量一次。
+
 选中文本时暂停呼吸（`--paused`），否则拖选时一明一暗很烦。
 
 **没有设置项**：样式、闪烁、颜色都不给改。上一版给过 `bar/block/underline` 与闪烁开关，
@@ -1825,6 +1850,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
 | 0.0.1.8 | 2026-11-03 | **系统提示词分层：环境写死，人格交给用户**：①把原来的单块 `AGENT_SYSTEM` 拆成两段——`AGENT_ENV`（文件系统形状、目录约定、Worker/主页面关系、沙箱边界，全部由程序生成）与 `AGENT_PERSONA_DEFAULT`（角色、语气、做事习惯）。环境是事实不是口味，用户改它只会得到一段与真实环境不符的说明；人格则本来就该由用户定。②人格落到 **`.config.persona`**，第一次打开智能体时写入默认值；之后以文件为准，升级换环境说明不会覆盖用户改过的人格，人格改坏了删文件就回默认。③文件里 `#` 开头的整行是注释，`stripPersonaComments()` 在拼 prompt 时剥掉——配置文件能自己解释自己，但解释不能当指令发出去；人格被清空/只剩注释时等价于「只要环境说明」。④`loadAgentPersona()` 带 1.2 秒 TTL 缓存：一轮 run 的多次模型调用共用一份，`callModel()` 每次请求前刷新，**改完下一条消息就生效，不用重启**；`persona set/edit/reset` 走 RPC 后会主动清缓存。⑤新增 CLI **`persona`**：无参看全文、`edit` 开编辑器、`set` / `append` 改、`reset` 回默认、`path` 打印路径，`… \| persona set -` 从管道读长文本。⑥**刻意不进设置面板**：设置页管功能开关，人格是一段持续影响行为的文本，混进去只会把设置页变成难维护的文本编辑器。⑦工具层对 `.config.persona` 只读（`write_file`/`delete_file` 明确报错）——挡的是「智能体顺手改自己的人设」和「一次网页注入长期改掉它」；`js` 绕得过去，所以是软边界。⑧文档 §12 新增「系统提示词：环境写死，人格可改」。 |
 | 0.0.1.7 | 2026-11-03 | **看图修图（截图的下半场）**：①**新增 `build/58-image.js`**（`ImageApp`）——Canvas 2D 看图与修图：适应 / 1:1 / ±缩放（Ctrl+滚轮围绕指针缩放）、拖拽平移、裁剪（拖框松手即裁，按取整后的边相减，避免半像素偏一格）、左转/右转 90°、水平/垂直翻转、按宽度等比缩放；五种标注（矩形 / 箭头 / 画笔 / 文字 / 打码）共用同一套 `_shape`，预览与落笔不会「看到一种、得到另一种」；每条线先画 2px 半透明暗边再上色，红色标注落在红色按钮上也看得见；Alt+点击取色（写回颜色选择器）、Ctrl+V 粘贴剪贴板图片、Ctrl+Z / Ctrl+Shift+Z 撤销重做；导出 PNG/JPEG/WebP（JPEG 先铺白底，否则透明区变黑），存 `.home` 用原名 + `-edit`，第二次保存覆盖自己的副本，不碰原图。②**撤销用快照、不用操作日志**——每种工具写逆运算容易漏，快照更短；按像素数限步（<1.5MP 16 步、<4MP 8 步、更大 4 步），内存上限写死。③**和截图接起来**——截图窗口加「编辑」按钮（拍完才可用，按当前格式生成文件名），点开即在同一张图上改。④**文件管理器**——图片双击进看图、选中出缩略图（不再只写「[二进制] 12 KB」）；显示名用 `spotExportName` 还原，存储名与路径不变。⑤**拖拽**——外部文件拖到看图窗口 = 落 `.home` 并立刻打开；从文件管理器拖图过来直接打开。⑥**修**——`contentToDataUrl` 只认 Blob/ArrayBuffer，`FS.write` 存进去的 `Uint8Array` 会被 `String()` 拼成 `137,80,78,…`，导致「自己存的 PNG 自己打不开」；现在认 `ArrayBuffer.isView`。⑦文档 §7 / §15 / §3，版本 4 个文件。⑧空状态图标改内联 SVG 后忘了写尺寸，被撑成 190px 把文字全顶出可视区——补 `.ie-ico svg{width:52px;height:52px}`。 |
 | 0.0.1.6 | 2026-11-03 | **沙箱工具集 + 真实页面实测 + 理念章节**：①**十个工具**（`build/55-tools.js`、`56-data.js`、`57-color.js`，共约 1900 行，全部自研）——**计算器**（递归下降解析 `expr/term/unary/power/postfix/primary`，不用 `eval`；`2^3^2` 右结合、`5!`、`log(2,8)`、`sin(30)` 走 DEG/RAD、记忆 M+/M−、40 条历史、键盘直输）；**数据**（编码互转：文本/UTF-16/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体；时间戳 + `Intl` 多时区 + 相对时间；哈希 SHA-1/256/384/512 + 自写 MD5 + 期望值比对 + 文件哈希；随机：字符串/hex/bytes/int/uuid/分组密码，`crypto.getRandomValues` + 拒绝采样 + 熵估算）；**调色盘**（色相环 canvas 逐像素按当前亮度重绘、六种表示双向联动 HEX/RGB/HSL/HSV/CMYK/YUV/Lab、`EyeDropper`、从整页截图逐像素取色、WCAG 对比度、历史色存 localStorage）；**Markdown**（`marked` 懒加载 + 失败退内置迷你渲染器、`sanitizeHtml` 白名单清洗 `<script>`/`on*`/`javascript:`、渲染序号防旧盖新、导出 HTML/下载 .md）；**截图**（桌面/指定窗口/整文档、1–3×、PNG/JPEG/WebP、存 `.home` 或下载、复制图片）；**链接即状态**（文本/JS → `deflate-raw` + base64url 压进 `#`，`run=1` 打开时先弹确认框展示代码再执行）；**四个壳子**（录音机/定位/3D/音频：写明「计划怎么做」与「为什么先不做」）。②**CLI**（`25-compat.js`）——`b64/b32/hex/bin/dec/url/hash/rand/uuid/ts/mount/tools/tool`，与窗口共用主线程 `util.codec` / `util.hash`（Base32、MD5 只写一份）；`hash` 对不存在的文件回退成「把参数当文本」，不报「没有那个文件」。③**`sptm`（mount）占位**——第七个 syscall，注册进 FS/RPC/worker API，调用明确抛「还没做」，`mount` 命令可列五个内建挂载点；不假装成功的原因写在 §7。④**窗口/启动器**——`APP_DEFS` 加 10 项、`WindowManager._render` 加分支、`TYPE_TITLES/TYPE_SIZE` 补齐、启动器加「工具」分组（维护中的置灰带标签）并支持滚动。⑤**真实页面实测**——把 2048、WinBox、98.css、three.js、Chart.js、p5.js、lodash 下到**仓库之外**的临时目录跑起来（见 §8.1 致谢），2048 能玩、WinBox 能在窗口里再开窗口、Chart.js 曲线在动、p5.js 流场在跑、lodash 在 Worker 里 `eval` 后 `_.camelCase` 正常。⑥**自举**——把 `index.html` 用静态服务跑起来、塞进自己的小浏览器，内层 `2+3` → 5、`hsl('uname -a')` → `HTerMinaL 0.0.1.6`、`hsl('ls')` → `readme welcome`。⑦**README**——新增 §15 工具、§16 设计理念（原文照录）、§8.1 致谢开源、§7 `sptm` 说明、§11 API、开发日志/操作记录/踩坑。⑧**修**——计算器 `.calc-pad` 忘了 `grid-template-columns`（按钮排成 4 列、顺序全乱）；`ensureMarked()` 没缓存 Promise，输入时每个字都重新拉一次 CDN；`MdApp.render()` 无序号，慢的旧渲染会盖掉新内容。 |
@@ -1849,6 +1875,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
 | 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
 | 2026-11-03 15:05 | 0.0.1.7：看图修图（截图搭档）+ 文件管理器缩略图 + 修 `Uint8Array` 解码 | `build/58-image.js`（新增：ImageApp / `imgCanvas` / `imgCopy` / `normRect`）、`build/00-head.html`（`.ie*` 全套 + `.fm-imgcap`）、`build/10-body.html`（启动器加「看图修图」）、`build/30-core.js`（`APP_DEFS` 加 `image`、`contentToDataUrl` 认 typed array、`HT_VERSION`）、`build/40-term.js`（`_render` 分支 + `TYPE_TITLES/TYPE_SIZE`）、`build/50-apps.js`（FilesApp 图片预览 + 双击进看图 + 文件名还原显示）、`build/55-tools.js`（ShotApp「编辑」按钮与方法）、`build/70-boot.js`（`_dropTarget` 加看图落点、导入后 `loadPaths`）、`build/25-compat.js`（`tools` 清单加 `image`）、`build.sh`（拼入 58）、`modelserver.{py,js,go}`（版本）、`README.md` | Playwright（无头 Chromium）：空状态可见；载入 640×400 → meta `640×400`、缩放 100%；裁剪拖 25%→75% → `320×200`，Ctrl+Z → `640×400`；矩形标注像素 `[240,73,86]`（红 + 抗锯齿）；打码/两行文字无异常；右转 `640×400→400×640`，再左转还原；缩放填 320 → `320×200`；存 `.home` 得 `test-edit.png`；外部文件 drop → `.home.drop.png` 且窗口变 `48×32`；内部拖拽 `.home` 里的 400×300 → 窗口变 `400×300`；截图 `2880×1692` → 「编辑」开出第二个看图窗口；文件管理器出现缩略图、双击打开 `320×200`；缩放按钮 `100%→156%→100%`、重做成功；无 pageerror | 本轮 |
 | 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSL(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
@@ -1927,5 +1954,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.8 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.9 · 桌面就是终端 · 一切皆文件</sub>
 </p>
