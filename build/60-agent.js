@@ -477,9 +477,27 @@ class AgentApp {
     /* 拖进来 */
     const zone = $('.ag-input', this.el);
     if (zone) {
-      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add('drop'); }));
+      const paint = (e) => {
+        const internal = hasInternalDrag(e);
+        if (!internal && !_hasFiles(e)) return;
+        e.preventDefault();
+        zone.dataset.drop = internal ? '附加到对话' : '.queryfile（并附加到对话）';
+        zone.classList.add('drop');
+      };
+      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, paint));
       ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove('drop'); }));
       zone.addEventListener('drop', async (e) => {
+        /* 窗口之间拖过来的东西：文件管理器里的节点 / 浏览器标签。
+         * 它们不是 File 对象，走不了 dataTransfer.files，得先从 spotfs 读出来。 */
+        const items = DragBus.read(e.dataTransfer);
+        if (items && items.length) {
+          e.preventDefault();
+          e.__htDropHandled = true;
+          zone.classList.remove('drop');
+          await this.addItems(items);
+          DragBus.clear();
+          return;
+        }
         const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
         if (!files.length) return;
         e.__htDropHandled = true;      // 全局遮罩只管收，不再重复导入
@@ -492,6 +510,40 @@ class AgentApp {
         this.addFiles(files);
       });
     }
+  }
+
+  /* 窗口间拖拽进来的项（来自文件管理器或浏览器标签）。
+   * 和 addFiles 的区别只有一个：内容不在 File 里，要先去 spotfs 读。 */
+  async addItems(items) {
+    for (const it of items || []) {
+      if (this.attachments.length >= 6) { toast('一次最多 6 个附件', true); break; }
+      try {
+        if (it.kind === 'page') {
+          const name = htmlFileName(it.name || 'page');
+          const text = it.html ? String(it.html) : ('链接：' + (it.url || ''));
+          if (text.length > 256 * 1024) { toast(name + ' 太大，先「保存」到文件系统再 read_file', true); continue; }
+          this.attachments.push({ name, mime:'text/html', size:text.length, isImage:false, text });
+          continue;
+        }
+        const st = await FS.stat(it.path);
+        if (!st) { toast('文件不存在：' + it.path, true); continue; }
+        if (st.kind === 'dir') { toast('目录不能当附件：' + it.path, true); continue; }
+        const r = await FS.read(it.path);
+        const mime = (r.meta && r.meta.mime) || '';
+        const nm = spotExportName(baseName(it.path));
+        if (/^image\//i.test(mime)) {
+          const dataUrl = await contentToDataUrl(r.content, mime);
+          if (!dataUrl || dataUrl.length > 5.6 * 1024 * 1024) { toast(nm + ' 超过 4MB，换小一点的图', true); continue; }
+          this.attachments.push({ name:nm, mime, size:(dataUrl.length * 0.75) | 0, isImage:true, dataUrl });
+        } else if (typeof r.content === 'string') {
+          if (r.content.length > 256 * 1024) { toast(nm + ' 太大（>256KB），用 read_file 读它', true); continue; }
+          this.attachments.push({ name:nm, mime:mime || 'text/plain', size:r.content.length, isImage:false, text:r.content });
+        } else {
+          toast(nm + ' 是二进制，先存到文件系统再用 read_file', true);
+        }
+      } catch (e) { toast('读取失败：' + ((it && it.path) || ''), true); }
+    }
+    this.renderAttachments();
   }
 
   async addFiles(files) {

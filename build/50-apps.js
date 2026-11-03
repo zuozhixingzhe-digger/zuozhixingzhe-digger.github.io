@@ -109,6 +109,8 @@ class BrowserApp {
         <div class="br-addr"><span class="lock">○</span><input spellcheck="false" placeholder="输入网址或搜索"></div>
         <button data-a="go" title="打开">↵</button>
         <button data-a="ext" title="在新标签打开">↗</button>
+        <button class="txt" data-a="save" title="保存网页到文件系统（.home），之后可以在文件管理器里拖出去">保存</button>
+        <button class="txt" data-a="download" title="直接下载这个网页到本机">下载</button>
         <button data-a="new" title="新标签">＋</button>
       </div>
       <div class="br-frame">
@@ -117,6 +119,9 @@ class BrowserApp {
         <iframe referrerpolicy="no-referrer"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
           allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <!-- 拖拽遮板：iframe 会把 drag 事件吃进它自己的文档，父文档收不到。
+             内有拖拽时盖上这一层，拖到浏览器窗口才能被识别成落点。 -->
+        <div class="br-shield" aria-hidden="true"></div>
         <div class="br-notice" id="brNotice" hidden>
           <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
           <div class="br-notice__text" id="brNoticeText"></div>
@@ -164,6 +169,7 @@ class BrowserApp {
       }
     };
     window.addEventListener('message', this._msg);
+    this._bindDrop();
 
     /* 智能体经常直接给一段 HTML（content），而不是 URL。
      * 以前这里只认 url，于是「打开 HTML」变成打开一个空白页，看起来像坏了。 */
@@ -184,6 +190,123 @@ class BrowserApp {
       else window.open(u, '_blank', 'noopener');
     }
     else if (a === 'new') this.addTab('');
+    else if (a === 'save') this.saveToFs();
+    else if (a === 'download') this.downloadPage();
+  }
+
+  /* ---------------------------------------------------------------- 保存网页
+   * 两条出路，都是一键：
+   *   保存 → 进 spotfs 的 .home（之后可以在文件管理器里拖出去，或 cat 出来看）
+   *   下载 → 直接落本机磁盘
+   * 跨域 iframe 的 DOM 读不到，这是浏览器安全模型，不是 bug；
+   * 这种情况保存的是「跳转页」（带原地址的链接），不假装保存成功。
+   */
+  pageHtml() {
+    try {
+      const d = this.frame.contentDocument;
+      if (d && d.documentElement) {
+        const h = d.documentElement.outerHTML;
+        if (h && h.length > 40) return '<!DOCTYPE html>\n' + h;
+      }
+    } catch (e) {}
+    const t = this.current();
+    return (t && t.html) ? String(t.html) : null;
+  }
+  _pageName() {
+    const t = this.current() || {};
+    let n = String(t.title || '').trim();
+    if (!n || /^(新标签|about:blank)$/i.test(n)) {
+      n = String(t.url || '').replace(/^https?:\/\//, '').replace(/[?#].*$/, '').replace(/\/+$/, '') || 'page';
+    }
+    return n.replace(/[/\\:*?"<>|]+/g, '-').slice(0, 60) || 'page';
+  }
+  _fallbackHtml() {
+    const t = this.current() || {};
+    const u = t.url || '';
+    return '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(this._pageName()) + '</title>\n'
+      + '<p>这个页面跨域，读不到 DOM，只保存了地址：</p>\n'
+      + '<p><a href="' + esc(u) + '" target="_blank">' + esc(u) + '</a></p>\n';
+  }
+  async saveToFs() {
+    const name = this._pageName();
+    const html = this.pageHtml();
+    const cross = !html;
+    try {
+      const p = uniquePathIn('.home', spotEscape(htmlFileName(name)));
+      await FS.write(p, cross ? this._fallbackHtml() : html, { mime:'text/html;charset=utf-8', hint:name, origin:'browser' });
+      toast(cross ? '跨域页面读不到内容，已保存跳转页 → ' + p : '已保存到 ' + p);
+    } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
+  }
+  downloadPage() {
+    const name = this._pageName();
+    const html = this.pageHtml();
+    if (!html) { toast('跨域页面读不到内容，下载不了；可以先「保存」成跳转页', true); return; }
+    saveFileRaw(spotExportName(htmlFileName(name)), html, 'text/html;charset=utf-8');
+  }
+
+  /* 把 spotfs 里的一个节点在浏览器里打开：html/text 直接渲染，图片按图片显示，
+   * 其它二进制交给编辑器窗口——比在这里显示一堆乱码有用。 */
+  async openPath(p) {
+    const st = await FS.stat(p);
+    if (!st) { toast('文件不存在：' + p, true); return false; }
+    if (st.kind === 'dir') { toast('目录不能在浏览器里打开', true); return false; }
+    const r = await FS.read(p);
+    const mime = (r.meta && r.meta.mime) || '';
+    const nm = spotExportName(baseName(p));
+    const isText = typeof r.content === 'string';
+    if (isText) {
+      const txt = String(r.content);
+      if (/html?$/i.test(mime) || /\.html?$/i.test(nm)) { this.loadHtml(txt, nm); return true; }
+      this.loadHtml('<!DOCTYPE html><meta charset="utf-8"><title>' + esc(nm) + '</title>'
+        + '<pre style="font:12px/1.7 ui-monospace,monospace;padding:18px;white-space:pre-wrap;word-break:break-word">'
+        + esc(txt) + '</pre>', nm);
+      return true;
+    }
+    if (/^image\//i.test(mime)) {
+      const url = await contentToDataUrl(r.content, mime);
+      this.loadHtml('<!DOCTYPE html><meta charset="utf-8"><title>' + esc(nm) + '</title>'
+        + '<body style="margin:0;background:#111;display:grid;place-items:center;height:100vh">'
+        + '<img src="' + url + '" style="max-width:100%;max-height:100%">', nm);
+      return true;
+    }
+    /* 其它二进制：浏览器里看不了，交给编辑器（PDF 之类浏览器其实能显示，但这里
+     * 没有 blob URL 的生命周期管理，先不做）。 */
+    WindowManager.open({ type:'editor', path:p, title:nm });
+    toast('这个类型浏览器不能直接看，已用编辑器打开');
+    return false;
+  }
+
+  /* 拖进浏览器窗口 = 打开它（文件管理器里的文件、别的浏览器标签都算） */
+  _bindDrop() {
+    const box = this.frameEl;
+    if (!box) return;
+    box.addEventListener('dragover', (e) => {
+      if (!hasInternalDrag(e)) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      box.dataset.drop = '在浏览器里打开';
+      box.classList.add('drop');
+    });
+    box.addEventListener('dragleave', (e) => {
+      if (!box.contains(e.relatedTarget)) box.classList.remove('drop');
+    });
+    box.addEventListener('drop', async (e) => {
+      const items = DragBus.read(e.dataTransfer);
+      if (!items || !items.length) return;
+      e.preventDefault();
+      e.__htDropHandled = true;
+      box.classList.remove('drop');
+      const it = items[0];
+      try {
+        if (it.kind === 'page') this.loadHtml(it.html || this._fallbackHtmlFor(it), it.name || 'page');
+        else await this.openPath(it.path);
+      } catch (err) { toast('打开失败：' + (err && err.message || err), true); }
+      DragBus.clear();
+    });
+  }
+  _fallbackHtmlFor(it) {
+    return '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(it.name || 'page') + '</title>\n'
+      + '<p>这个标签页跨域，读不到内容。</p>\n<p><a href="' + esc(it.url || '') + '" target="_blank">' + esc(it.url || '') + '</a></p>\n';
   }
 
   /* —— 非网页协议：不交给 iframe，给出明确出路 —— */
@@ -331,6 +454,18 @@ class BrowserApp {
         if (e.target.dataset.x !== undefined) { this.closeTab(Number(e.target.dataset.x)); return; }
         this.active = Number(b.dataset.tab); this.renderTabs(); this.restore();
       };
+      /* 标签页可以拖出去：拖到文件管理器 = 存成 .html；拖到智能体 = 当附件；
+       * 拖到终端 = 粘贴地址。只有当前标签知道自己的 DOM（其它标签的 iframe 已经不在）。 */
+      const i = Number(b.dataset.tab);
+      b.draggable = true;
+      b.addEventListener('dragstart', (e) => {
+        const t = this.tabs[i] || {};
+        const html = (i === this.active) ? this.pageHtml() : null;
+        DragBus.write(e.dataTransfer, [{
+          kind:'page', name:t.title || 'page', url:t.url || '', html
+        }], t.url || t.title || '');
+      });
+      b.addEventListener('dragend', () => DragBus.clear());
     });
   }
   setAddr(u) { if (this.addr && document.activeElement !== this.addr) this.addr.value = u === 'about:blank' ? '' : (u || ''); }
@@ -431,6 +566,7 @@ class FilesApp {
         <button class="btn" data-a="refresh" title="刷新">⟳</button>
         <button class="btn" data-a="newfile" title="新建文件">＋</button>
         <button class="btn" data-a="newdir" title="新建目录">+dir</button>
+        <button class="btn" data-a="newwin" title="再开一个文件管理器（同一个目录，方便拖来拖去）">⧉</button>
         <button class="btn" data-a="upload" title="上传">⇧</button>
         <button class="btn danger" data-a="del" title="删除">✕</button>
         <button class="btn" data-a="download" title="下载">↓</button>
@@ -447,21 +583,45 @@ class FilesApp {
     this.load();
   }
 
-  /* 把外部文件拖进文件管理器 = 导入到当前目录 */
+  /* 把东西拖进文件管理器 = 落进它当前目录。
+   * 两种来源：
+   *   外部文件（OS）   → importFiles（转义成 spotfs 名字）
+   *   窗口间拖拽       → dropIntoDir（复制 / Shift 移动），支持目录整棵树
+   */
   _bindDrop() {
     const root = $('.fm', this.el);
     if (!root) return;
     root.__app = this;
+    const label = (move) => (move ? '移动到 ' : '复制到 ') + this.path;
     root.addEventListener('dragover', (e) => {
-      if (!_hasFiles(e)) return;
+      const internal = hasInternalDrag(e);
+      if (!internal && !_hasFiles(e)) return;
       e.preventDefault();
-      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      const move = internal && !!e.shiftKey;
+      try { e.dataTransfer.dropEffect = move ? 'move' : 'copy'; } catch (err) {}
+      root.dataset.drop = label(move);
       root.classList.add('drop');
     });
     root.addEventListener('dragleave', (e) => {
       if (!root.contains(e.relatedTarget)) root.classList.remove('drop');
     });
     root.addEventListener('drop', async (e) => {
+      const items = DragBus.read(e.dataTransfer);
+      if (items && items.length) {
+        e.preventDefault();
+        e.__htDropHandled = true;
+        root.classList.remove('drop');
+        const move = !!e.shiftKey;
+        try {
+          const r = await dropIntoDir(items, this.path, { move });
+          const n = r.copied.length + r.moved.length;
+          if (n) toast((move ? '已移动 ' : '已复制 ') + n + ' 项到 ' + this.path);
+          else if (r.skipped.length) toast('没有可放的东西（同目录或拖进了自己里面）', true);
+          DragBus.clear();
+          await this.load();
+        } catch (err) { toast('拖拽失败：' + (err && err.message || err), true); }
+        return;
+      }
       if (!_hasFiles(e)) return;
       e.preventDefault();
       e.__htDropHandled = true;      // 告诉全局：这个 drop 已经有人收
@@ -499,6 +659,11 @@ class FilesApp {
       else if (a === 'refresh') await this.load();
       else if (a === 'newfile') await this.newEntry(false);
       else if (a === 'newdir') await this.newEntry(true);
+      else if (a === 'newwin') {
+        /* 同一个目录再开一个窗口：拖来拖去时最有用的是「两个窗口并排」。 */
+        const w = WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
+        return w;
+      }
       else if (a === 'upload') await this.upload();
       else if (a === 'del') await this.del();
       else if (a === 'download') await this.download();
@@ -524,14 +689,19 @@ class FilesApp {
       row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
       row.addEventListener('dragstart', (e) => {
         row.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'copy';
-        e.dataTransfer.setData('text/plain', p);
         const c = this._blobs.get(p);
+        /* 同文档窗口之间靠这个 item 传递：路径 + 存储名。
+         * 外部应用靠 DownloadURL（下面那行），两者互不影响。 */
+        DragBus.write(e.dataTransfer, [{
+          kind:'spot', path:p, name:baseName(p),
+          display:spotExportName(baseName(p)),
+          mime:(c && c.mime) || ''
+        }], p, 'copyMove');
         if (c) {
           try { e.dataTransfer.setData('DownloadURL', c.mime + ':' + c.name + ':' + c.url); } catch (err) {}
         }
       });
-      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dragend', () => { row.classList.remove('dragging'); DragBus.clear(); });
     });
   }
   async select(p) {

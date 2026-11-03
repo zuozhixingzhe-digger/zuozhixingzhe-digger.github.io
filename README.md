@@ -3,7 +3,7 @@
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
 > 当前版本 **0.0.1.1**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 465 KB，无构建依赖、可直接双击打开）。
+`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 533 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
 依赖（xterm / Pyodide / marked / html2canvas）走 CDN，**首次加载后统一进 IndexedDB**，
@@ -688,13 +688,49 @@ readme           →  readme             （全字母数字、不以数字开头
 
 导出（拖出去 / 另存）时反向解析；目标文件系统不接受的字符保留 `-HH`。fext4 挂载同样走这套规则，`/` 换成 `.`。
 
-### 拖拽：进 = 导入，出 = 下载
+### 拖拽：四种落点，两个方向，还能在窗口之间搬
 
-- 把外部文件**拖进窗口** → 出现全屏虚线遮罩（图标浮动动画），松手即导入 spotfs：
-  拖到**智能体输入框** → 存进 `.queryfile` 并挂到对话；拖到**文件管理器** → 存进它当前目录；拖到**其它任何地方** → 存进 `.home`。
-- 把文件管理器里的文件**拖出去** → `dragstart` 里用 `DownloadURL`（`mime:原名:blob-url`）交给系统，拖到桌面/资源管理器即落盘。
-  名字按转义规则还原成原名（斜杠等仍保留 `-HH`）。
-- 上传按钮、`askFile()`、拖拽共用同一套 `importFiles()`，落点规则一致。
+**从外面拖进来**（OS 的文件）→ 全屏虚线遮罩（图标浮动）+「松手导入到 X」：
+
+| 落在哪 | 去哪 |
+| --- | --- |
+| 智能体输入框 | `.queryfile` 并挂到对话 |
+| 文件管理器 | 它当前目录 |
+| 终端 | 它当前目录，并**把路径粘到命令行** |
+| 其它地方 | `.home` |
+
+**在窗口之间拖**（同文档内部，走 `DragBus` + `application/x-ht-spot`）：
+
+| 从 → 到 | 结果 |
+| --- | --- |
+| 文件管理器 → 文件管理器 | 复制节点到对方目录（目录整棵复制）；**按住 Shift = 移动** |
+| 文件管理器 → 智能体 | 读出来当附件（图片走 dataURL，文本内联，>256 KB 提示用 `read_file`） |
+| 文件管理器 → 终端 | 把路径粘进命令行（不执行） |
+| 文件管理器 → 浏览器 | 在浏览器里打开：html/text 直接渲染，图片按图片显示，其它交给编辑器 |
+| 浏览器标签 → 文件管理器 | 把当前网页存成 `.html`（跨域只能存跳转页） |
+| 浏览器标签 → 智能体 | 网页正文当附件 |
+| 浏览器标签 → 终端 | 粘贴地址 |
+
+落点自己会亮起来并写出「松手会发生什么」（`data-drop` → `::after` 小标签），不用靠猜。
+
+> 两个实现细节：①`dragenter`/`dragover` 阶段 **dataTransfer 里的内容读不到**，只有 `drop` 能读。
+> 所以「拖到哪个窗口先亮」靠一个同文档变量 `DragBus`，`dataTransfer` 只负责跨进程（外部应用）
+> 和变量丢失时的兜底。②浏览器窗口的 iframe 会把 drag 事件吃进它自己的文档，父文档收不到——
+> 拖拽期间给 `body` 挂 `drag-internal`，把 `.br-shield` 盖在 iframe 上，事件才回到父文档。
+> `dragend` 之外还留了 `blur` / `visibilitychange` 兜底，避免遮板卡住把小浏览器挡死。
+
+**拖出去**（交给系统）→ 文件管理器每行 `dragstart` 里同步 `setData('DownloadURL', mime:原名:blob-url)`，
+拖到桌面/资源管理器即落盘，名字按转义规则还原；目录没有 `DownloadURL`，拖出去只带路径。
+
+**小浏览器一键保存**（`br-bar` 上的「保存 / 下载」）：
+
+- **保存** → 写进 spotfs 的 `.home`（`<标题>.html`，撞名自动 `-2`），文件管理器立刻能看到，
+  之后可以拖出去或 `cat` 出来看；
+- **下载** → 直接落本机磁盘；
+- 跨域页面读不到 DOM（浏览器安全模型），这时保存的是**跳转页**（带原地址的链接），
+  文案会写明，不假装保存成功。
+
+`⧉` 按钮给文件管理器：**在同一个目录再开一个窗口**，两个窗口并排就能互相拖。
 
 ## 8. 窗口与线程
 
@@ -778,6 +814,8 @@ listDir(p) / stat(p) / remove(p, {r}) / mkdir(p) / move(a,b) / copy(a,b)
 sptc(p,data) / sptn(p,opts) / spta(p,data) / sptr(p) / sptx(p) / sptd(p)   // spotfs 六个原子操作
 spotEscape(s) / spotUnescape(s) / spotExportName(s)   // 名字转义（-xx 哨兵 + -HH 字节）
 importFiles(fileList, dir)                            // File 列表 → spotfs（拖拽/上传共用）
+dropIntoDir(items, dir, {move})                        // 窗口间拖拽的落点：复制/移动一批项
+DragBus.get() / DragBus.write(dt, items) / DragBus.clear()   // 拖拽信道（同文档变量 + dataTransfer）
 
 // —— 终端 / 线程 ——
 exec(code)                  // 在底层终端执行一行
@@ -1517,6 +1555,18 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 所以给 `LineEditor` 加了 `onInterrupt` / `onCtrlD` 两个钩子——否则「忙」的时候
 `Ctrl+C` 只会打一句「同步执行无法中断」，而那时正是最需要中断的时候。
 
+**41. 拖拽的两个死角：`dragover` 读不到内容，iframe 会把 drag 事件吞掉**
+第一条：`dataTransfer.getData()` 在 `dragenter` / `dragover` 阶段**一律返回空串**（规范如此，
+只有 `drop` 才给读），`types` 却是可读的。所以「拖到哪个窗口上，哪个窗口先高亮」不能用
+dataTransfer 判断内容，只能：①用 `types.includes('application/x-ht-spot')` 判断「是不是我自己的拖拽」；
+②真正的载荷放在同文档变量 `DragBus` 里，`drop` 时再以 `dataTransfer` 兜底。
+第二条：`<iframe>` 覆盖的区域上，drag 事件会派发到 **iframe 自己的文档**，父文档既收不到
+`dragover`（于是不 `preventDefault`）、也收不到 `drop`（于是永远放不下）。窗口拖动能用
+`setPointerCapture` 解决，拖拽没有对应 API。**修法**：拖拽期间给 `body` 挂 `drag-internal`，
+把一个 `.br-shield` 盖在 iframe 上（`display:block`），事件就回到父文档了。
+**收尾比开头更重要**：`dragend` 不一定来（切窗口、系统打断），所以 `blur` 与
+`visibilitychange` 各补一次 `DragBus.clear()`——否则遮板会一直盖着，小浏览器从此点不动。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1546,6 +1596,7 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.5 | 2026-11-03 | **窗口间拖拽 + 小浏览器一键存网页**：①**`DragBus` 拖拽信道**——同一文档里所有窗口共用一份 `{items}`，`dragenter/dragover` 阶段就能读（`dataTransfer` 的内容要等 `drop` 才允许读），所以「拖到哪个窗口先亮」才做得到；`dataTransfer` 里同时写 `application/x-ht-spot`（JSON）与 `text/plain`，管跨进程与变量丢失时的兜底。②**文件管理器 ↔ 文件管理器**——每行 `dragstart` 发布 `{kind:'spot', path, name}`，落点调 `dropIntoDir()` 复制（目录整棵递归）；**按住 Shift = 移动**；同目录拖出 `name-2`；拖进自己内部直接跳过。③**多窗口**——文件管理器工具栏加 `⧉`：同目录再开一个窗口，两个窗口并排互相拖；窗口本来就是一个 `FilesApp` 实例一个 `path`，互不共享状态。④**文件 → 智能体**——`addItems()` 从 spotfs 读内容：图片转 dataURL、文本内联（≤256 KB）、二进制提示用 `read_file`，仍受「一次最多 6 个附件」约束。⑤**文件 → 终端**——`TerminalSession.insert()` 用括号粘贴（`\x1b[200~…\x1b[201~`）把路径插进命令行**不执行**；从系统拖文件到终端则先导入它当前 `cwd` 再粘路径。⑥**文件 → 浏览器**——`BrowserApp.openPath()`：html/text 直接渲染、图片按图片显示、其它交给编辑器窗口。⑦**浏览器标签 → 文件管理器 / 智能体 / 终端**——标签 `draggable`，携带 `{kind:'page', name, url, html}`（跨域时 `html:null`）：落到文件管理器存 `<标题>.html`（跨域存跳转页），落到智能体当附件，落到终端粘地址。⑧**小浏览器一键保存**——`br-bar` 新增「保存」（写进 spotfs 的 `.home`，撞名自动 `-2`）与「下载」（落本机磁盘），`pageHtml()` 用 `contentDocument.documentElement.outerHTML`，跨域读不到时存跳转页并如实提示；标题已带 `.html` 不会变成 `.html.html`。⑨**iframe 吃事件的解法**——拖拽期间给 `body` 挂 `drag-internal`，`.br-shield` 盖住 iframe，`drop` 才能回到父文档；`dragend` 之外补 `blur` / `visibilitychange` 清场，避免遮板卡住把小浏览器挡死。⑩**落点提示**——所有落点统一 `data-drop` + `::after` 小标签（「复制到 .bin」「粘贴路径」「在浏览器里打开」「附加到对话」），不用靠猜。⑪**实测**——两个 FM 窗口各 3/4 行、A→B 复制后两边都在、Shift 后源消失、目录 `.home.sub` 整棵复制到 `.bin`、同目录得到 `.home.one-2`；拖到桌面终端与终端窗口都出现 `.home> .home.alpha`（未执行）；拖到浏览器 `srcdoc` 含文件内容；标签→FM 生成 `.bin.-xxpage-2dhtml-2ehtml`、标签→智能体附件 `测试页.html` 且正文含 `HELLO`；保存生成 `.home.-xxpage-2dhtml-2ehtml`；遮板 `display:block` 且 drop 后 `body.drag-internal` 归位；无 pageerror。 |
 | 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSL 进来就回 HSL）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
 | 0.0.1.3 | 2026-11-02 | **拖拽导入/导出 + spotfs 节点文件系统**：①**拖进来 = 导入**——外部文件拖到窗口出现全屏虚线遮罩（图标浮动动画 + 「松手导入到 X」），松手即进 spotfs：智能体输入框 → `.queryfile` 并挂到对话，文件管理器 → 当前目录，其它地方 → `.home`；`dragenter/leave` 用计数避免闪。②**拖出去 = 下载**——文件管理器每行 `draggable`，`pointerdown` 预读成 Blob URL，`dragstart` 同步 `setData('DownloadURL', 'mime:原名:url')`，拖到桌面/资源管理器即落盘。③**spotfs 六个 syscall**——`sptc`(cover，只覆盖不新建) / `sptn`(new，`.queryfile` 下=向用户要文件、`.savefile` 下=关闭时保存) / `spta`(append) / `sptx`(execute:JS/HTML/对象/目录/权限/包/设备，自动判别) / `sptr`(read:内容或索引) / `sptd`(delete:文件/目录递归/进程结束)；worker 侧 `sptx` 把「动作描述」落地（编译执行 JS、开浏览器、`cd`、请求权限、`kill`）。④**名字转义**——UTF-8 字节级：字母数字原样，其余（`-` `_` `.` `/` 空格 中文 控制符）写 `-HH`，首位数字也转义，整体加 `-xx` 哨兵；导出反向解析，目标系统不接受的字符保留 `-HH`；`checkName` 放行 `-xx…` 转义名；`normPath` 一律小写，所以哨兵/十六进制在存储层是小写（解析时大小写都认）。⑤**`.savefile`**——新建并写入，关闭/删除时 `saveFileRaw(原名)` 导出后节点消失。⑥**统一入口**——`importFiles()` 被拖拽、上传、`askFile` 复用；`saveFileRaw` 专用于导出（不走 `sanitizeName`，否则会把 `-xx` 前的短横线剥掉）。⑦**文档/种子**——`.home.readme` 改写为 spotfs 世界观（六操作、转义、`.savefile`）；README 第 7 章新增 spotfs / 转义 / 拖拽三节，第 11 章补 `spt*`。⑧**实测**——转义往返 `hello world.txt ↔ -xxhello-20world-2etxt`、`a/b.txt → a-2Fb.txt`（导出）、`readme` 原样、`123abc ↔ -xx-3123abc`；六 syscall 覆盖/新建/追加/读/删/目录索引全对，`sptc` 对不存在、`sptn` 对已存在都正确报错；`.savefile` 存在→`saveOnClose`→导出删除；文件管理器 drop 生成 `-xxhello-20world-2etxt`、`#desk` drop 生成 `-xxg-20note-2emd`、智能体 drop 进 `.queryfile` 且附件 +1；遮罩显隐、`DownloadURL=text/plain:export me.txt:blob:…` 均正确。 |
 | 0.0.1.2 | 2026-11-02 | **智能体「重复生成防护」**：①在 harness 循环里新增**输出签名**（`_turnSig`）——带工具调用时压成「工具名(参数指纹)」链，纯文本取正文前缀；连续三次签名相同判定陷入重复循环。②第 3 次重复时**卡断本轮**（不再执行这一轮的工具调用/文本），并**自动以 user 身份向模型追问一句「【自动检查】你已连续 3 次输出基本相同的内容，疑似陷入重复循环……请改用不同参数或换工具，不要重复刚才完全相同的动作」**，然后让它带着追问继续跑（reset 后从 0 重数，不每轮都追问）。③`AGENT_SYSTEM` 补一句：收到「连续 3 次重复输出」提示时立刻换思路而非继续重复。④`messages` 里插入的「⚠ 已连续 3 次输出相同内容」是 `system` 角色、只渲染给用户看（`render()` 走 `msg sys` 样式），**不进发给模型的请求**（`apiMessages()` 跳过 `system`）；追问句是 `user` 角色，正常发。⑤把过去散落的「去重」收口——单轮内同工具同参数 `seen>=2` 不重执行、连续相同正文 `_pushAssistant` 折叠、跨轮相同签名 `REPEAT_LIMIT=3` 卡断追问，三层各管一段。 |
@@ -1566,6 +1617,7 @@ Chrome 只认 `dragstart` 事件同步阶段塞进去的 `DownloadURL`；`FS.rea
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 10:20 | 0.0.1.5：窗口间拖拽（文件↔文件/智能体/终端/浏览器）+ 小浏览器一键存网页 + 文件管理器多开 | `build/30-core.js`（`DRAG_MIME`/`DragBus`/`hasInternalDrag`/`uniquePathIn`/`isSameOrInside`/`dropIntoDir`/`htmlFileName`/`contentToDataUrl`）、`build/50-apps.js`（FilesApp `⧉` + `_bindDrop` 双通道 + dragstart 发布 item；BrowserApp 保存/下载按钮、`pageHtml`/`_pageName`/`saveToFs`/`downloadPage`/`openPath`/`_bindDrop`、标签 `draggable`、`.br-shield`）、`build/60-agent.js`（`addItems` + drop 分支）、`build/40-term.js`（`container.__term` + `insert()` 括号粘贴）、`build/70-boot.js`（`initDropImport` 双通道、`_termAt`、落点高亮、拖到终端先导入再粘路径、`dragend`/`blur`/`visibilitychange` 清场）、`build/00-head.html`（`.drop::after` 标签、`#term`/`.fm` 定位、`.br-shield`、`.txt` 按钮、`[draggable]` 光标）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.5）、`README.md`（第 7 章拖拽整节重写、第 11 章补 `dropIntoDir`/`DragBus`、日志、踩坑第 41 条） | 无头 Chromium：两个 FM 窗口 A→B 复制 / Shift 移动 / 目录整棵复制 / 同目录 `-2`；FM→桌面终端与终端窗口均显示 `.home> .home.alpha` 且未执行；FM→浏览器 `srcdoc` 含文件内容；标签→FM 存 html、标签→智能体附件含正文；保存生成 `.home.*-2ehtml`、标题带 `.html` 不重复；遮板拖拽中 `display:block`、结束后 `body.drag-internal` 归位；无 pageerror | `main` |
 | 2026-11-02 20:55 | 0.0.1.4：修「TUI 智能体进去就自己退出来」——`open()` 只打横幅不切模式 | `build/20-worker.js`（`AGENT_PROMPT`；`prompt()` 三路；`onSubmit` 新增 `mode==='agent'` 分支；`LineEditor` 新增 `onInterrupt` / `onCtrlD` 钩子并接进 `feed()`；`agentTui` 重写：`open/_run/line/send/queue/_drain/stop/close/helpOut` + `agentWidth/agentWrap` 折行 + `_startSpin/_stopSpin` 帧动画 + `_back` 记忆来路）、`build/30-core.js`（版本 0.0.1.4）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.2 重写、§11 注明、开发日志、操作记录、踩坑第 40 条） | 无头 Chromium：`agentTui.open()` 后提示符变 `agent> ` 且停住；`:help` / `:q` 正常；未配置后端时错误留在 TUI 内不退出；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；mock 慢模型下 `Ctrl+C` 0.7s 中断并回提示符（`■ 已请求停止当前轮`）；窗口版 `agentOpen()` 仍存活；无 pageerror | `main` |
 | 2026-11-02 17:45 | 0.0.1.3：拖拽导入/导出 + spotfs（六 syscall + 名字转义 + `.savefile`） | `build/30-core.js`（`spotEscape/spotUnescape/spotExportName`、`SPOT_NAME_RE`、`checkName` 放行转义名、`DIRS` 加 `.savefile`、`FS.sptc/sptn/spta/sptr/sptx/sptd`、`flushSavefile`、`saveFileRaw`、`importFiles`、种子 readme 改 spotfs）、`build/70-boot.js`（`initDropImport` + 遮罩 + `_hasFiles/_dropTarget`、RPC `fs.spt*`/`fs.escape|unescape|exportName`、boot 调用）、`build/20-worker.js`（`sptc/sptn/spta/sptr/sptx/sptd` + `spotEsc/spotUnesc/spotExport`，`api`/`api.fs` 暴露）、`build/50-apps.js`（FilesApp `_bindDrop`/`_prefetchBlob`/draggable 行/`DownloadURL`、`upload`/`download` 走 `importFiles`/`saveFileRaw`）、`build/60-agent.js`（drop → `.queryfile` + 附件）、`build/00-head.html`（`#dropVeil` 与动画）、`build/10-body.html`（遮罩 DOM）、`build/30-core.js`+`modelserver.{py,js,go}`（版本）、`README.md`（第 7 章三节、第 11 章、日志、踩坑 38-39） | playwright：转义往返 5 例、六 syscall 全通过、`.savefile` 导出删除、FilesApp/#desk/智能体三种 drop 落点正确、遮罩显隐、`DownloadURL` 格式正确、无 pageerror | `main` |
 | 2026-11-02 15:30 | 0.0.1.2：智能体重复生成防护（连续 3 次相同输出 → 卡断 + 自动追问） | `build/60-agent.js`（`_turnSig` 输出签名、`_injectRepeatNudge` 自动追问、`run()` 循环内 `REPEAT_LIMIT=3` 计数与卡断、`render()` 处理 `system` 备注、`apiMessages()` 跳过 `system`、`AGENT_SYSTEM` 补一句）、`build/30-core.js`（`HT_VERSION`）、`modelserver.{py,js,go}`（版本）、`README.md`（9 章日志、10 章记录、12 章说明、踩坑 37） | 待 playwright 回归：构造一个会连续 3 次调同一工具的会话，确认第 3 次被卡断、日志出现「⚠ 已连续 3 次输出相同内容」、会话里多出一条 user 角色「【自动检查】…」、模型带着追问再跑一轮 | `main` |
@@ -1626,7 +1678,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 40 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 41 条）由 AI 与人类共同排查完成
 
 这意味着：
 

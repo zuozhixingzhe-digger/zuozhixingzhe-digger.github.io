@@ -269,7 +269,15 @@ class LineEditor {
   }
   feed(data) {
     if (this.closed) return;
-    if (this.raw) { try { this.raw(data); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); } return; }
+    if (this.raw) {
+      /* 拖拽 / 粘贴送进来的是括号粘贴（\x1b[200~…\x1b[201~），
+       * 全屏应用不认这对标记，直接给它会把 "[200~" 当成内容插进文件。
+       * 这里剥掉标记只传正文——vim/nano 收到的是纯文本。 */
+      let raw = data;
+      if (raw.startsWith('\x1b[200~') && raw.endsWith('\x1b[201~')) raw = raw.slice(6, -6);
+      try { this.raw(raw); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); }
+      return;
+    }
     if (this.busy) {
       if (data.includes('\x03')) {
         this.interrupted = true;

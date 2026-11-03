@@ -745,7 +745,16 @@ function _dropTarget(el) {
   if (ag) return { label:'.queryfile（并附加到对话）', dir:'.queryfile' };
   const fm = el && el.closest && el.closest('.fm');
   if (fm && fm.__app && fm.__app.path) return { label:fm.__app.path, dir:fm.__app.path };
+  /* 拖到终端上：落到它当前目录，并把路径粘到命令行——比丢进 .home 有用得多 */
+  const term = _termAt(el);
+  if (term && term.cwd) return { label:term.cwd + '（并粘贴路径）', dir:term.cwd, term };
   return { label:'.home', dir:'.home' };
+}
+/* 从 DOM 往上找终端会话：拖到终端上 = 把路径粘进命令行 */
+function _termAt(el) {
+  let n = el;
+  while (n && n.nodeType === 1) { if (n.__term) return n.__term; n = n.parentElement; }
+  return null;
 }
 function initDropImport() {
   const veil = document.getElementById('dropVeil');
@@ -753,37 +762,105 @@ function initDropImport() {
   let depth = 0;
   const hide = () => { depth = 0; if (veil) veil.classList.remove('on'); };
 
+  /* 窗口间拖拽的悬停高亮。文件管理器与智能体输入框自己也会画，
+   * 这里只管它们之外的两个落点：终端（粘路径）、浏览器（打开文件）。 */
+  let lastZone = null;
+  const clearZone = () => {
+    if (!lastZone) return;
+    lastZone.classList.remove('drop');
+    lastZone.removeAttribute('data-drop');
+    lastZone = null;
+  };
+  const zoneOf = (el) => {
+    if (!el || !el.closest) return null;
+    const t = _termAt(el);
+    if (t && t.container) return t.container;
+    const br = el.closest('.br-frame');
+    if (br) return br;
+    return null;
+  };
+  const paintZone = (el) => {
+    const z = zoneOf(el);
+    if (z !== lastZone) { clearZone(); lastZone = z; }
+    if (!z) return;
+    z.dataset.drop = z.__term ? '粘贴路径' : '在浏览器里打开';
+    z.classList.add('drop');
+  };
+
   window.addEventListener('dragenter', (e) => {
-    if (!_hasFiles(e)) return;
-    e.preventDefault();
-    depth++;
-    if (label) label.textContent = _dropTarget(e.target).label;
-    if (veil) veil.classList.add('on');
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      depth++;
+      if (label) label.textContent = _dropTarget(e.target).label;
+      if (veil) veil.classList.add('on');
+      return;
+    }
+    if (hasInternalDrag(e)) paintZone(e.target);
   }, true);
   window.addEventListener('dragover', (e) => {
-    if (!_hasFiles(e)) return;
-    e.preventDefault();
-    try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
-    if (label) label.textContent = _dropTarget(e.target).label;
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      if (label) label.textContent = _dropTarget(e.target).label;
+      return;
+    }
+    if (hasInternalDrag(e)) {
+      /* 不 preventDefault 就没有 drop 事件——这是 HTML5 拖拽最坑的一条规则 */
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy'; } catch (err) {}
+      paintZone(e.target);
+    }
   }, true);
   window.addEventListener('dragleave', (e) => {
-    if (!_hasFiles(e)) return;
-    depth = Math.max(0, depth - 1);
-    if (depth === 0 && veil) veil.classList.remove('on');
+    if (_hasFiles(e)) {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0 && veil) veil.classList.remove('on');
+      return;
+    }
+    if (hasInternalDrag(e)) {
+      const z = zoneOf(e.target);
+      if (z && !z.contains(e.relatedTarget)) clearZone();
+    }
   }, true);
   window.addEventListener('drop', async (e) => {
-    if (!_hasFiles(e)) return;
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      hide();
+      if (e.__htDropHandled) return;   // 某个应用已经自己收下了
+      const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+      if (!files.length) return;
+      const t = _dropTarget(e.target);
+      try {
+        const paths = await importFiles(files, t.dir);
+        toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
+        /* 落在终端上：紧接着把路径粘进命令行，省得用户再去文件管理器里找 */
+        if (t.term && paths.length) t.term.insert(paths.join(' '));
+      } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+      return;
+    }
+    if (!hasInternalDrag(e)) return;
+    const z = zoneOf(e.target);
+    clearZone();
+    if (!z || e.__htDropHandled) return;
+    const items = DragBus.read(e.dataTransfer);
+    if (!items || !items.length) return;
     e.preventDefault();
-    hide();
-    if (e.__htDropHandled) return;   // 某个应用已经自己收下了
-    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
-    if (!files.length) return;
-    const t = _dropTarget(e.target);
-    try {
-      const paths = await importFiles(files, t.dir);
-      toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
-    } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+    e.__htDropHandled = true;
+    if (z.__term) {
+      /* 终端落点：粘贴路径（不是复制文件）。多个就空格分开，方便一条 rm 全删。 */
+      const text = items.map(it => it.kind === 'page' ? (it.url || it.name) : it.path).filter(Boolean).join(' ');
+      if (z.__term.insert(text)) toast(items.length > 1 ? '已粘贴 ' + items.length + ' 个路径' : '已粘贴路径');
+    }
+    DragBus.clear();
   }, false);
+  window.addEventListener('dragend', () => { clearZone(); setTimeout(() => DragBus.clear(), 0); }, true);
+
+  /* 兜底：拖拽被系统打断（切窗口、Esc、拖出页面）时 dragend 不一定来。
+   * 不收尾的话 body 会一直挂着 drag-internal，浏览器窗口的遮板就一直盖着 iframe，
+   * 小浏览器会变得点不动——这种「拖一次就坏」的状态必须自己兜住。 */
+  const sweep = () => { if (!DragBus.items) return; setTimeout(() => DragBus.clear(), 0); };
+  window.addEventListener('blur', sweep);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) DragBus.clear(); });
 }
 
 /* ---------------------------------------------------------------- 引导 */

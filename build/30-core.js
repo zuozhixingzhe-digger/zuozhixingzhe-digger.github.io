@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.4';
+const HT_VERSION = '0.0.1.5';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -1245,6 +1245,120 @@ async function importFiles(files, dir) {
   if (out.length) EventBus.emit('fs', { type:'import', dir, count:out.length });
   return out;
 }
+/* ---------------------------------------------------------------- 窗口间拖拽
+ * 所有窗口都在同一个文档里，所以最可靠的信道就是一个共享变量：
+ *   ① 它在 dragenter / dragover 阶段就能读（dataTransfer 的内容要等 drop 才允许读），
+ *      这样「拖到哪个窗口上，哪个窗口先亮起来」才做得到；
+ *   ② 不受 iframe 的 sandbox / 跨域影响。
+ * dataTransfer 里仍然写一份，理由有两条：外部应用只认 DownloadURL / text/plain；
+ * 变量丢了（拖拽中途刷新、跨文档）时还有退路。
+ *
+ * item 有两种：
+ *   { kind:'spot', path, name, mime }   spotfs 里的一个节点（name 是存储名）
+ *   { kind:'page', name, url, html }    浏览器里的一个页面（html 为 null 表示跨域读不到）
+ */
+const DRAG_MIME = 'application/x-ht-spot';
+const DragBus = {
+  items: null,
+  get() { return this.items; },
+  set(items) { this.items = (items && items.length) ? items.slice() : null; return this.items; },
+  clear() {
+    this.items = null;
+    try { document.body.classList.remove('drag-internal'); } catch (e) {}
+  },
+  /* dragstart 里同步调用：Chrome 只认同步阶段 setData */
+  write(dt, items, fallbackText, effect) {
+    this.set(items);
+    /* 拖拽期间给 body 挂个类：浏览器窗口的 iframe 遮板靠它显示
+     * （否则 drop 事件会被 iframe 的文档吃掉，父文档收不到）。 */
+    try { document.body.classList.add('drag-internal'); } catch (e) {}
+    if (!dt) return;
+    try { dt.effectAllowed = effect || 'copyMove'; } catch (e) {}
+    try { dt.setData(DRAG_MIME, JSON.stringify(this.items)); } catch (e) {}
+    if (fallbackText) { try { dt.setData('text/plain', String(fallbackText)); } catch (e) {} }
+  },
+  read(dt) {
+    if (this.items && this.items.length) return this.items;
+    try {
+      const raw = dt && dt.getData(DRAG_MIME);
+      if (raw) { const a = JSON.parse(raw); if (Array.isArray(a) && a.length) return a; }
+    } catch (e) {}
+    return null;
+  }
+};
+/* 拖拽进行中的判断：只看 types，**不读内容**（dragover 阶段读不到） */
+function hasInternalDrag(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt || !dt.types) return false;
+  try { return Array.from(dt.types).includes(DRAG_MIME); } catch (err) { return false; }
+}
+
+/* 在 dir 下取一个不撞名的路径：name → name-2 → name-3…
+ * 文件和目录都适用（目录撞名时 mkdir 会直接失败，所以必须先算） */
+function uniquePathIn(dir, name) {
+  dir = normPath(dir || '.home');
+  const join = (d, n) => (d === '.' ? '' : d + '.') + n;
+  let p = join(dir, name), i = 2;
+  while (FS.exists(p)) { p = join(dir, name + '-' + i); i++; }
+  return p;
+}
+/* target 是不是 source 本身或在 source 里面（禁止把目录拖进自己） */
+function isSameOrInside(target, source) {
+  return target === source || String(target).startsWith(source + '.');
+}
+
+/* 给页面标题补扩展名：标题本身就叫 x.html 时不要变成 x.html.html */
+function htmlFileName(name) {
+  const n = String(name == null ? '' : name).trim() || 'page';
+  return /\.html?$/i.test(n) ? n : n + '.html';
+}
+
+/* 把一批拖拽项落到 dir。默认复制，opts.move 为真则移动。
+ * 返回 { copied, moved, skipped }，让调用方决定怎么提示。 */
+async function dropIntoDir(items, dir, opts) {
+  opts = opts || {};
+  dir = normPath(dir || '.home');
+  const r = { copied: [], moved: [], skipped: [] };
+  for (const it of items || []) {
+    try {
+      if (it && it.kind === 'page') {
+        const title = String(it.name || 'page');
+        const html = (it.html != null && it.html !== '')
+          ? String(it.html)
+          : '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(title) + '</title>\n'
+            + '<p>这个页面跨域，读不到 DOM，只保存了地址：</p>\n<p><a href="' + esc(it.url || '') + '" target="_blank">'
+            + esc(it.url || '') + '</a></p>\n';
+        const p = uniquePathIn(dir, spotEscape(htmlFileName(title)));
+        await FS.write(p, html, { mime:'text/html;charset=utf-8', hint:title, origin:'browser' });
+        r.copied.push(p);
+        continue;
+      }
+      const src = normPath((it && it.path) || '');
+      if (!src || !FS.exists(src)) { r.skipped.push((it && it.name) || src); continue; }
+      if (isSameOrInside(dir, src)) { r.skipped.push(baseName(src)); continue; }
+      if (opts.move && parentPath(src) === dir) { r.skipped.push(baseName(src)); continue; }
+      const p = uniquePathIn(dir, baseName(src));
+      if (opts.move) { await FS.move(src, p); r.moved.push(p); }
+      else { await FS.copy(src, p); r.copied.push(p); }
+    } catch (e) { r.skipped.push((it && (it.name || it.path)) || '?'); }
+  }
+  if (r.copied.length || r.moved.length) EventBus.emit('fs', { type:'drop', dir, count:r.copied.length + r.moved.length });
+  return r;
+}
+
+/* 任意内容 → dataURL（附件里放图片用）。File / Blob / ArrayBuffer / 字符串都吃。 */
+async function contentToDataUrl(content, mime) {
+  const blob = content instanceof Blob ? content
+    : content instanceof ArrayBuffer ? new Blob([content], { type:mime || 'application/octet-stream' })
+    : new Blob([String(content == null ? '' : content)], { type:mime || 'text/plain' });
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(fr.error || new Error('读取失败'));
+    fr.readAsDataURL(blob);
+  });
+}
+
 function pickFiles(opts) {
   opts = opts || {};
   return new Promise(resolve => {

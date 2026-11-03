@@ -354,6 +354,8 @@ class TerminalSession {
 
     this._mount();
     this._spawn(this.role);
+    /* 让拖拽层能从 DOM 找到这个会话：拖文件到终端时，把路径粘到命令行。 */
+    try { if (this.container) this.container.__term = this; } catch (e) {}
     Proc.add({ pid:this.pid, role:this.role, state:'running', cwd:this.cwd, title:this.title, session:this });
   }
 
@@ -647,6 +649,17 @@ class TerminalSession {
 
   write(s) { this.term && this.term.write(s); }
   clear() { this.term && this.term.clear(); }
+
+  /* 往命令行里插一段文本（不执行）。拖拽落点、右键粘贴都走这里。
+   * 用括号粘贴标记包起来：LineEditor 认 \x1b[200~…\x1b[201~，
+   * 多行文本会被当成「一次粘贴」，而不是敲了一串回车把每行都执行一遍。 */
+  insert(text) {
+    const s = String(text == null ? '' : text);
+    if (!s || this.disposed || !this.worker) return false;
+    this._post({ t:'in', data:'\x1b[200~' + s.replace(/\r\n?/g, '\n') + '\x1b[201~' });
+    try { this.term && this.term.focus(); } catch (e) {}
+    return true;
+  }
 
   dispose() {
     if (this.disposed) return;

@@ -279,7 +279,7 @@ body.nogrid .desk::before{display:none}
   position:absolute; inset:0; z-index:1;
   padding:var(--cell-pad) var(--cell-pad) 58px;
 }
-#term{width:100%;height:100%}
+#term{width:100%;height:100%;position:relative}
 #term .xterm{height:100%}
 #term .xterm-viewport{background:transparent!important;scrollbar-width:thin}
 #term .xterm-screen{will-change:transform}
@@ -725,7 +725,7 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
 .br-tab.on{color:var(--fg);background:var(--bg-0);border-color:var(--line-soft)}
 
 /* 文件管理器 */
-.fm{display:flex;flex-direction:column;height:100%;font-family:var(--mono);font-size:11.5px}
+.fm{display:flex;flex-direction:column;height:100%;font-family:var(--mono);font-size:11.5px;position:relative}
 .fm-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto}
 .fm-path{flex:1;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-list{flex:1;overflow:auto;padding:6px}
@@ -757,7 +757,7 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
 .msg.error{align-self:stretch;background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);color:var(--red);font-size:10.5px}
 .msg.sys{align-self:center;font-size:10px;color:var(--fg-mute);background:none;border:0;text-align:center}
 .msg .role{display:block;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:3px;font-family:var(--mono)}
-.ag-input{flex:0 0 auto;border-top:1px solid var(--line-soft);padding:9px 10px 10px}
+.ag-input{flex:0 0 auto;border-top:1px solid var(--line-soft);padding:9px 10px 10px;position:relative}
 .ag-input textarea{width:100%;min-height:54px;max-height:140px;resize:none;background:var(--bg-0);border:1px solid var(--border);
   border-radius:8px;padding:8px 9px;font-size:11.8px;line-height:1.55;color:var(--fg);outline:none}
 .ag-input textarea:focus{border-color:var(--accent-dim)}
@@ -832,10 +832,24 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
 @keyframes dvPop{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes dvFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
 @media (prefers-reduced-motion:reduce){.dv-ico{animation:none}}
-/* 具体落点高亮：文件管理器 / 智能体输入框 */
-.fm.drop,.ag-input.drop{outline:1.5px dashed var(--accent);outline-offset:-6px;background:rgba(94,234,212,.06);border-radius:10px}
+/* 具体落点高亮：文件管理器 / 智能体输入框 / 终端 / 浏览器 */
+.fm.drop,.ag-input.drop,.win-term.drop,.br-frame.drop{outline:1.5px dashed var(--accent);outline-offset:-6px;background:rgba(94,234,212,.06);border-radius:10px}
+/* 落点上的小标签：写清楚「松手会发生什么」，避免拖到一半靠猜 */
+.fm.drop::after,.ag-input.drop::after,.win-term.drop::after,.br-frame.drop::after{
+  content:attr(data-drop);position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:6;
+  padding:4px 11px;border-radius:999px;background:var(--panel-solid);border:1px solid var(--accent-dim);
+  color:var(--fg);font-family:var(--mono);font-size:11px;white-space:nowrap;pointer-events:none;
+  box-shadow:0 6px 18px rgba(0,0,0,.35)
+}
+.win-term.drop,.br-frame.drop{background:rgba(94,234,212,.04)}
 .fm-row[draggable]{cursor:grab}
 .fm-row.dragging{opacity:.42}
+/* 浏览器里拖拽时的遮板：iframe 会把 drag 事件吞进自己的文档，
+ * 盖上这一层，父文档才能收到 dragover / drop。 */
+.br-shield{position:absolute;inset:0;z-index:4;display:none}
+body.drag-internal .br-shield{display:block}
+.br-bar button.txt{width:auto;padding:0 8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.02em}
+.br-tab[draggable]{cursor:grab}
 
 /* =====================================================================
  * 响应式
@@ -1366,7 +1380,15 @@ class LineEditor {
   }
   feed(data) {
     if (this.closed) return;
-    if (this.raw) { try { this.raw(data); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); } return; }
+    if (this.raw) {
+      /* 拖拽 / 粘贴送进来的是括号粘贴（\x1b[200~…\x1b[201~），
+       * 全屏应用不认这对标记，直接给它会把 "[200~" 当成内容插进文件。
+       * 这里剥掉标记只传正文——vim/nano 收到的是纯文本。 */
+      let raw = data;
+      if (raw.startsWith('\x1b[200~') && raw.endsWith('\x1b[201~')) raw = raw.slice(6, -6);
+      try { this.raw(raw); } catch (e) { out('\r\n' + String(e && e.stack || e) + '\r\n'); this.setRaw(null); }
+      return;
+    }
     if (this.busy) {
       if (data.includes('\x03')) {
         this.interrupted = true;
@@ -4784,7 +4806,7 @@ const COMPAT = (function () {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.4';
+const HT_VERSION = '0.0.1.5';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -6024,6 +6046,120 @@ async function importFiles(files, dir) {
   if (out.length) EventBus.emit('fs', { type:'import', dir, count:out.length });
   return out;
 }
+/* ---------------------------------------------------------------- 窗口间拖拽
+ * 所有窗口都在同一个文档里，所以最可靠的信道就是一个共享变量：
+ *   ① 它在 dragenter / dragover 阶段就能读（dataTransfer 的内容要等 drop 才允许读），
+ *      这样「拖到哪个窗口上，哪个窗口先亮起来」才做得到；
+ *   ② 不受 iframe 的 sandbox / 跨域影响。
+ * dataTransfer 里仍然写一份，理由有两条：外部应用只认 DownloadURL / text/plain；
+ * 变量丢了（拖拽中途刷新、跨文档）时还有退路。
+ *
+ * item 有两种：
+ *   { kind:'spot', path, name, mime }   spotfs 里的一个节点（name 是存储名）
+ *   { kind:'page', name, url, html }    浏览器里的一个页面（html 为 null 表示跨域读不到）
+ */
+const DRAG_MIME = 'application/x-ht-spot';
+const DragBus = {
+  items: null,
+  get() { return this.items; },
+  set(items) { this.items = (items && items.length) ? items.slice() : null; return this.items; },
+  clear() {
+    this.items = null;
+    try { document.body.classList.remove('drag-internal'); } catch (e) {}
+  },
+  /* dragstart 里同步调用：Chrome 只认同步阶段 setData */
+  write(dt, items, fallbackText, effect) {
+    this.set(items);
+    /* 拖拽期间给 body 挂个类：浏览器窗口的 iframe 遮板靠它显示
+     * （否则 drop 事件会被 iframe 的文档吃掉，父文档收不到）。 */
+    try { document.body.classList.add('drag-internal'); } catch (e) {}
+    if (!dt) return;
+    try { dt.effectAllowed = effect || 'copyMove'; } catch (e) {}
+    try { dt.setData(DRAG_MIME, JSON.stringify(this.items)); } catch (e) {}
+    if (fallbackText) { try { dt.setData('text/plain', String(fallbackText)); } catch (e) {} }
+  },
+  read(dt) {
+    if (this.items && this.items.length) return this.items;
+    try {
+      const raw = dt && dt.getData(DRAG_MIME);
+      if (raw) { const a = JSON.parse(raw); if (Array.isArray(a) && a.length) return a; }
+    } catch (e) {}
+    return null;
+  }
+};
+/* 拖拽进行中的判断：只看 types，**不读内容**（dragover 阶段读不到） */
+function hasInternalDrag(e) {
+  const dt = e && e.dataTransfer;
+  if (!dt || !dt.types) return false;
+  try { return Array.from(dt.types).includes(DRAG_MIME); } catch (err) { return false; }
+}
+
+/* 在 dir 下取一个不撞名的路径：name → name-2 → name-3…
+ * 文件和目录都适用（目录撞名时 mkdir 会直接失败，所以必须先算） */
+function uniquePathIn(dir, name) {
+  dir = normPath(dir || '.home');
+  const join = (d, n) => (d === '.' ? '' : d + '.') + n;
+  let p = join(dir, name), i = 2;
+  while (FS.exists(p)) { p = join(dir, name + '-' + i); i++; }
+  return p;
+}
+/* target 是不是 source 本身或在 source 里面（禁止把目录拖进自己） */
+function isSameOrInside(target, source) {
+  return target === source || String(target).startsWith(source + '.');
+}
+
+/* 给页面标题补扩展名：标题本身就叫 x.html 时不要变成 x.html.html */
+function htmlFileName(name) {
+  const n = String(name == null ? '' : name).trim() || 'page';
+  return /\.html?$/i.test(n) ? n : n + '.html';
+}
+
+/* 把一批拖拽项落到 dir。默认复制，opts.move 为真则移动。
+ * 返回 { copied, moved, skipped }，让调用方决定怎么提示。 */
+async function dropIntoDir(items, dir, opts) {
+  opts = opts || {};
+  dir = normPath(dir || '.home');
+  const r = { copied: [], moved: [], skipped: [] };
+  for (const it of items || []) {
+    try {
+      if (it && it.kind === 'page') {
+        const title = String(it.name || 'page');
+        const html = (it.html != null && it.html !== '')
+          ? String(it.html)
+          : '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(title) + '</title>\n'
+            + '<p>这个页面跨域，读不到 DOM，只保存了地址：</p>\n<p><a href="' + esc(it.url || '') + '" target="_blank">'
+            + esc(it.url || '') + '</a></p>\n';
+        const p = uniquePathIn(dir, spotEscape(htmlFileName(title)));
+        await FS.write(p, html, { mime:'text/html;charset=utf-8', hint:title, origin:'browser' });
+        r.copied.push(p);
+        continue;
+      }
+      const src = normPath((it && it.path) || '');
+      if (!src || !FS.exists(src)) { r.skipped.push((it && it.name) || src); continue; }
+      if (isSameOrInside(dir, src)) { r.skipped.push(baseName(src)); continue; }
+      if (opts.move && parentPath(src) === dir) { r.skipped.push(baseName(src)); continue; }
+      const p = uniquePathIn(dir, baseName(src));
+      if (opts.move) { await FS.move(src, p); r.moved.push(p); }
+      else { await FS.copy(src, p); r.copied.push(p); }
+    } catch (e) { r.skipped.push((it && (it.name || it.path)) || '?'); }
+  }
+  if (r.copied.length || r.moved.length) EventBus.emit('fs', { type:'drop', dir, count:r.copied.length + r.moved.length });
+  return r;
+}
+
+/* 任意内容 → dataURL（附件里放图片用）。File / Blob / ArrayBuffer / 字符串都吃。 */
+async function contentToDataUrl(content, mime) {
+  const blob = content instanceof Blob ? content
+    : content instanceof ArrayBuffer ? new Blob([content], { type:mime || 'application/octet-stream' })
+    : new Blob([String(content == null ? '' : content)], { type:mime || 'text/plain' });
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(fr.error || new Error('读取失败'));
+    fr.readAsDataURL(blob);
+  });
+}
+
 function pickFiles(opts) {
   opts = opts || {};
   return new Promise(resolve => {
@@ -6501,6 +6637,8 @@ class TerminalSession {
 
     this._mount();
     this._spawn(this.role);
+    /* 让拖拽层能从 DOM 找到这个会话：拖文件到终端时，把路径粘到命令行。 */
+    try { if (this.container) this.container.__term = this; } catch (e) {}
     Proc.add({ pid:this.pid, role:this.role, state:'running', cwd:this.cwd, title:this.title, session:this });
   }
 
@@ -6794,6 +6932,17 @@ class TerminalSession {
 
   write(s) { this.term && this.term.write(s); }
   clear() { this.term && this.term.clear(); }
+
+  /* 往命令行里插一段文本（不执行）。拖拽落点、右键粘贴都走这里。
+   * 用括号粘贴标记包起来：LineEditor 认 \x1b[200~…\x1b[201~，
+   * 多行文本会被当成「一次粘贴」，而不是敲了一串回车把每行都执行一遍。 */
+  insert(text) {
+    const s = String(text == null ? '' : text);
+    if (!s || this.disposed || !this.worker) return false;
+    this._post({ t:'in', data:'\x1b[200~' + s.replace(/\r\n?/g, '\n') + '\x1b[201~' });
+    try { this.term && this.term.focus(); } catch (e) {}
+    return true;
+  }
 
   dispose() {
     if (this.disposed) return;
@@ -7461,6 +7610,8 @@ class BrowserApp {
         <div class="br-addr"><span class="lock">○</span><input spellcheck="false" placeholder="输入网址或搜索"></div>
         <button data-a="go" title="打开">↵</button>
         <button data-a="ext" title="在新标签打开">↗</button>
+        <button class="txt" data-a="save" title="保存网页到文件系统（.home），之后可以在文件管理器里拖出去">保存</button>
+        <button class="txt" data-a="download" title="直接下载这个网页到本机">下载</button>
         <button data-a="new" title="新标签">＋</button>
       </div>
       <div class="br-frame">
@@ -7469,6 +7620,9 @@ class BrowserApp {
         <iframe referrerpolicy="no-referrer"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-storage-access-by-user-activation allow-pointer-lock"
           allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+        <!-- 拖拽遮板：iframe 会把 drag 事件吃进它自己的文档，父文档收不到。
+             内有拖拽时盖上这一层，拖到浏览器窗口才能被识别成落点。 -->
+        <div class="br-shield" aria-hidden="true"></div>
         <div class="br-notice" id="brNotice" hidden>
           <div class="br-notice__title" id="brNoticeTitle">这个地址不能在这里打开</div>
           <div class="br-notice__text" id="brNoticeText"></div>
@@ -7516,6 +7670,7 @@ class BrowserApp {
       }
     };
     window.addEventListener('message', this._msg);
+    this._bindDrop();
 
     /* 智能体经常直接给一段 HTML（content），而不是 URL。
      * 以前这里只认 url，于是「打开 HTML」变成打开一个空白页，看起来像坏了。 */
@@ -7536,6 +7691,123 @@ class BrowserApp {
       else window.open(u, '_blank', 'noopener');
     }
     else if (a === 'new') this.addTab('');
+    else if (a === 'save') this.saveToFs();
+    else if (a === 'download') this.downloadPage();
+  }
+
+  /* ---------------------------------------------------------------- 保存网页
+   * 两条出路，都是一键：
+   *   保存 → 进 spotfs 的 .home（之后可以在文件管理器里拖出去，或 cat 出来看）
+   *   下载 → 直接落本机磁盘
+   * 跨域 iframe 的 DOM 读不到，这是浏览器安全模型，不是 bug；
+   * 这种情况保存的是「跳转页」（带原地址的链接），不假装保存成功。
+   */
+  pageHtml() {
+    try {
+      const d = this.frame.contentDocument;
+      if (d && d.documentElement) {
+        const h = d.documentElement.outerHTML;
+        if (h && h.length > 40) return '<!DOCTYPE html>\n' + h;
+      }
+    } catch (e) {}
+    const t = this.current();
+    return (t && t.html) ? String(t.html) : null;
+  }
+  _pageName() {
+    const t = this.current() || {};
+    let n = String(t.title || '').trim();
+    if (!n || /^(新标签|about:blank)$/i.test(n)) {
+      n = String(t.url || '').replace(/^https?:\/\//, '').replace(/[?#].*$/, '').replace(/\/+$/, '') || 'page';
+    }
+    return n.replace(/[/\\:*?"<>|]+/g, '-').slice(0, 60) || 'page';
+  }
+  _fallbackHtml() {
+    const t = this.current() || {};
+    const u = t.url || '';
+    return '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(this._pageName()) + '</title>\n'
+      + '<p>这个页面跨域，读不到 DOM，只保存了地址：</p>\n'
+      + '<p><a href="' + esc(u) + '" target="_blank">' + esc(u) + '</a></p>\n';
+  }
+  async saveToFs() {
+    const name = this._pageName();
+    const html = this.pageHtml();
+    const cross = !html;
+    try {
+      const p = uniquePathIn('.home', spotEscape(htmlFileName(name)));
+      await FS.write(p, cross ? this._fallbackHtml() : html, { mime:'text/html;charset=utf-8', hint:name, origin:'browser' });
+      toast(cross ? '跨域页面读不到内容，已保存跳转页 → ' + p : '已保存到 ' + p);
+    } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
+  }
+  downloadPage() {
+    const name = this._pageName();
+    const html = this.pageHtml();
+    if (!html) { toast('跨域页面读不到内容，下载不了；可以先「保存」成跳转页', true); return; }
+    saveFileRaw(spotExportName(htmlFileName(name)), html, 'text/html;charset=utf-8');
+  }
+
+  /* 把 spotfs 里的一个节点在浏览器里打开：html/text 直接渲染，图片按图片显示，
+   * 其它二进制交给编辑器窗口——比在这里显示一堆乱码有用。 */
+  async openPath(p) {
+    const st = await FS.stat(p);
+    if (!st) { toast('文件不存在：' + p, true); return false; }
+    if (st.kind === 'dir') { toast('目录不能在浏览器里打开', true); return false; }
+    const r = await FS.read(p);
+    const mime = (r.meta && r.meta.mime) || '';
+    const nm = spotExportName(baseName(p));
+    const isText = typeof r.content === 'string';
+    if (isText) {
+      const txt = String(r.content);
+      if (/html?$/i.test(mime) || /\.html?$/i.test(nm)) { this.loadHtml(txt, nm); return true; }
+      this.loadHtml('<!DOCTYPE html><meta charset="utf-8"><title>' + esc(nm) + '</title>'
+        + '<pre style="font:12px/1.7 ui-monospace,monospace;padding:18px;white-space:pre-wrap;word-break:break-word">'
+        + esc(txt) + '</pre>', nm);
+      return true;
+    }
+    if (/^image\//i.test(mime)) {
+      const url = await contentToDataUrl(r.content, mime);
+      this.loadHtml('<!DOCTYPE html><meta charset="utf-8"><title>' + esc(nm) + '</title>'
+        + '<body style="margin:0;background:#111;display:grid;place-items:center;height:100vh">'
+        + '<img src="' + url + '" style="max-width:100%;max-height:100%">', nm);
+      return true;
+    }
+    /* 其它二进制：浏览器里看不了，交给编辑器（PDF 之类浏览器其实能显示，但这里
+     * 没有 blob URL 的生命周期管理，先不做）。 */
+    WindowManager.open({ type:'editor', path:p, title:nm });
+    toast('这个类型浏览器不能直接看，已用编辑器打开');
+    return false;
+  }
+
+  /* 拖进浏览器窗口 = 打开它（文件管理器里的文件、别的浏览器标签都算） */
+  _bindDrop() {
+    const box = this.frameEl;
+    if (!box) return;
+    box.addEventListener('dragover', (e) => {
+      if (!hasInternalDrag(e)) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      box.dataset.drop = '在浏览器里打开';
+      box.classList.add('drop');
+    });
+    box.addEventListener('dragleave', (e) => {
+      if (!box.contains(e.relatedTarget)) box.classList.remove('drop');
+    });
+    box.addEventListener('drop', async (e) => {
+      const items = DragBus.read(e.dataTransfer);
+      if (!items || !items.length) return;
+      e.preventDefault();
+      e.__htDropHandled = true;
+      box.classList.remove('drop');
+      const it = items[0];
+      try {
+        if (it.kind === 'page') this.loadHtml(it.html || this._fallbackHtmlFor(it), it.name || 'page');
+        else await this.openPath(it.path);
+      } catch (err) { toast('打开失败：' + (err && err.message || err), true); }
+      DragBus.clear();
+    });
+  }
+  _fallbackHtmlFor(it) {
+    return '<!DOCTYPE html>\n<meta charset="utf-8"><title>' + esc(it.name || 'page') + '</title>\n'
+      + '<p>这个标签页跨域，读不到内容。</p>\n<p><a href="' + esc(it.url || '') + '" target="_blank">' + esc(it.url || '') + '</a></p>\n';
   }
 
   /* —— 非网页协议：不交给 iframe，给出明确出路 —— */
@@ -7683,6 +7955,18 @@ class BrowserApp {
         if (e.target.dataset.x !== undefined) { this.closeTab(Number(e.target.dataset.x)); return; }
         this.active = Number(b.dataset.tab); this.renderTabs(); this.restore();
       };
+      /* 标签页可以拖出去：拖到文件管理器 = 存成 .html；拖到智能体 = 当附件；
+       * 拖到终端 = 粘贴地址。只有当前标签知道自己的 DOM（其它标签的 iframe 已经不在）。 */
+      const i = Number(b.dataset.tab);
+      b.draggable = true;
+      b.addEventListener('dragstart', (e) => {
+        const t = this.tabs[i] || {};
+        const html = (i === this.active) ? this.pageHtml() : null;
+        DragBus.write(e.dataTransfer, [{
+          kind:'page', name:t.title || 'page', url:t.url || '', html
+        }], t.url || t.title || '');
+      });
+      b.addEventListener('dragend', () => DragBus.clear());
     });
   }
   setAddr(u) { if (this.addr && document.activeElement !== this.addr) this.addr.value = u === 'about:blank' ? '' : (u || ''); }
@@ -7783,6 +8067,7 @@ class FilesApp {
         <button class="btn" data-a="refresh" title="刷新">⟳</button>
         <button class="btn" data-a="newfile" title="新建文件">＋</button>
         <button class="btn" data-a="newdir" title="新建目录">+dir</button>
+        <button class="btn" data-a="newwin" title="再开一个文件管理器（同一个目录，方便拖来拖去）">⧉</button>
         <button class="btn" data-a="upload" title="上传">⇧</button>
         <button class="btn danger" data-a="del" title="删除">✕</button>
         <button class="btn" data-a="download" title="下载">↓</button>
@@ -7799,21 +8084,45 @@ class FilesApp {
     this.load();
   }
 
-  /* 把外部文件拖进文件管理器 = 导入到当前目录 */
+  /* 把东西拖进文件管理器 = 落进它当前目录。
+   * 两种来源：
+   *   外部文件（OS）   → importFiles（转义成 spotfs 名字）
+   *   窗口间拖拽       → dropIntoDir（复制 / Shift 移动），支持目录整棵树
+   */
   _bindDrop() {
     const root = $('.fm', this.el);
     if (!root) return;
     root.__app = this;
+    const label = (move) => (move ? '移动到 ' : '复制到 ') + this.path;
     root.addEventListener('dragover', (e) => {
-      if (!_hasFiles(e)) return;
+      const internal = hasInternalDrag(e);
+      if (!internal && !_hasFiles(e)) return;
       e.preventDefault();
-      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      const move = internal && !!e.shiftKey;
+      try { e.dataTransfer.dropEffect = move ? 'move' : 'copy'; } catch (err) {}
+      root.dataset.drop = label(move);
       root.classList.add('drop');
     });
     root.addEventListener('dragleave', (e) => {
       if (!root.contains(e.relatedTarget)) root.classList.remove('drop');
     });
     root.addEventListener('drop', async (e) => {
+      const items = DragBus.read(e.dataTransfer);
+      if (items && items.length) {
+        e.preventDefault();
+        e.__htDropHandled = true;
+        root.classList.remove('drop');
+        const move = !!e.shiftKey;
+        try {
+          const r = await dropIntoDir(items, this.path, { move });
+          const n = r.copied.length + r.moved.length;
+          if (n) toast((move ? '已移动 ' : '已复制 ') + n + ' 项到 ' + this.path);
+          else if (r.skipped.length) toast('没有可放的东西（同目录或拖进了自己里面）', true);
+          DragBus.clear();
+          await this.load();
+        } catch (err) { toast('拖拽失败：' + (err && err.message || err), true); }
+        return;
+      }
       if (!_hasFiles(e)) return;
       e.preventDefault();
       e.__htDropHandled = true;      // 告诉全局：这个 drop 已经有人收
@@ -7851,6 +8160,11 @@ class FilesApp {
       else if (a === 'refresh') await this.load();
       else if (a === 'newfile') await this.newEntry(false);
       else if (a === 'newdir') await this.newEntry(true);
+      else if (a === 'newwin') {
+        /* 同一个目录再开一个窗口：拖来拖去时最有用的是「两个窗口并排」。 */
+        const w = WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
+        return w;
+      }
       else if (a === 'upload') await this.upload();
       else if (a === 'del') await this.del();
       else if (a === 'download') await this.download();
@@ -7876,14 +8190,19 @@ class FilesApp {
       row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
       row.addEventListener('dragstart', (e) => {
         row.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'copy';
-        e.dataTransfer.setData('text/plain', p);
         const c = this._blobs.get(p);
+        /* 同文档窗口之间靠这个 item 传递：路径 + 存储名。
+         * 外部应用靠 DownloadURL（下面那行），两者互不影响。 */
+        DragBus.write(e.dataTransfer, [{
+          kind:'spot', path:p, name:baseName(p),
+          display:spotExportName(baseName(p)),
+          mime:(c && c.mime) || ''
+        }], p, 'copyMove');
         if (c) {
           try { e.dataTransfer.setData('DownloadURL', c.mime + ':' + c.name + ':' + c.url); } catch (err) {}
         }
       });
-      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dragend', () => { row.classList.remove('dragging'); DragBus.clear(); });
     });
   }
   async select(p) {
@@ -8504,9 +8823,27 @@ class AgentApp {
     /* 拖进来 */
     const zone = $('.ag-input', this.el);
     if (zone) {
-      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add('drop'); }));
+      const paint = (e) => {
+        const internal = hasInternalDrag(e);
+        if (!internal && !_hasFiles(e)) return;
+        e.preventDefault();
+        zone.dataset.drop = internal ? '附加到对话' : '.queryfile（并附加到对话）';
+        zone.classList.add('drop');
+      };
+      ['dragover', 'dragenter'].forEach(t => zone.addEventListener(t, paint));
       ['dragleave', 'drop'].forEach(t => zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove('drop'); }));
       zone.addEventListener('drop', async (e) => {
+        /* 窗口之间拖过来的东西：文件管理器里的节点 / 浏览器标签。
+         * 它们不是 File 对象，走不了 dataTransfer.files，得先从 spotfs 读出来。 */
+        const items = DragBus.read(e.dataTransfer);
+        if (items && items.length) {
+          e.preventDefault();
+          e.__htDropHandled = true;
+          zone.classList.remove('drop');
+          await this.addItems(items);
+          DragBus.clear();
+          return;
+        }
         const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
         if (!files.length) return;
         e.__htDropHandled = true;      // 全局遮罩只管收，不再重复导入
@@ -8519,6 +8856,40 @@ class AgentApp {
         this.addFiles(files);
       });
     }
+  }
+
+  /* 窗口间拖拽进来的项（来自文件管理器或浏览器标签）。
+   * 和 addFiles 的区别只有一个：内容不在 File 里，要先去 spotfs 读。 */
+  async addItems(items) {
+    for (const it of items || []) {
+      if (this.attachments.length >= 6) { toast('一次最多 6 个附件', true); break; }
+      try {
+        if (it.kind === 'page') {
+          const name = htmlFileName(it.name || 'page');
+          const text = it.html ? String(it.html) : ('链接：' + (it.url || ''));
+          if (text.length > 256 * 1024) { toast(name + ' 太大，先「保存」到文件系统再 read_file', true); continue; }
+          this.attachments.push({ name, mime:'text/html', size:text.length, isImage:false, text });
+          continue;
+        }
+        const st = await FS.stat(it.path);
+        if (!st) { toast('文件不存在：' + it.path, true); continue; }
+        if (st.kind === 'dir') { toast('目录不能当附件：' + it.path, true); continue; }
+        const r = await FS.read(it.path);
+        const mime = (r.meta && r.meta.mime) || '';
+        const nm = spotExportName(baseName(it.path));
+        if (/^image\//i.test(mime)) {
+          const dataUrl = await contentToDataUrl(r.content, mime);
+          if (!dataUrl || dataUrl.length > 5.6 * 1024 * 1024) { toast(nm + ' 超过 4MB，换小一点的图', true); continue; }
+          this.attachments.push({ name:nm, mime, size:(dataUrl.length * 0.75) | 0, isImage:true, dataUrl });
+        } else if (typeof r.content === 'string') {
+          if (r.content.length > 256 * 1024) { toast(nm + ' 太大（>256KB），用 read_file 读它', true); continue; }
+          this.attachments.push({ name:nm, mime:mime || 'text/plain', size:r.content.length, isImage:false, text:r.content });
+        } else {
+          toast(nm + ' 是二进制，先存到文件系统再用 read_file', true);
+        }
+      } catch (e) { toast('读取失败：' + ((it && it.path) || ''), true); }
+    }
+    this.renderAttachments();
   }
 
   async addFiles(files) {
@@ -10711,7 +11082,16 @@ function _dropTarget(el) {
   if (ag) return { label:'.queryfile（并附加到对话）', dir:'.queryfile' };
   const fm = el && el.closest && el.closest('.fm');
   if (fm && fm.__app && fm.__app.path) return { label:fm.__app.path, dir:fm.__app.path };
+  /* 拖到终端上：落到它当前目录，并把路径粘到命令行——比丢进 .home 有用得多 */
+  const term = _termAt(el);
+  if (term && term.cwd) return { label:term.cwd + '（并粘贴路径）', dir:term.cwd, term };
   return { label:'.home', dir:'.home' };
+}
+/* 从 DOM 往上找终端会话：拖到终端上 = 把路径粘进命令行 */
+function _termAt(el) {
+  let n = el;
+  while (n && n.nodeType === 1) { if (n.__term) return n.__term; n = n.parentElement; }
+  return null;
 }
 function initDropImport() {
   const veil = document.getElementById('dropVeil');
@@ -10719,37 +11099,105 @@ function initDropImport() {
   let depth = 0;
   const hide = () => { depth = 0; if (veil) veil.classList.remove('on'); };
 
+  /* 窗口间拖拽的悬停高亮。文件管理器与智能体输入框自己也会画，
+   * 这里只管它们之外的两个落点：终端（粘路径）、浏览器（打开文件）。 */
+  let lastZone = null;
+  const clearZone = () => {
+    if (!lastZone) return;
+    lastZone.classList.remove('drop');
+    lastZone.removeAttribute('data-drop');
+    lastZone = null;
+  };
+  const zoneOf = (el) => {
+    if (!el || !el.closest) return null;
+    const t = _termAt(el);
+    if (t && t.container) return t.container;
+    const br = el.closest('.br-frame');
+    if (br) return br;
+    return null;
+  };
+  const paintZone = (el) => {
+    const z = zoneOf(el);
+    if (z !== lastZone) { clearZone(); lastZone = z; }
+    if (!z) return;
+    z.dataset.drop = z.__term ? '粘贴路径' : '在浏览器里打开';
+    z.classList.add('drop');
+  };
+
   window.addEventListener('dragenter', (e) => {
-    if (!_hasFiles(e)) return;
-    e.preventDefault();
-    depth++;
-    if (label) label.textContent = _dropTarget(e.target).label;
-    if (veil) veil.classList.add('on');
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      depth++;
+      if (label) label.textContent = _dropTarget(e.target).label;
+      if (veil) veil.classList.add('on');
+      return;
+    }
+    if (hasInternalDrag(e)) paintZone(e.target);
   }, true);
   window.addEventListener('dragover', (e) => {
-    if (!_hasFiles(e)) return;
-    e.preventDefault();
-    try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
-    if (label) label.textContent = _dropTarget(e.target).label;
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
+      if (label) label.textContent = _dropTarget(e.target).label;
+      return;
+    }
+    if (hasInternalDrag(e)) {
+      /* 不 preventDefault 就没有 drop 事件——这是 HTML5 拖拽最坑的一条规则 */
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy'; } catch (err) {}
+      paintZone(e.target);
+    }
   }, true);
   window.addEventListener('dragleave', (e) => {
-    if (!_hasFiles(e)) return;
-    depth = Math.max(0, depth - 1);
-    if (depth === 0 && veil) veil.classList.remove('on');
+    if (_hasFiles(e)) {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0 && veil) veil.classList.remove('on');
+      return;
+    }
+    if (hasInternalDrag(e)) {
+      const z = zoneOf(e.target);
+      if (z && !z.contains(e.relatedTarget)) clearZone();
+    }
   }, true);
   window.addEventListener('drop', async (e) => {
-    if (!_hasFiles(e)) return;
+    if (_hasFiles(e)) {
+      e.preventDefault();
+      hide();
+      if (e.__htDropHandled) return;   // 某个应用已经自己收下了
+      const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
+      if (!files.length) return;
+      const t = _dropTarget(e.target);
+      try {
+        const paths = await importFiles(files, t.dir);
+        toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
+        /* 落在终端上：紧接着把路径粘进命令行，省得用户再去文件管理器里找 */
+        if (t.term && paths.length) t.term.insert(paths.join(' '));
+      } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+      return;
+    }
+    if (!hasInternalDrag(e)) return;
+    const z = zoneOf(e.target);
+    clearZone();
+    if (!z || e.__htDropHandled) return;
+    const items = DragBus.read(e.dataTransfer);
+    if (!items || !items.length) return;
     e.preventDefault();
-    hide();
-    if (e.__htDropHandled) return;   // 某个应用已经自己收下了
-    const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
-    if (!files.length) return;
-    const t = _dropTarget(e.target);
-    try {
-      const paths = await importFiles(files, t.dir);
-      toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
-    } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
+    e.__htDropHandled = true;
+    if (z.__term) {
+      /* 终端落点：粘贴路径（不是复制文件）。多个就空格分开，方便一条 rm 全删。 */
+      const text = items.map(it => it.kind === 'page' ? (it.url || it.name) : it.path).filter(Boolean).join(' ');
+      if (z.__term.insert(text)) toast(items.length > 1 ? '已粘贴 ' + items.length + ' 个路径' : '已粘贴路径');
+    }
+    DragBus.clear();
   }, false);
+  window.addEventListener('dragend', () => { clearZone(); setTimeout(() => DragBus.clear(), 0); }, true);
+
+  /* 兜底：拖拽被系统打断（切窗口、Esc、拖出页面）时 dragend 不一定来。
+   * 不收尾的话 body 会一直挂着 drag-internal，浏览器窗口的遮板就一直盖着 iframe，
+   * 小浏览器会变得点不动——这种「拖一次就坏」的状态必须自己兜住。 */
+  const sweep = () => { if (!DragBus.items) return; setTimeout(() => DragBus.clear(), 0); };
+  window.addEventListener('blur', sweep);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) DragBus.clear(); });
 }
 
 /* ---------------------------------------------------------------- 引导 */
