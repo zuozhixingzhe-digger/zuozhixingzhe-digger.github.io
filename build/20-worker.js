@@ -29,9 +29,32 @@ function post(msg, transfer) { self.postMessage(msg, transfer || []); }
 function out(s) { if (s !== null && s !== undefined && s !== '') post({ t:'out', data:String(s) }); }
 function writeErr(s) { out(ANSI.red + s + ANSI.reset); }
 
+/* 渲染层（xterm）的宽度表，随 init 消息到达：{ w2:[[a,b]…], w0:[[a,b]…] }。
+ * 有表就一律按表算——折行与光标列必须和屏幕上的渲染完全一致，
+ * 差一列，打字时光标就会一路往右跑。表由主线程用 unicodeService.wcwidth 导出。 */
+let WC2 = null, WC0 = null;
+function inRanges(r, cp) {
+  if (!r) return false;
+  let lo = 0, hi = r.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1, a = r[mid][0], b = r[mid][1];
+    if (cp < a) hi = mid - 1;
+    else if (cp > b) lo = mid + 1;
+    else return true;
+  }
+  return false;
+}
+
 /** 单个码点的终端显示宽度：CJK / 全角算 2，组合字符算 0。 */
 function charWidth(cp) {
-  if (cp === 0x200b || (cp >= 0x0300 && cp <= 0x036f) || cp === 0xfeff) return 0;
+  if (WC2) return inRanges(WC0, cp) ? 0 : (inRanges(WC2, cp) ? 2 : 1);
+  /* 没有表（老页面 / addon 没加载）时的兜底。零宽字符必须先判：
+   * xterm 把 ZWJ 序列拆成「每个 emoji 各占 2 格」，ZWJ / VS16 自己不占格；
+   * 这里若给它们 1 列，光标就一路往右偏——实测 `👨‍👩‍👧‍👦` 偏 3 列、
+   * `🧑‍🦲` 偏 1 列、`1️⃣` 偏 1 列。 */
+  if (cp === 0x200b || cp === 0x200c || cp === 0x200d || cp === 0x200e || cp === 0x200f ||
+      (cp >= 0x0300 && cp <= 0x036f) || (cp >= 0xfe00 && cp <= 0xfe0f) ||
+      cp === 0xfeff || cp === 0x20e3 || (cp >= 0x2060 && cp <= 0x2064)) return 0;
   if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
       (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
       (cp >= 0xfe10 && cp <= 0xfe19) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
@@ -2432,6 +2455,8 @@ self.onmessage = async (ev) => {
   if (m.t === 'init') {
     try {
       HT_VERSION = m.version || HT_VERSION;
+      /* 渲染层的宽度表：先于任何折行/提示符绘制生效 */
+      if (m.wc && m.wc.w2 && m.wc.w0) { WC2 = m.wc.w2; WC0 = m.wc.w0; }
       if (m.role === 'python') await bootPython(m);
       else await bootShell(m);
     } catch (e) {

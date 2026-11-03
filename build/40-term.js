@@ -335,6 +335,37 @@ function deskBox() {
 }
 
 /* ---------------------------------------------------------------- 终端实例 */
+
+/* xterm 的宽度表：把「哪个码点占 1/2/0 格」导成区间，随 init 一起发给 Worker。
+ *
+ * 为什么必须导：Worker 里折行、算光标列用的是自己的 `charWidth`，而渲染是 xterm
+ * 的 Unicode 11 表。两份「差不多」的宽度算法一定会漂移——实测 `🧑‍🦲` 多算 1 列、
+ * `👨‍👩‍👧‍👦` 多算 3 列、`1️⃣` 多算 1 列，打字时光标一路往右跑，折行点也提前。
+ * 和 §5.0 的求值器同理：同一件事只留一份实现，Worker 直接用渲染层的表。
+ *
+ * 遍历 0..0x10FFFF 约 16ms，只做一次（表 6 KB），不值得缓存到磁盘。 */
+let _wcTable = null;
+function termWidthTable(term) {
+  if (_wcTable) return _wcTable;
+  try {
+    const us = term && term._core && term._core.unicodeService;
+    if (!us || typeof us.wcwidth !== 'function') return null;
+    const w2 = [], w0 = [];
+    let s2 = -1, s0 = -1;
+    for (let cp = 0; cp <= 0x10FFFF; cp++) {
+      const w = us.wcwidth(cp);
+      if (w === 2) { if (s2 < 0) s2 = cp; } else if (s2 >= 0) { w2.push([s2, cp - 1]); s2 = -1; }
+      if (w === 0) { if (s0 < 0) s0 = cp; } else if (s0 >= 0) { w0.push([s0, cp - 1]); s0 = -1; }
+    }
+    if (s2 >= 0) w2.push([s2, 0x10FFFF]);
+    if (s0 >= 0) w0.push([s0, 0x10FFFF]);
+    _wcTable = { w2, w0 };
+    return _wcTable;
+  } catch (e) {
+    return null;
+  }
+}
+
 class TerminalSession {
   constructor(opts) {
     this.opts = opts;
@@ -625,7 +656,9 @@ class TerminalSession {
     this._post({
       t:'init', role, cwd:this.cwd, version:HT_VERSION, prompt:this.role === 'shell' ? (Settings.get('prompt') || '> ') : '>>> ',
       cols:dims.cols, rows:dims.rows, history:this.opts.history || [], code:this.opts.code || '',
-      banner:this.opts.banner !== false
+      banner:this.opts.banner !== false,
+      /* 宽度表跟着 init 一起走：Worker 的折行/光标列必须和渲染层用同一张表 */
+      wc: termWidthTable(this.term)
     });
   }
 
