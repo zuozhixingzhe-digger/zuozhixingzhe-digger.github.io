@@ -1443,13 +1443,15 @@ build/
   40-term.js               ← xterm 装载、Keys（顶栏控制键）、自定义光标、TerminalSession、
                              WindowManager（拖拽/缩放/窗动效）
   50-apps.js               ← BrowserApp / FilesApp / EditorApp（srcdoc、协议拦截、内部新标签）
-  55-tools.js              ← 工具底座：ToolKit / CalcParser / CalcApp / ShotApp / MdApp / MaintApp
+  55-tools.js              ← 工具底座：ToolKit / CalcParser / CalcApp / ShotApp / MdApp
                              + modalPrompt / pickFileInFs（通用对话框）
   56-data.js               ← 编解码原语（Base64/Base32/Hex/二进制/大整数）、MD5、DataApp
                              （编码/时间戳/哈希/随机）、UrlHash + UrlHashApp
   57-color.js              ← ColorMath（RGB/HSL/HSV/CMYK/YUV/Lab 互转）、ColorApp
                              （色相环 canvas、六表示联动、取色、对比度）
   58-image.js              ← ImageApp（Canvas 2D：看图、裁剪、旋转翻转缩放、五种标注、撤销、导出）
+  59-media.js              ← RecorderApp（MediaRecorder+波形）/ GeoApp（Geolocation）/ AudioApp
+                             （WebAudio 波形与播放）/ View3DApp（自写 WebGL + mat4 + 四种几何体）
   60-agent.js              ← 智能体：prompt、工具定义、循环、JSONL 会话、Markdown 渲染
   65-tui.js                ← 终端内智能体宿主（AgentTuiHost）+ DOM RPC + 截图
   70-boot.js               ← RPC 分发、AppMenu、Drawer、window API、快捷键、启动流程、DepCache
