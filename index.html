@@ -613,6 +613,7 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
 .launcher{
   position:fixed; z-index:120; top:calc(var(--top) + env(safe-area-inset-top) + 6px); right:10px;
   width:min(230px,84vw); padding:6px;
+  max-height:calc(100vh - var(--top) - env(safe-area-inset-top) - 20px); overflow:auto; overscroll-behavior:contain;
   background:var(--panel-solid); border:1px solid var(--border-strong);
   border-radius:12px; box-shadow:var(--shadow-lg);
   display:flex; flex-direction:column; gap:2px;
@@ -627,6 +628,8 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
 .launcher button svg{width:16px;height:16px;flex:0 0 auto;color:var(--accent)}
 .launcher button i{margin-left:auto;font-style:normal;font-family:var(--mono);font-size:10px;color:var(--fg-faint)}
 .launcher hr{border:0;border-top:1px solid var(--border);margin:4px 2px}
+.launcher button.soon{opacity:.62}
+.launcher button.soon i{color:var(--amber)}
 
 /* =====================================================================
  * 启动屏
@@ -852,6 +855,109 @@ body.drag-internal .br-shield{display:block}
 .br-tab[draggable]{cursor:grab}
 
 /* =====================================================================
+ * 工具（计算器 / 数据 / 颜色 / Markdown …）
+ * 一律用 token，不写死颜色 —— 浅色主题下不用再补一遍。
+ * ===================================================================== */
+.tl{display:flex;flex-direction:column;height:100%;min-height:0;font-family:var(--mono);font-size:11.5px;color:var(--fg)}
+.tl-hd{display:flex;align-items:center;gap:7px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto;flex-wrap:wrap;background:rgba(255,255,255,.012)}
+.tl-tabs{display:flex;gap:2px;flex:1 1 auto;min-width:0;overflow:auto;scrollbar-width:none}
+.tl-tabs::-webkit-scrollbar{display:none}
+.tl-tab{padding:4px 9px;border-radius:6px;border:1px solid transparent;background:none;color:var(--fg-dim);cursor:pointer;font:inherit;white-space:nowrap}
+.tl-tab.on{background:rgba(94,234,212,.10);border-color:var(--accent-dim);color:var(--accent)}
+.tl-btn{padding:4px 9px;border-radius:6px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--fg);cursor:pointer;font:inherit;white-space:nowrap}
+.tl-btn:hover{border-color:var(--accent-dim);color:var(--accent)}
+.tl-btn:active{transform:translateY(1px)}
+.tl-btn.on{background:rgba(94,234,212,.14);border-color:var(--accent);color:var(--accent)}
+.tl-btn.primary{background:rgba(94,234,212,.16);border-color:var(--accent-dim);color:var(--accent)}
+.tl-btn.sm{padding:1px 6px;font-size:10px}
+.tl-body{flex:1 1 auto;min-height:0;overflow:auto;padding:10px}
+.tl-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.tl-row > label{flex:0 0 74px;color:var(--fg-dim);font-size:11px}
+.tl-in,.tl select,.tl textarea,.tl input[type=text],.tl input[type=number]{
+  background:var(--bg-terminal);border:1px solid var(--line);border-radius:7px;color:var(--fg);
+  padding:5px 8px;font:inherit;outline:none;min-width:0}
+.tl textarea{width:100%;resize:vertical;line-height:1.65;tab-size:2}
+.tl-in:focus,.tl select:focus,.tl textarea:focus,.tl input[type=text]:focus,.tl input[type=number]:focus{border-color:var(--accent-dim)}
+.tl select{padding:4px 6px}
+.tl-card{border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:rgba(255,255,255,.015);margin-bottom:8px}
+.tl-card > h4{margin:0 0 7px;font-size:10.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-mute)}
+.tl-kv{display:grid;grid-template-columns:92px minmax(0,1fr) auto;gap:6px;align-items:center;margin-bottom:4px}
+.tl-kv > b{font-weight:400;color:var(--fg-dim);font-size:10.5px}
+.tl-kv > code{font-family:var(--mono);font-size:11px;background:var(--bg-terminal);border:1px solid var(--line-soft);
+  border-radius:5px;padding:3px 6px;overflow:auto;white-space:pre;color:var(--fg);max-height:90px}
+.tl-note{color:var(--fg-mute);font-size:10.5px;line-height:1.85}
+.tl-note b{color:var(--fg-dim);font-weight:500}
+.tl-maint{height:100%;display:grid;place-items:center;text-align:center;padding:24px}
+.tl-maint .ic{font-size:34px;opacity:.5}
+.tl-maint h3{margin:10px 0 4px;font-size:14px;font-weight:500;color:var(--fg)}
+.tl-maint p{margin:0;color:var(--fg-mute);font-size:11px;line-height:1.9;max-width:44ch}
+.tl-maint .badge{display:inline-block;margin-bottom:10px;padding:2px 9px;border-radius:999px;
+  border:1px solid var(--line);color:var(--amber);font-size:10px;letter-spacing:.08em}
+.tl-split{display:grid;grid-template-columns:1fr 1fr;gap:9px;height:100%;min-height:0}
+.tl-pane{display:flex;flex-direction:column;min-height:0;min-width:0}
+.tl-pane > textarea{flex:1 1 auto;min-height:120px;resize:none}
+.tl-prev{flex:1 1 auto;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:12px 14px;
+  background:var(--bg-terminal);line-height:1.8;font-family:var(--ui);font-size:12.5px}
+.tl-prev h1,.tl-prev h2,.tl-prev h3{margin:.7em 0 .35em;line-height:1.35;font-weight:600}
+.tl-prev h1{font-size:1.5em;border-bottom:1px solid var(--line);padding-bottom:.25em}
+.tl-prev h2{font-size:1.28em}
+.tl-prev h3{font-size:1.1em}
+.tl-prev p{margin:.55em 0}
+.tl-prev code{font-family:var(--mono);font-size:.9em;background:rgba(94,234,212,.09);border-radius:4px;padding:.1em .35em}
+.tl-prev pre{background:var(--bg-2);border:1px solid var(--line);border-radius:7px;padding:9px 11px;overflow:auto}
+.tl-prev pre code{background:none;padding:0}
+.tl-prev blockquote{margin:.6em 0;padding:.1em 0 .1em .8em;border-left:2px solid var(--accent-dim);color:var(--fg-dim)}
+.tl-prev table{border-collapse:collapse;margin:.6em 0;font-size:.95em}
+.tl-prev th,.tl-prev td{border:1px solid var(--line);padding:4px 8px}
+.tl-prev img{max-width:100%}
+.tl-prev a{color:var(--accent-2)}
+.tl-prev hr{border:0;border-top:1px solid var(--line);margin:1em 0}
+
+/* 计算器 */
+.calc{display:flex;flex-direction:column;height:100%;min-height:0;font-family:var(--mono)}
+.calc-disp{flex:0 0 auto;padding:12px 14px 10px;text-align:right;border-bottom:1px solid var(--line-soft);background:rgba(0,0,0,.16)}
+.calc-expr{min-height:16px;font-size:11.5px;color:var(--fg-mute);word-break:break-all;line-height:1.5}
+.calc-res{font-size:26px;line-height:1.25;color:var(--accent);word-break:break-all;letter-spacing:.01em}
+.calc-res.small{font-size:18px}
+.calc-flags{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.calc-pad{flex:1 1 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:minmax(30px,1fr);
+  gap:5px;padding:8px;min-height:0}
+.calc-pad button{border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.025);color:var(--fg);
+  font:inherit;font-size:13px;cursor:pointer;padding:0;min-height:30px;transition:.08s}
+.calc-pad button:hover{border-color:var(--accent-dim);background:rgba(94,234,212,.07)}
+.calc-pad button:active{transform:translateY(1px);background:rgba(94,234,212,.16)}
+.calc-pad button.fn{font-size:11px;color:var(--fg-dim)}
+.calc-pad button.op{color:var(--amber)}
+.calc-pad button.eq{background:rgba(94,234,212,.18);border-color:var(--accent-dim);color:var(--accent);font-size:15px}
+.calc-pad button.del{color:var(--red)}
+.calc-hist{flex:0 0 auto;max-height:88px;overflow:auto;border-top:1px solid var(--line-soft);padding:5px 9px;font-size:10.5px;color:var(--fg-mute)}
+.calc-hist div{cursor:pointer;padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calc-hist div:hover{color:var(--accent)}
+
+/* 颜色 */
+.col-wrap{display:grid;grid-template-columns:210px minmax(0,1fr);gap:12px}
+.col-left{display:flex;flex-direction:column;gap:9px}
+.col-wheel{position:relative;width:200px;height:200px;border-radius:50%;cursor:crosshair;touch-action:none}
+.col-wheel canvas{width:200px;height:200px;border-radius:50%;display:block}
+.col-patch{height:56px;border-radius:9px;border:1px solid var(--line);position:relative;overflow:hidden}
+.col-sl{display:grid;grid-template-columns:14px 1fr 42px;gap:4px 7px;align-items:center;font-size:10px;color:var(--fg-dim)}
+.col-sl input[type=range]{width:100%;height:16px;accent-color:var(--accent)}
+.col-sw{display:flex;flex-wrap:wrap;gap:4px}
+.col-sw i{width:18px;height:18px;border-radius:5px;border:1px solid var(--line);cursor:pointer;display:block}
+.col-kv{display:grid;grid-template-columns:46px minmax(0,1fr) auto;gap:5px 7px;align-items:center;margin-bottom:3px}
+.col-kv > b{font-weight:400;font-size:10px;color:var(--fg-mute);letter-spacing:.06em}
+.col-kv > input{font-family:var(--mono);font-size:11px;padding:3px 6px}
+
+/* 截屏 */
+.shot-stage{display:grid;place-items:center;min-height:150px;border:1px dashed var(--line);border-radius:9px;
+  background:repeating-conic-gradient(rgba(255,255,255,.02) 0 25%,transparent 0 50%) 0 0/14px 14px;overflow:auto;padding:8px}
+.shot-stage img{max-width:100%;border-radius:5px;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+
+/* 链接即状态 */
+.uh-link{font-size:10.5px;word-break:break-all;line-height:1.7;background:var(--bg-terminal);border:1px solid var(--line);
+  border-radius:7px;padding:8px;color:var(--fg-dim);max-height:130px;overflow:auto}
+
+/* =====================================================================
  * 响应式
  * ===================================================================== */
 @media (max-width:560px){
@@ -947,6 +1053,18 @@ body.drag-internal .br-shield{display:block}
   <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌃⇧E</i></button>
   <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌃⇧P</i></button>
   <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>智能体<i>⌃⇧A</i></button>
+  <hr>
+  <button type="button" data-app="calc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.2"/><path d="M7.5 7h9M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>计算器<i>科学</i></button>
+  <button type="button" data-app="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>数据转换<i>编码/哈希</i></button>
+  <button type="button" data-app="color"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="3"/><path d="M12 3.8v4.4"/></svg>调色盘<i>设计</i></button>
+  <button type="button" data-app="markdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M6.5 15V9l3 3 3-3v6M16 9v6M16 15l2.2-2.4M16 15l-2.2-2.4"/></svg>Markdown<i>渲染</i></button>
+  <button type="button" data-app="shot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M20 8.5V6a2 2 0 0 0-2-2h-2.5M4 15.5V18a2 2 0 0 0 2 2h2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5"/><circle cx="12" cy="12" r="3"/></svg>截图<i>页面内</i></button>
+  <button type="button" data-app="urlhash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M7.5 17.5l-1 1a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0"/><path d="M16.5 6.5l1-1a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/></svg>链接即状态<i>URL</i></button>
+  <hr>
+  <button type="button" class="soon" data-app="recorder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>录音机<i>维护中</i></button>
+  <button type="button" class="soon" data-app="geo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/><circle cx="12" cy="12" r="8.2"/></svg>定位<i>维护中</i></button>
+  <button type="button" class="soon" data-app="view3d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>3D 视图<i>维护中</i></button>
+  <button type="button" class="soon" data-app="audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>音频播放<i>维护中</i></button>
   <hr>
   <button type="button" data-act="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>更多 / 设置<i>⌃,</i></button>
 </div>
@@ -1860,6 +1978,8 @@ function makeShell(ctx) {
     if (r && r.act === 'kill') return kill(r.pid);
     return r;
   }
+  /* sptm：挂载。占坑 —— 主线程那边会明确抛「还没做」，不在 worker 里假装成功。 */
+  async function sptm(target, source, opts) { return call('fs.sptm', abs(target), source, opts || {}); }
   async function sptx(p, ...args) {
     const d = await call('fs.sptx', abs(p), args);
     if (!d || !d.act) return d;
@@ -1958,7 +2078,7 @@ function makeShell(ctx) {
       ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
-      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  —— 六个原子操作'],
+      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  m sptm(target,src)  —— 七个 syscall（m 是占坑）'],
       ['转义', 'spotEscape(s) 名字→-xx…；spotUnescape 还原；spotExportName 导出去掉病态字符；拖拽/上传共用 importFiles()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
@@ -2127,7 +2247,7 @@ function makeShell(ctx) {
     },
     mkdir, rm, mv, cp, stat, exists, tree, find, head, tail, grep, open, exec, run, du, df, mount,
     /* spotfs 六个 syscall（canonical）+ 名字转义 */
-    sptc, sptn, spta, sptr, sptx, sptd,
+    sptc, sptn, spta, sptr, sptx, sptd, sptm,
     spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport,
     // 包
     install, uninstall, require:requirePkg, pkg:{ install, remove:uninstall, list:() => call('pkg.list'), require:requirePkg },
@@ -2152,7 +2272,7 @@ function makeShell(ctx) {
     // 内建对象
     console:con,
     fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
-         sptc, sptn, spta, sptr, sptx, sptd, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
+         sptc, sptn, spta, sptr, sptx, sptd, sptm, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
     envVars:{},
     __state:state
@@ -3643,6 +3763,32 @@ const COMPAT = (function () {
     return IO.call('fs.list', p);
   }
 
+  /* 命令的输入统一成字节：参数里第一个「看起来像文件且真的存在」的当文件名，
+   * 否则把参数当文本；没有参数就用管道送进来的 stdin。
+   * 这样 `b64 hello` 和 `b64 readme` 都符合直觉，也不用发明 -f 开关。 */
+  async function inputBytes(args, stdin) {
+    const rest = (args || []).filter(x => !/^-/.test(x));
+    if (rest.length) {
+      let p = null;
+      try { p = await realPath(rest[0]); } catch (e) { p = null; }
+      if (p) {
+        let st = null;
+        try { st = await IO.call('fs.stat', p); } catch (e) {}
+        if (st && st.kind === 'file') {
+          const r = await IO.call('fs.read', p);
+          if (typeof r.content === 'string') return new TextEncoder().encode(r.content);
+          if (r.content instanceof ArrayBuffer) return new Uint8Array(r.content);
+          return new TextEncoder().encode(String(r.content == null ? '' : r.content));
+        }
+      }
+      return new TextEncoder().encode(rest.join(' '));
+    }
+    return new TextEncoder().encode(String(stdin == null ? '' : stdin));
+  }
+
+  const codec = (op, data) => IO.call('util.codec', op, data);
+  const dec = (bytes) => new TextDecoder().decode(bytes);
+
   /* ---------------------------------------------------------------- 命令 */
   const CMDS = Object.create(null);
 
@@ -4022,6 +4168,194 @@ const COMPAT = (function () {
     if (a[0] === '+%s') return { out: String(Math.floor(Date.now() / 1000)) + '\n' };
     return { out: new Date().toString() + '\n' };
   }, '日期');
+
+  /* ---------------------------------------------------------------- 数据工具
+   * 和「数据」窗口共用同一套算法（主线程 util.codec）：
+   * Base32 / MD5 这种「看着简单」的东西写两遍，必然有一遍是错的。
+   */
+  const FLAGS = (a) => a.filter(x => /^-[a-zA-Z]+$/.test(x)).join('');
+
+  def('b64', async (a, stdin) => {
+    const f = FLAGS(a), url = f.includes('u');
+    if (!f.includes('d')) {
+      const bytes = await inputBytes(a, stdin);
+      return { out: await codec(url ? 'b64url' : 'b64', bytes) + '\n' };
+    }
+    const t = dec(await inputBytes(a, stdin)).trim();
+    if (!t) return { out: '' };
+    try { return { out: dec(await codec('unb64', t)) }; }
+    catch (e) { return { code: 1, err: 'b64: ' + (e.message || e) + '\n' }; }
+  }, 'Base64 编解码（-d 解，-u URL 安全）');
+
+  def('b32', async (a, stdin) => {
+    const f = FLAGS(a);
+    if (!f.includes('d')) return { out: await codec('b32', await inputBytes(a, stdin)) + '\n' };
+    try { return { out: dec(await codec('unb32', dec(await inputBytes(a, stdin)).trim())) }; }
+    catch (e) { return { code: 1, err: 'b32: ' + (e.message || e) + '\n' }; }
+  }, 'Base32 编解码（-d 解）');
+
+  def('hex', async (a, stdin) => {
+    const f = FLAGS(a);
+    const bytes = await inputBytes(a, stdin);
+    if (!f.includes('d')) return { out: await codec(f.includes('s') ? 'hexs' : 'hex', bytes) + '\n' };
+    try { return { out: dec(await codec('unhex', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'hex: ' + (e.message || e) + '\n' }; }
+  }, '十六进制编解码（-d 解，-s 带空格）');
+
+  def('bin', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('bin', bytes) + '\n' };
+    try { return { out: dec(await codec('unbin', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'bin: ' + (e.message || e) + '\n' }; }
+  }, '二进制编解码（-d 解）');
+
+  def('dec', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('dec', bytes) + '\n' };
+    try { return { out: dec(await codec('undec', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'dec: ' + (e.message || e) + '\n' }; }
+  }, '十进制大整数编解码（-d 解）');
+
+  def('url', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('url', bytes) + '\n' };
+    try { return { out: dec(await codec('unurl', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'url: 不是合法的百分号编码\n' }; }
+  }, 'URL 百分号编解码（-d 解）');
+
+  def('hash', async (a, stdin) => {
+    let alg = 'sha256';
+    const files = [];
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '-a' || x === '--alg') { alg = String(a[++i] || 'sha256').toLowerCase(); continue; }
+      if (/^-(md5|sha1|sha256|sha384|sha512)$/.test(x)) { alg = x.slice(1); continue; }
+      files.push(x);
+    }
+    const MAP = { md5:'MD5', sha1:'SHA-1', sha256:'SHA-256', sha384:'SHA-384', sha512:'SHA-512' };
+    const A = MAP[alg];
+    if (!A) return { code: 1, err: 'hash: 不支持的算法 ' + alg + '（md5 / sha1 / sha256 / sha384 / sha512）\n' };
+    if (!files.length) {
+      return { out: (await IO.call('util.hash', A, await inputBytes([], stdin))) + '  -\n' };
+    }
+    /* 参数既可能是文件，也可能就是一段文字。
+     * 规则：能当成文件的按文件算；全都不是文件，就把参数拼起来当文字算 ——
+     * 这样 `hash abc` 得到 "abc" 的哈希，而不是一句「没有那个文件」。 */
+    let out = '', missing = 0, hit = 0;
+    for (const f of files) {
+      let p = null;
+      try { p = await realPath(f); } catch (e) { p = null; }
+      let st = null;
+      if (p) { try { st = await IO.call('fs.stat', p); } catch (e) {} }
+      if (!st || st.kind !== 'file') { missing++; continue; }
+      hit++;
+      const r = await IO.call('fs.read', p);
+      const bytes = typeof r.content === 'string' ? new TextEncoder().encode(r.content) : new Uint8Array(r.content);
+      out += (await IO.call('util.hash', A, bytes)) + '  ' + f + '\n';
+    }
+    if (!hit) return { out: (await IO.call('util.hash', A, new TextEncoder().encode(files.join(' ')))) + '  -\n' };
+    if (missing) return { code: 1, out, err: 'hash: ' + missing + ' 个文件不存在\n' };
+    return { out };
+  }, '哈希（-a md5|sha1|sha256…，可接文件或管道）');
+
+  def('rand', async (a) => {
+    let len = 16, n = 1, kind = 'hex';
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '-l') len = Math.max(1, Math.min(4096, parseInt(a[++i], 10) || 16));
+      else if (x === '-n') n = Math.max(1, Math.min(200, parseInt(a[++i], 10) || 1));
+      else if (x === '-s') kind = String(a[++i] || 'hex');
+      else if (!x.startsWith('-')) kind = x;
+    }
+    const pick = (max) => {
+      if (max <= 0) return 0;
+      const lim = Math.floor(4294967296 / max) * max;
+      const b = new Uint32Array(1);
+      for (;;) { crypto.getRandomValues(b); if (b[0] < lim) return b[0] % max; }
+    };
+    const ALPH = {
+      alnum: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+      safe: 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789',
+      pwd: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+',
+      hex: '0123456789abcdef'
+    };
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      if (kind === 'uuid') {
+        const b = new Uint8Array(16);
+        crypto.getRandomValues(b);
+        b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+        const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+        out.push(h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20));
+      } else if (kind === 'bytes') {
+        const b = new Uint8Array(len);
+        crypto.getRandomValues(b);
+        out.push(await codec('b64url', b));
+      } else {
+        const set = ALPH[kind] || ALPH.hex;
+        let s = '';
+        for (let i = 0; i < len; i++) s += set[pick(set.length)];
+        out.push(s);
+      }
+    }
+    return { out: out.join('\n') + '\n' };
+  }, '随机串（-l 长度 -n 条数 -s hex|alnum|safe|pwd|uuid|bytes）');
+
+  def('uuid', async (a) => {
+    const n = Math.max(1, Math.min(200, parseInt(a[0], 10) || 1));
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+      const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+      out.push(h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20));
+    }
+    return { out: out.join('\n') + '\n' };
+  }, 'UUID v4');
+
+  def('ts', async (a) => {
+    const raw = String(a[0] == null ? '' : a[0]).trim();
+    let d = null;
+    if (!raw || /^now$/i.test(raw)) d = new Date();
+    else if (/^\d{1,11}$/.test(raw)) d = new Date(Number(raw) * 1000);
+    else if (/^\d{12,16}$/.test(raw)) d = new Date(Number(raw));
+    else d = new Date(raw.replace(/\//g, '-').replace(' ', 'T'));
+    if (!d || isNaN(d.getTime())) return { code: 1, err: 'ts: 看不懂 ' + raw + '\n' };
+    const rows = [
+      ['秒', String(Math.floor(d.getTime() / 1000))],
+      ['毫秒', String(d.getTime())],
+      ['ISO', d.toISOString()],
+      ['本地', d.toString()],
+      ['UTC', d.toUTCString()]
+    ];
+    const w = Math.max(...rows.map(r => r[0].length));
+    return { out: rows.map(([k, v]) => k.padEnd(w) + '  ' + v).join('\n') + '\n' };
+  }, '时间戳换算（默认现在）');
+
+  def('mount', async (a) => {
+    if (a[0]) {
+      return { code: 1, err: 'mount: sptm 还没做（占位）。目前只有内建挂载点，不能自己挂。\n' };
+    }
+    const ms = await IO.call('fs.mounts');
+    const w = Math.max(...ms.map(m => m.path.length), 5);
+    return { out: ms.map(m => m.path.padEnd(w) + '  ' + m.type.padEnd(12) + '  ' + m.mount).join('\n') + '\n' };
+  }, '列出挂载点（挂载本身未实现）');
+
+  def('tools', async () => {
+    const names = ['calc', 'data', 'color', 'markdown', 'shot', 'urlhash', 'recorder', 'geo', 'view3d', 'audio'];
+    return { out: names.map(n => n.padEnd(10) + ({ calc:'科学计算器', data:'数据转换', color:'调色盘', markdown:'Markdown 渲染',
+      shot:'网页内截屏', urlhash:'链接即状态', recorder:'录音机（维护中）', geo:'定位（维护中）',
+      view3d:'3D 视图（维护中）', audio:'音频播放（维护中）' })[n]).join('\n') + '\n' };
+  }, '列出工具');
+
+  def('tool', async (a) => {
+    const name = String(a[0] || '').trim();
+    if (!name) return { code: 1, err: 'tool: 用法 tool <名字>，不带参数看 tools\n' };
+    const w = await IO.call('win.open', { app:name });
+    if (!w) return { code: 1, err: 'tool: 没有这个工具：' + name + '\n' };
+    return { out: '已打开 ' + w.title + '\n' };
+  }, '打开工具窗口');
 
   def('whoami', async () => ({ out: (IO.state.user || 'human') + '\n' }), '当前用户');
   def('hostname', async () => ({ out: 'browser\n' }), '主机名');
@@ -4806,7 +5140,7 @@ const COMPAT = (function () {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.5';
+const HT_VERSION = '0.0.1.6';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -5131,6 +5465,17 @@ const APP_DEFS = [
   { name:'agent', title:'智能体', desc:'轻量 AI harness（需要后端）', type:'agent', icon:'✦' },
   { name:'files', title:'文件', desc:'浏览一切皆文件的世界', type:'files', icon:'▤' },
   { name:'editor', title:'编辑器', desc:'查看/编辑文本文件', type:'editor', icon:'✎' },
+  /* 工具：沙箱的「日常用得上」那一面。全部自研，不引第三方库。 */
+  { name:'calc', title:'计算器', desc:'科学计算器（表达式、角度、记忆）', type:'calc', icon:'∑' },
+  { name:'data', title:'数据', desc:'编码 / 时间戳 / 哈希 / 随机', type:'data', icon:'⇄' },
+  { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
+  { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
+  { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
+  { name:'urlhash', title:'链接即状态', desc:'把文本/JS 压进 URL 片段', type:'urlhash', icon:'⌗' },
+  { name:'recorder', title:'录音机', desc:'维护中，暂不可用', type:'recorder', icon:'◎' },
+  { name:'geo', title:'定位', desc:'维护中，暂不可用', type:'geo', icon:'⌖' },
+  { name:'view3d', title:'3D 视图', desc:'维护中，暂不可用', type:'view3d', icon:'◫' },
+  { name:'audio', title:'音频播放', desc:'维护中，暂不可用', type:'audio', icon:'♫' },
   { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'≥' },
   { name:'about', title:'关于', desc:'版本、许可与第三方声明', type:'about', icon:'ⓘ' },
 ];
@@ -5786,6 +6131,17 @@ const FS = {
     await saveFileRaw(spotExportName(baseName(p)), r.content, (r.meta && r.meta.mime) || 'application/octet-stream');
     await this.remove(p, true);
     return true;
+  },
+
+  /* sptm —— 挂载。**占坑，未实现。**
+   * 为什么留一个只会抛错的 syscall：sptx 的判别表、.mounts 的展示、文档里的
+   * 语义都已经把它算进去了，缺了它这套模型就不完整；但真做起来要先解决
+   * 「同一份节点该被谁持有」「卸载时数据归谁」「路径跨挂载点怎么解析」，
+   * 这些没有想清楚之前，给一个假能用比给一个明确的「还没做」更糟。 */
+  async sptm(target, source, opts) {
+    opts = opts || {};
+    throw new Error('sptm: 挂载还没做（占位）。目标 ' + normPath(target) +
+      (source ? '，来源 ' + String(source) : '') + ' —— 现在只有 idb / tmpfs / procfs / devfs / pkgfs 五个内建挂载点');
   },
 
   async usage() {
@@ -7067,8 +7423,12 @@ const WindowManager = {
     if (opts.type === 'drawer') { Drawer.open(); return null; }
 
     const id = opts.id || uid('w');
-    const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'智能体', editor:'编辑器', about:'关于', html:'窗口' };
-    const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420] };
+    const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'智能体', editor:'编辑器', about:'关于', html:'窗口',
+      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', urlhash:'链接即状态',
+      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放' };
+    const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
+      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], urlhash:[700, 620],
+      recorder:[460, 400], geo:[460, 400], view3d:[460, 400], audio:[460, 400] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     const { w:vw, h:vh } = deskBox();
     const base = TYPE_SIZE[opts.type] || [780, 500];
@@ -7209,6 +7569,17 @@ const WindowManager = {
         case 'browser': win.content = new BrowserApp(win.body, opts); break;
         case 'files': win.content = new FilesApp(win.body, opts); break;
         case 'editor': win.content = new EditorApp(win.body, opts); break;
+        case 'calc': win.content = new CalcApp(win.body, opts); break;
+        case 'data': win.content = new DataApp(win.body, opts); break;
+        case 'color': win.content = new ColorApp(win.body, opts); break;
+        case 'markdown': win.content = new MdApp(win.body, opts); break;
+        case 'shot': win.content = new ShotApp(win.body, opts); break;
+        case 'urlhash': win.content = new UrlHashApp(win.body, opts); break;
+        case 'recorder':
+        case 'geo':
+        case 'view3d':
+        case 'audio':
+          win.content = new MaintApp(win.body, win.type); break;
         case 'agent': win.content = new AgentApp(win.body, opts, win); break;
         case 'html': win.body.innerHTML = opts.html || ''; break;
         case 'about': win.body.classList.add('pad'); win.body.innerHTML = aboutHtml(); break;
@@ -8342,6 +8713,2222 @@ class EditorApp {
     else if (a === 'close') { const w = [...WindowManager.windows.values()].find(x => x.content === this); if (w) WindowManager.close(w.id); }
   }
   dispose() {}
+}
+
+/* ============================================================================
+ * HTerMinaL · tools: 计算器 / 截屏 / Markdown / 维护中的壳子
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ * 由 AI 智能体生成并维护。
+ *
+ * 这一层只做「窗口里的工具」，不碰文件系统语义（那是 30-core）也不碰 shell（25-compat）。
+ * 所有工具都遵守三条：
+ *   1) 只用浏览器自带能力，不引第三方库（Markdown 除外，marked 已在许可证清单里）；
+ *   2) 只用 CSS token，不写死颜色，浅色主题自动跟随；
+ *   3) 不承诺做不到的事 —— 做不到就做成壳子并写明原因，而不是假装能用。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 共用小工具 */
+const ToolKit = {
+  async copy(text, okMsg) {
+    const s = String(text == null ? '' : text);
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(s);
+      } else {
+        /* file:// 或没授权时 clipboard 是 undefined，退回 execCommand —— 它还能用 */
+        const ta = document.createElement('textarea');
+        ta.value = s;
+        ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      toast(okMsg || '已复制');
+      return true;
+    } catch (e) {
+      toast('复制失败：' + (e && e.message || e), true);
+      return false;
+    }
+  },
+  bytes(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 2 : 1) + ' KB';
+    return (n / 1048576).toFixed(2) + ' MB';
+  },
+  /** dataURL → Uint8Array（不用 fetch，省一次异步跳转） */
+  dataUrlBytes(url) {
+    const s = String(url || '');
+    const i = s.indexOf(',');
+    if (i < 0) return new Uint8Array(0);
+    const head = s.slice(0, i), body = s.slice(i + 1);
+    if (!/;base64/i.test(head)) {
+      return new TextEncoder().encode(decodeURIComponent(body));
+    }
+    const bin = atob(body);
+    const out = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) out[k] = bin.charCodeAt(k);
+    return out;
+  },
+  mimeOf(url) {
+    const m = /^data:([^;,]+)/i.exec(String(url || ''));
+    return m ? m[1] : 'application/octet-stream';
+  },
+  /** 给每个窗口一个「复制」按钮的统一写法 */
+  bindCopies(root) {
+    root.querySelectorAll('[data-copy]').forEach(b => {
+      b.onclick = () => {
+        const sel = b.dataset.copy;
+        const src = sel ? root.querySelector(sel) : null;
+        const val = src ? (src.value !== undefined ? src.value : src.textContent) : (b.dataset.copyText || '');
+        ToolKit.copy(val);
+      };
+    });
+  }
+};
+
+/* ---------------------------------------------------------------- 两个通用对话框
+ * 项目里到处都要「要一个名字」「从 .home 挑一个文件」，但一直没有统一写法，
+ * 于是每个应用各写一套。这两个函数就是补这个洞。 */
+function modalPrompt(title, def, hint) {
+  return modal({
+    title,
+    body: `<input class="tl-in" id="mpIn" style="width:100%" spellcheck="false"
+      value="${esc(def == null ? '' : def)}" placeholder="${esc(hint || '')}">`,
+    buttons: [
+      { label:'取消', value:null },
+      { label:'确定', primary:true, onClick:(wrap) => {
+          const v = wrap.querySelector('#mpIn').value.trim();
+          return v || null;
+        } }
+    ],
+    onMount: (wrap) => {
+      const inp = wrap.querySelector('#mpIn');
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); wrap.querySelector('.mfoot .btn.primary').click(); }
+      });
+      setTimeout(() => { inp.focus(); inp.select(); }, 40);
+    }
+  });
+}
+
+async function pickFileInFs(opts) {
+  opts = opts || {};
+  const dir = normPath(opts.dir || '.home');
+  let rows = [];
+  try { rows = await FS.list(dir); } catch (e) { rows = []; }
+  const items = rows.filter(r => r.kind !== 'dir' && (!opts.filter || opts.filter(r.name, r)));
+  if (!items.length) {
+    toast('这个目录里没有可选的文件');
+    return null;
+  }
+  return await modal({
+    title: opts.title || ('选择文件（' + dir + '）'),
+    body: `<select class="tl-in" id="pfSel" style="width:100%">` +
+      items.map(r => `<option value="${esc(r.path)}">${esc(r.name)} · ${ToolKit.bytes(r.size)}</option>`).join('') +
+      `</select>`,
+    buttons: [
+      { label:'取消', value:null },
+      { label:'打开', primary:true, onClick:(wrap) => wrap.querySelector('#pfSel').value }
+    ]
+  });
+}
+
+/* ============================================================================
+ * 1. 科学计算器
+ *
+ * 不用 eval：表达式要能解释「为什么错」，而且 eval 会把 `alert(1)` 当合法输入。
+ * 这里走递归下降，文法很小但完整：
+ *   expr    := term (('+'|'-') term)*
+ *   term    := unary (('*'|'/'|'%') unary)*
+ *   unary   := ('+'|'-') unary | power
+ *   power   := postfix ('^' unary)?          右结合：2^3^2 = 512
+ *   postfix := primary ('!')*
+ *   primary := number | const | func '(' args ')' | '(' expr ')'
+ * ==========================================================================*/
+const CalcFn = {
+  /* 一元函数表。角度/弧度只影响三角与反三角，逻辑集中在 CalcApp._applyAngle。 */
+  'sin': Math.sin, 'cos': Math.cos, 'tan': Math.tan,
+  'asin': Math.asin, 'acos': Math.acos, 'atan': Math.atan,
+  'sinh': Math.sinh, 'cosh': Math.cosh, 'tanh': Math.tanh,
+  'asinh': Math.asinh, 'acosh': Math.acosh, 'atanh': Math.atanh,
+  'ln': Math.log, 'log': Math.log10, 'log2': Math.log2, 'lg': Math.log10,
+  'exp': Math.exp, 'sqrt': Math.sqrt, 'cbrt': Math.cbrt,
+  'abs': Math.abs, 'round': Math.round, 'floor': Math.floor,
+  'ceil': Math.ceil, 'trunc': Math.trunc, 'sign': Math.sign,
+  'deg': (x) => x * 180 / Math.PI, 'rad': (x) => x * Math.PI / 180
+};
+const CalcConst = { 'pi': Math.PI, 'e': Math.E, 'tau': Math.PI * 2, 'phi': (1 + Math.sqrt(5)) / 2 };
+
+class CalcParser {
+  constructor(src, angle) {
+    this.src = String(src || '');
+    this.angle = angle === 'deg' ? 'deg' : 'rad';
+    this.i = 0;
+    this.toks = this._lex();
+    this.p = 0;
+  }
+  _lex() {
+    /* 先做显示层替换：键盘上打不出来 × ÷ − π √，按钮打的是这些字符 */
+    const s = this.src
+      .replace(/[×✕]/g, '*').replace(/[÷]/g, '/').replace(/[−–—]/g, '-')
+      .replace(/π/g, 'pi').replace(/√/g, 'sqrt').replace(/，/g, ',')
+      .replace(/。/g, '.');
+    const out = [];
+    let i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (/\s/.test(c)) { i++; continue; }
+      if (/[0-9.]/.test(c)) {
+        const m = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(s.slice(i));
+        if (!m) throw new Error('数字写错了：' + s.slice(i, i + 8));
+        out.push({ t: 'num', v: parseFloat(m[0]) });
+        i += m[0].length;
+        continue;
+      }
+      if (/[A-Za-z_]/.test(c)) {
+        const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.slice(i));
+        out.push({ t: 'id', v: m[0].toLowerCase() });
+        i += m[0].length;
+        continue;
+      }
+      if ('+-*/^%!(),'.includes(c)) { out.push({ t: c }); i++; continue; }
+      throw new Error('不认识的字符：' + c);
+    }
+    out.push({ t: 'eof' });
+    return out;
+  }
+  peek() { return this.toks[this.p]; }
+  eat(t) {
+    if (this.toks[this.p].t === t) { this.p++; return true; }
+    return false;
+  }
+  expect(t, msg) {
+    if (!this.eat(t)) throw new Error(msg || ('这里应该是 ' + t));
+  }
+  run() {
+    if (this.peek().t === 'eof') throw new Error('还没有输入');
+    const v = this.expr();
+    if (this.peek().t !== 'eof') throw new Error('多余的内容：' + this._show(this.peek()));
+    if (typeof v !== 'number' || Number.isNaN(v)) throw new Error('结果不是数字');
+    return v;
+  }
+  _show(tk) { return tk.t === 'num' ? tk.v : tk.t === 'id' ? tk.v : tk.t; }
+
+  expr() {
+    let v = this.term();
+    for (;;) {
+      if (this.eat('+')) v += this.term();
+      else if (this.eat('-')) v -= this.term();
+      else return v;
+    }
+  }
+  term() {
+    let v = this.unary();
+    for (;;) {
+      if (this.eat('*')) v *= this.unary();
+      else if (this.eat('/')) {
+        const d = this.unary();
+        if (d === 0) throw new Error('除数是 0');
+        v /= d;
+      } else if (this.eat('%')) {
+        const d = this.unary();
+        if (d === 0) throw new Error('除数是 0');
+        v %= d;
+      } else return v;
+    }
+  }
+  unary() {
+    if (this.eat('-')) return -this.unary();
+    if (this.eat('+')) return this.unary();
+    return this.power();
+  }
+  power() {
+    const base = this.postfix();
+    if (this.eat('^')) return Math.pow(base, this.unary());   // 右结合
+    return base;
+  }
+  postfix() {
+    let v = this.primary();
+    while (this.eat('!')) {
+      if (!Number.isInteger(v) || v < 0) throw new Error('阶乘只支持非负整数');
+      if (v > 170) throw new Error('阶乘太大（>170 就溢出了）');
+      let r = 1;
+      for (let k = 2; k <= v; k++) r *= k;
+      v = r;
+    }
+    return v;
+  }
+  primary() {
+    const tk = this.peek();
+    if (tk.t === 'num') { this.p++; return tk.v; }
+    if (this.eat('(')) {
+      const v = this.expr();
+      this.expect(')', '括号没有闭合');
+      return v;
+    }
+    if (tk.t === 'id') {
+      this.p++;
+      const name = tk.v;
+      if (this.eat('(')) {
+        const args = [];
+        if (this.peek().t !== ')') {
+          args.push(this.expr());
+          while (this.eat(',')) args.push(this.expr());
+        }
+        this.expect(')', '函数参数没有闭合');
+        return this._call(name, args);
+      }
+      if (name in CalcConst) return CalcConst[name];
+      /* 允许 sin30 这种写法（计算器上很常见），但只对一元函数开放 */
+      if (name in CalcFn) {
+        const v = this.unary();
+        return this._call(name, [v]);
+      }
+      throw new Error('不认识的名字：' + name);
+    }
+    throw new Error('表达式不完整');
+  }
+  _call(name, args) {
+    if (name === 'pow') return Math.pow(args[0], args[1]);
+    if (name === 'nroot') return Math.sign(args[1]) * Math.pow(Math.abs(args[1]), 1 / args[0]);
+    if (name === 'max') return Math.max(...args);
+    if (name === 'min') return Math.min(...args);
+    if (name === 'atan2') return Math.atan2(args[0], args[1]);
+    if (name === 'log') { /* log(x) 常用底 10；log(b,x) 指定底 */
+      if (args.length === 2) return Math.log(args[1]) / Math.log(args[0]);
+      return Math.log10(args[0]);
+    }
+    const fn = CalcFn[name];
+    if (!fn) throw new Error('不认识的函数：' + name);
+    if (args.length !== 1) throw new Error(name + ' 只接受 1 个参数');
+    const trig = /^(sin|cos|tan)$/.test(name);
+    const atrig = /^(asin|acos|atan|atan2)$/.test(name);
+    if (trig && this.angle === 'deg') return fn(args[0] * Math.PI / 180);
+    if (atrig && this.angle === 'deg') return fn(args[0]) * 180 / Math.PI;
+    return fn(args[0]);
+  }
+}
+
+class CalcApp {
+  constructor(container) {
+    this.el = container;
+    this.expr = '';
+    this.res = '0';
+    this.mem = 0;
+    this.angle = 'rad';
+    this.second = false;
+    this.hist = [];
+    this.err = '';
+    this.el.innerHTML = `<div class="calc" tabindex="0">
+      <div class="calc-disp">
+        <div class="calc-expr"></div>
+        <div class="calc-res">0</div>
+      </div>
+      <div class="calc-flags">
+        <button class="tl-btn sm" data-act="deg" title="角度制 / 弧度制">RAD</button>
+        <button class="tl-btn sm" data-act="2nd" title="第二功能">2nd</button>
+        <span style="flex:1 1 auto"></span>
+        <button class="tl-btn sm" data-act="mc" title="清除记忆">MC</button>
+        <button class="tl-btn sm" data-act="mr" title="读取记忆">MR</button>
+        <button class="tl-btn sm" data-act="mplus" title="加到记忆">M+</button>
+        <button class="tl-btn sm" data-act="mminus" title="从记忆减">M−</button>
+        <button class="tl-btn sm" data-act="help" title="说明">?</button>
+      </div>
+      <div class="calc-pad">
+        <button class="del" data-act="clear">C</button>
+        <button class="del" data-act="ce">CE</button>
+        <button class="del" data-act="back">⌫</button>
+        <button class="fn" data-ins="(">(</button>
+        <button class="fn" data-ins=")">)</button>
+
+        <button class="fn" data-ins="sin(" data-alt="asin(" data-alt-label="sin⁻¹">sin</button>
+        <button class="fn" data-ins="cos(" data-alt="acos(" data-alt-label="cos⁻¹">cos</button>
+        <button class="fn" data-ins="tan(" data-alt="atan(" data-alt-label="tan⁻¹">tan</button>
+        <button class="fn" data-ins="ln(" data-alt="exp(" data-alt-label="eˣ">ln</button>
+        <button class="fn" data-ins="log(" data-alt="pow(10," data-alt-label="10ˣ">log</button>
+
+        <button class="fn" data-ins="^2" data-alt="^3" data-alt-label="x³">x²</button>
+        <button class="fn" data-ins="^">xʸ</button>
+        <button class="fn" data-ins="sqrt(">√</button>
+        <button class="fn" data-ins="1/(" data-alt-label="1/x">1/x</button>
+        <button class="fn" data-ins="!" data-alt="pi" data-alt-label="π">n!</button>
+
+        <button data-ins="7">7</button>
+        <button data-ins="8">8</button>
+        <button data-ins="9">9</button>
+        <button class="op" data-ins="/">÷</button>
+        <button class="op" data-ins="%">%</button>
+
+        <button data-ins="4">4</button>
+        <button data-ins="5">5</button>
+        <button data-ins="6">6</button>
+        <button class="op" data-ins="*">×</button>
+        <button class="op" data-ins="^">^</button>
+
+        <button data-ins="1">1</button>
+        <button data-ins="2">2</button>
+        <button data-ins="3">3</button>
+        <button class="op" data-ins="-">−</button>
+        <button class="eq" data-act="eq" style="grid-row:span 2">=</button>
+
+        <button data-ins="0">0</button>
+        <button data-ins=".">.</button>
+        <button class="fn" data-act="neg">±</button>
+        <button class="op" data-ins="+">+</button>
+
+        <button class="fn" data-ins="e" data-alt="tau" data-alt-label="τ">e</button>
+        <button class="fn" data-ins="rand()" style="grid-column:span 4" data-act="rand">随机数</button>
+      </div>
+      <div class="calc-hist"></div>
+    </div>`;
+    this.dispExpr = $('.calc-expr', this.el);
+    this.dispRes = $('.calc-res', this.el);
+    this.histEl = $('.calc-hist', this.el);
+    this._bind();
+    this.render();
+  }
+  _bind() {
+    const root = $('.calc', this.el);
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      const act = b.dataset.act;
+      if (act) this.doAct(act, b);
+      else if (b.dataset.ins != null) this.ins(this.second && b.dataset.alt != null ? b.dataset.alt : b.dataset.ins);
+    });
+    root.addEventListener('keydown', (e) => this.onKey(e));
+    root.addEventListener('focus', () => {});
+    this.histEl.addEventListener('click', (e) => {
+      const d = e.target.closest('div');
+      if (!d) return;
+      this.expr = d.dataset.e || '';
+      this.res = d.dataset.r || '0';
+      this.err = '';
+      this.render();
+    });
+  }
+  onKey(e) {
+    const k = e.key;
+    if (/^[0-9.+\-*/^%()!]$/.test(k)) { this.ins(k); e.preventDefault(); return; }
+    if (k === 'Enter' || k === '=') { this.doAct('eq'); e.preventDefault(); return; }
+    if (k === 'Backspace') { this.doAct('back'); e.preventDefault(); return; }
+    if (k === 'Escape') { this.doAct('clear'); e.preventDefault(); return; }
+    if (k === 'Delete') { this.doAct('ce'); e.preventDefault(); return; }
+  }
+  ins(s) {
+    this.err = '';
+    /* 刚按过等号又输入数字：默认开新算式；输入运算符则接着上次的结果往下算 */
+    if (this.justEq) {
+      if (/^[0-9.(]/.test(s)) this.expr = '';
+      else this.expr = String(this.res);
+      this.justEq = false;
+    }
+    this.expr += s;
+    this.render();
+  }
+  doAct(act, btn) {
+    if (act === 'clear') { this.expr = ''; this.res = '0'; this.err = ''; this.justEq = false; }
+    else if (act === 'ce') { this.expr = ''; this.err = ''; this.justEq = false; }
+    else if (act === 'back') {
+      this.err = '';
+      if (this.justEq) { this.justEq = false; }
+      this.expr = this.expr.slice(0, -1);
+    } else if (act === 'neg') {
+      /* ± 不是简单加个负号：对整段表达式取负更符合直觉 */
+      this.expr = this.expr ? '-(' + this.expr + ')' : '-';
+      this.justEq = false;
+    } else if (act === 'deg') {
+      this.angle = this.angle === 'deg' ? 'rad' : 'deg';
+      btn.textContent = this.angle === 'deg' ? 'DEG' : 'RAD';
+      btn.classList.toggle('on', this.angle === 'deg');
+      this.preview();
+    } else if (act === '2nd') {
+      this.second = !this.second;
+      btn.classList.toggle('on', this.second);
+      this.applySecond();
+    } else if (act === 'mc') { this.mem = 0; toast('记忆已清除'); }
+    else if (act === 'mr') { this.ins(String(this.mem)); }
+    else if (act === 'mplus' || act === 'mminus') {
+      const v = this._valueNow();
+      if (v != null) { this.mem += act === 'mplus' ? v : -v; toast('记忆 = ' + this.fmt(this.mem)); }
+    } else if (act === 'rand') { this.ins(String(Math.random().toFixed(8))); }
+    else if (act === 'help') this.help();
+    else if (act === 'eq') this.equals();
+    this.render();
+  }
+  applySecond() {
+    this.el.querySelectorAll('[data-alt]').forEach(b => {
+      const main = b.dataset.main || b.textContent;
+      if (!b.dataset.main) b.dataset.main = main;
+      b.textContent = this.second ? (b.dataset.altLabel || b.dataset.alt) : b.dataset.main;
+    });
+  }
+  _valueNow() {
+    try { return new CalcParser(this.expr || this.res, this.angle).run(); }
+    catch (e) { return null; }
+  }
+  preview() {
+    if (!this.expr) return;
+    try {
+      const v = new CalcParser(this.expr, this.angle).run();
+      this.res = this.fmt(v);
+      this.err = '';
+    } catch (e) { /* 还没输完是常态，静默 */ }
+  }
+  equals() {
+    if (!this.expr.trim()) return;
+    try {
+      const v = new CalcParser(this.expr, this.angle).run();
+      const r = this.fmt(v);
+      this.res = r;
+      this.err = '';
+      this.justEq = true;
+      this.hist.unshift({ e: this.expr, r });
+      if (this.hist.length > 40) this.hist.length = 40;
+      this.renderHist();
+    } catch (e) {
+      this.err = e.message || String(e);
+      this.justEq = false;
+    }
+  }
+  fmt(v) {
+    if (!Number.isFinite(v)) return v > 0 ? '∞' : (v < 0 ? '−∞' : '不是数字');
+    if (v === 0) return '0';
+    const a = Math.abs(v);
+    if (a >= 1e15 || a < 1e-9) {
+      return v.toExponential(10).replace(/\.?0+e/, 'e').replace('e+', 'e');
+    }
+    /* 12 位有效数字：够科学计算，又不会把 0.1+0.2 的尾巴露出来 */
+    let s = parseFloat(v.toPrecision(12)).toString();
+    return s;
+  }
+  renderHist() {
+    this.histEl.innerHTML = this.hist.map(h =>
+      `<div data-e="${esc(h.e)}" data-r="${esc(h.r)}">${esc(h.e)} = <b style="color:var(--fg-dim)">${esc(h.r)}</b></div>`
+    ).join('') || '<div style="opacity:.5;cursor:default">还没有计算记录</div>';
+  }
+  render() {
+    this.dispExpr.textContent = this.expr || '';
+    if (this.err) {
+      this.dispRes.textContent = this.err;
+      this.dispRes.classList.add('small');
+      this.dispRes.style.color = 'var(--red)';
+    } else {
+      /* 实时预览：输入过程中就显示结果，等号只是把结果记账 */
+      let shown = this.res;
+      if (!this.justEq) {
+        try {
+          if (this.expr.trim()) shown = this.fmt(new CalcParser(this.expr, this.angle).run());
+          else shown = '0';
+        } catch (e) { shown = this.res; }
+      }
+      this.dispRes.textContent = shown;
+      this.dispRes.style.color = '';
+      this.dispRes.classList.toggle('small', String(shown).length > 16);
+    }
+    if (!this.histEl.dataset.done) { this.renderHist(); this.histEl.dataset.done = '1'; }
+    this.memBadge();
+  }
+  memBadge() {
+    const b = this.el.querySelector('[data-act="mr"]');
+    if (b) b.classList.toggle('on', this.mem !== 0);
+  }
+  help() {
+    modal({
+      title: '计算器说明',
+      body: `<div class="tl-note" style="font-size:11.5px">
+        <p><b>输入</b>：点按钮，或直接敲键盘（0-9 . + - * / ^ % ( ) !，Enter 求值，Esc 清空）。</p>
+        <p><b>语法</b>：<code>2^3^2</code> 右结合 = 512；<code>5!</code> 阶乘；<code>sin(30)</code> 默认弧度，
+        按 RAD/DEG 切换；<code>log(2,8)</code> 指定底数；<code>pow(2,10)</code>、<code>max(1,2)</code> 支持多参数。</p>
+        <p><b>为什么不用 eval</b>：这里的表达式是给人按的，报错要说人话；eval 还会把 <code>alert(1)</code> 当合法输入。</p>
+        <p><b>精度</b>：双精度浮点，12 位有效数字显示。<code>0.1+0.2</code> 显示 0.3，但内部仍是二进制浮点；
+        超过 2^53 的整数会丢精度 —— 要精确大整数请用「数据」工具的十进制转换。</p>
+      </div>`,
+      buttons: [{ label: '知道了', primary: true }]
+    });
+  }
+}
+
+/* ============================================================================
+ * 2. 网页内截屏
+ * ==========================================================================*/
+class ShotApp {
+  constructor(container) {
+    this.el = container;
+    this.el.innerHTML = `<div class="tl">
+      <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">截图</b>
+        <span style="flex:1 1 auto"></span>
+        <button class="tl-btn sm" data-a="shot">截取</button>
+      </div>
+      <div class="tl-body">
+        <div class="tl-card">
+          <div class="tl-row"><label>目标</label>
+            <select class="tl-in" data-f="target" style="flex:1 1 auto"></select></div>
+          <div class="tl-row"><label>缩放</label>
+            <select class="tl-in" data-f="scale">
+              <option value="1">1×（最小最快）</option>
+              <option value="2" selected>2×（推荐）</option>
+              <option value="3">3×（细节）</option>
+            </select>
+            <label style="flex:0 0 auto">格式</label>
+            <select class="tl-in" data-f="type">
+              <option value="image/png" selected>PNG</option>
+              <option value="image/jpeg">JPEG</option>
+              <option value="image/webp">WebP</option>
+            </select></div>
+          <div class="tl-row"><label>延迟</label>
+            <input class="tl-in" type="number" data-f="delay" value="0" min="0" max="10000" step="100" style="width:88px">
+            <span class="tl-note">毫秒，给动画/懒加载留时间</span></div>
+        </div>
+        <div class="shot-stage" data-f="stage"><span class="tl-note">还没有截图。点右上角「截取」。</span></div>
+        <div class="tl-row" style="margin-top:8px">
+          <button class="tl-btn" data-a="save" disabled>存到 .home</button>
+          <button class="tl-btn" data-a="down" disabled>下载</button>
+          <button class="tl-btn" data-a="copy" disabled>复制为图片</button>
+          <span class="tl-note" data-f="meta"></span>
+        </div>
+        <div class="tl-note" style="margin-top:6px">
+          用的是 html2canvas（把 DOM 重绘成 canvas），不是系统截屏：不需要授权，
+          但 <b>iframe 里的内容拍不到</b>（跨文档读不到样式），视频/WebGL 也可能缺失。
+          要连 iframe 一起拍，只能走系统的「共享屏幕」。
+        </div>
+      </div>
+    </div>`;
+    this.url = '';
+    this.fillTargets();
+    this.el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b) return;
+      if (b.dataset.a === 'shot') this.shoot();
+      else if (b.dataset.a === 'save') this.save();
+      else if (b.dataset.a === 'down') this.download();
+      else if (b.dataset.a === 'copy') this.copyImg();
+    });
+  }
+  fillTargets() {
+    const sel = $('[data-f="target"]', this.el);
+    const wins = WindowManager.list();
+    sel.innerHTML = '<option value="desk">整个桌面</option>' +
+      '<option value="doc">整个文档（含滚动区）</option>' +
+      wins.map(w => `<option value="win:${esc(w.id)}">窗口：${esc(w.title)}</option>`).join('');
+  }
+  async shoot() {
+    const btn = $('[data-a="shot"]', this.el);
+    btn.disabled = true;
+    btn.textContent = '截取中…';
+    const delay = Math.max(0, Math.min(10000, Number($('[data-f="delay"]', this.el).value) || 0));
+    try {
+      if (delay) await new Promise(r => setTimeout(r, delay));
+      const t = $('[data-f="target"]', this.el).value;
+      let el = null;
+      if (t === 'desk') el = document.getElementById('desk') || document.body;
+      else if (t === 'doc') el = document.body;
+      else if (t.startsWith('win:')) {
+        const w = WindowManager.windows.get(t.slice(4));
+        el = w && w.el;
+      }
+      if (!el) throw new Error('目标窗口已经不在了');
+      this.url = await shot(el, {
+        scale: Number($('[data-f="scale"]', this.el).value) || 1,
+        type: $('[data-f="type"]', this.el).value,
+        quality: 0.92
+      });
+      const img = new Image();
+      img.src = this.url;
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+      const stage = $('[data-f="stage"]', this.el);
+      stage.innerHTML = '';
+      stage.appendChild(img);
+      $('[data-f="meta"]', this.el).textContent =
+        img.naturalWidth + '×' + img.naturalHeight + ' · ' + ToolKit.bytes(this.url.length * 0.75 | 0);
+      ['save', 'down', 'copy'].forEach(a => { $('[data-a="' + a + '"]', this.el).disabled = false; });
+    } catch (e) {
+      toast('截图失败：' + (e && e.message || e), true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '截取';
+    }
+  }
+  _name(ext) {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `shot-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  }
+  async save() {
+    if (!this.url) return;
+    const ext = (this.url.match(/^data:image\/(\w+)/) || [])[1] || 'png';
+    const name = spotEscape(this._name(ext === 'jpeg' ? 'jpg' : ext));
+    try {
+      const bytes = ToolKit.dataUrlBytes(this.url);
+      const p = uniquePathIn('.home', name);
+      await FS.write(p, bytes, { mime: ToolKit.mimeOf(this.url), hint: name, origin:'shot' });
+      toast('已保存到 ' + p);
+    } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
+  }
+  download() {
+    if (!this.url) return;
+    const ext = (this.url.match(/^data:image\/(\w+)/) || [])[1] || 'png';
+    downloadBlob(this._name(ext === 'jpeg' ? 'jpg' : ext), new Blob([ToolKit.dataUrlBytes(this.url)], { type: ToolKit.mimeOf(this.url) }));
+  }
+  async copyImg() {
+    if (!this.url) return;
+    try {
+      const blob = new Blob([ToolKit.dataUrlBytes(this.url)], { type: ToolKit.mimeOf(this.url) });
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      toast('已复制图片');
+    } catch (e) { toast('这个浏览器不让写图片剪贴板，请用「下载」', true); }
+  }
+}
+
+/* ============================================================================
+ * 3. Markdown 渲染
+ *
+ * marked 是许可证清单里的依赖（MIT），懒加载；加载不到时退到自带的迷你渲染器。
+ * 渲染结果一律过 sanitizeHtml：Markdown 常常来自别人（AI、拖进来的文件），
+ * 直接 innerHTML 等于给 XSS 开门。
+ * ==========================================================================*/
+const MD_URLS = [
+  'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js',
+  'https://unpkg.com/marked@12.0.2/marked.min.js'
+];
+let _marked = null;
+let _markedP = null;
+let _markedFailAt = 0;
+async function ensureMarked() {
+  if (_marked || window.marked) { _marked = window.marked; return _marked; }
+  /* 记住「正在加载」这件事本身。
+   * 不记的话，每敲一个字都会重新发起一次 CDN 请求 —— 首次加载慢的时候，
+   * 侧边预览会一直停在旧内容上，而网络面板在刷请求。 */
+  if (_markedP) return _markedP;
+  if (_markedFailAt && Date.now() - _markedFailAt < 60000) throw new Error('marked 暂时不可用（1 分钟内不再重试）');
+  _markedP = (async () => {
+    let last;
+    for (const u of MD_URLS) {
+      try {
+        await loadScriptCached(u);
+        if (window.marked) { _marked = window.marked; return _marked; }
+      } catch (e) { last = e; }
+    }
+    _markedFailAt = Date.now();
+    throw last || new Error('marked 加载失败');
+  })();
+  try { return await _markedP; }
+  finally { _markedP = null; }
+}
+
+/* 白名单清洗：只留排版标签，on* 一律砍掉，javascript: 一律砍掉。 */
+const MD_ALLOW = new Set(['a','abbr','b','blockquote','br','code','del','details','div','em','figcaption','figure',
+  'h1','h2','h3','h4','h5','h6','hr','i','img','input','kbd','li','mark','ol','p','pre','s','small','span',
+  'strong','sub','sup','summary','table','tbody','td','th','thead','tr','ul']);
+const MD_ATTR = new Set(['href','src','alt','title','class','align','colspan','rowspan','type','checked','disabled','start']);
+function sanitizeHtml(html) {
+  const doc = new DOMParser().parseFromString('<div id="r">' + String(html || '') + '</div>', 'text/html');
+  const root = doc.getElementById('r');
+  const walk = (node) => {
+    for (const child of [...node.children]) {
+      const tag = child.tagName.toLowerCase();
+      if (!MD_ALLOW.has(tag)) {
+        /* 危险标签整棵丢掉；其它不认识的标签剥壳留文字 */
+        if (tag === 'script' || tag === 'style' || tag === 'iframe' || tag === 'object' || tag === 'embed' || tag === 'link' || tag === 'meta') {
+          child.remove();
+          continue;
+        }
+        child.replaceWith(...child.childNodes);
+        continue;
+      }
+      for (const a of [...child.attributes]) {
+        const n = a.name.toLowerCase();
+        const v = String(a.value || '');
+        if (!MD_ATTR.has(n) || n.startsWith('on')) { child.removeAttribute(a.name); continue; }
+        if ((n === 'href' || n === 'src') && /^\s*(javascript|data:text\/html|vbscript):/i.test(v)) {
+          child.removeAttribute(a.name);
+        }
+      }
+      if (tag === 'a') { child.setAttribute('target', '_blank'); child.setAttribute('rel', 'noopener noreferrer'); }
+      walk(child);
+    }
+  };
+  walk(root);
+  return root.innerHTML;
+}
+
+/* 迷你渲染器：只认标题/列表/代码/引用/粗斜体/链接，够看懂，不追求完整 */
+function miniMarkdown(src) {
+  const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let inCode = false, list = null, para = [];
+  const flushP = () => {
+    if (!para.length) return;
+    out.push('<p>' + inline(para.join(' ')) + '</p>');
+    para = [];
+  };
+  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  for (const ln of lines) {
+    if (/^```/.test(ln.trim())) {
+      if (inCode) { out.push('</code></pre>'); inCode = false; }
+      else { flushP(); closeList(); out.push('<pre><code>'); inCode = true; }
+      continue;
+    }
+    if (inCode) { out.push(esc(ln) + '\n'); continue; }
+    if (!ln.trim()) { flushP(); closeList(); continue; }
+    const h = /^(#{1,6})\s+(.*)$/.exec(ln);
+    if (h) { flushP(); closeList(); out.push('<h' + h[1].length + '>' + inline(h[2]) + '</h' + h[1].length + '>'); continue; }
+    if (/^\s*[-*+]\s+/.test(ln)) {
+      flushP();
+      if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
+      out.push('<li>' + inline(ln.replace(/^\s*[-*+]\s+/, '')) + '</li>');
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(ln)) {
+      flushP();
+      if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
+      out.push('<li>' + inline(ln.replace(/^\s*\d+\.\s+/, '')) + '</li>');
+      continue;
+    }
+    if (/^>\s?/.test(ln)) { flushP(); closeList(); out.push('<blockquote>' + inline(ln.replace(/^>\s?/, '')) + '</blockquote>'); continue; }
+    if (/^(-{3,}|\*{3,})$/.test(ln.trim())) { flushP(); closeList(); out.push('<hr>'); continue; }
+    para.push(ln.trim());
+  }
+  flushP(); closeList();
+  if (inCode) out.push('</code></pre>');
+  return out.join('\n');
+}
+
+class MdApp {
+  constructor(container, opts) {
+    this.el = container;
+    this.path = (opts && opts.path) || null;
+    this.el.innerHTML = `<div class="tl" style="padding:0">
+      <div class="tl-hd">
+        <div class="tl-tabs">
+          <button class="tl-tab on" data-mode="split">分栏</button>
+          <button class="tl-tab" data-mode="edit">编辑</button>
+          <button class="tl-tab" data-mode="view">预览</button>
+        </div>
+        <button class="tl-btn sm" data-a="open">打开</button>
+        <button class="tl-btn sm" data-a="save">保存</button>
+        <button class="tl-btn sm" data-a="html">导出 HTML</button>
+        <button class="tl-btn sm" data-a="md">下载 .md</button>
+        <span class="tl-note" data-f="st"></span>
+      </div>
+      <div class="tl-body" style="padding:0">
+        <div class="tl-split" data-f="split" style="padding:9px">
+          <div class="tl-pane"><textarea class="tl-in" data-f="src" spellcheck="false" placeholder="# 在这里写 Markdown&#10;&#10;左边编辑，右边实时渲染。也可以「打开」.home 里的 .md 文件。"></textarea></div>
+          <div class="tl-pane"><div class="tl-prev" data-f="out"></div></div>
+        </div>
+      </div>
+    </div>`;
+    this.src = $('[data-f="src"]', this.el);
+    this.out = $('[data-f="out"]', this.el);
+    this.split = $('[data-f="split"]', this.el);
+    this._t = null;
+    this.src.addEventListener('input', () => this.schedule());
+    this.el.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.mode) { this.setMode(b.dataset.mode); return; }
+      const a = b.dataset.a;
+      if (a === 'open') this.openFile();
+      else if (a === 'save') this.saveFile();
+      else if (a === 'html') this.exportHtml();
+      else if (a === 'md') this.downloadMd();
+    });
+    if (this.path) this.loadPath(this.path);
+    else this.setDoc('# Markdown\n\n左边写，右边看。支持标题、列表、表格、代码块、引用、图片、链接。\n\n> 渲染结果会过一遍白名单清洗：`<script>`、`onclick=`、`javascript:` 一律删掉。\n\n```js\n1 + 1\n```\n');
+  }
+  setMode(m) {
+    this.el.querySelectorAll('.tl-tab').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+    const [l, r] = this.split.children;
+    l.style.display = m === 'view' ? 'none' : '';
+    r.style.display = m === 'edit' ? 'none' : '';
+    this.split.style.gridTemplateColumns = m === 'split' ? '1fr 1fr' : '1fr';
+    this.render();
+  }
+  setDoc(text) {
+    this.src.value = text;
+    this.render();
+  }
+  schedule() {
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.render(), 180);
+  }
+  async render() {
+    const text = this.src.value;
+    const seq = (this._seq = (this._seq || 0) + 1);
+    let html;
+    try {
+      const marked = await ensureMarked();
+      marked.setOptions({ gfm: true, breaks: true });
+      html = marked.parse(text);
+    } catch (e) {
+      html = miniMarkdown(text);
+    }
+    /* 渲染是异步的（要等 marked），打字快的时候会有好几个在飞。
+     * 只让最后一个落地，否则旧内容可能盖掉新内容。 */
+    if (seq !== this._seq) return;
+    this.out.innerHTML = sanitizeHtml(html);
+    $('[data-f="st"]', this.el).textContent = text.length + ' 字符 · ' + text.split('\n').length + ' 行';
+  }
+  loadPath(p) {
+    FS.read(p).then(r => {
+      this.path = p;
+      this.setDoc(typeof r.content === 'string' ? r.content : new TextDecoder().decode(r.content));
+      if (this.onTitle) this.onTitle(baseName(p));
+    }).catch(e => toast('打开失败：' + (e && e.message || e), true));
+  }
+  async openFile() {
+    const p = await pickFileInFs({ title:'选择 Markdown 文件', filter:(n) => /\.(md|markdown|txt)$/i.test(n) });
+    if (p) this.loadPath(p);
+  }
+  async saveFile() {
+    let p = this.path;
+    if (!p) {
+      const name = await modalPrompt('保存为', 'untitled.md');
+      if (!name) return;
+      p = uniquePathIn('.home', spotEscape(name));
+    }
+    try {
+      await FS.write(p, this.src.value, { mime:'text/markdown;charset=utf-8', hint:baseName(p) });
+      this.path = p;
+      toast('已保存 ' + p);
+    } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
+  }
+  exportHtml() {
+    const body = this.out.innerHTML;
+    const html = '<!DOCTYPE html>\n<meta charset="utf-8">\n<title>' +
+      esc(baseName(this.path || 'markdown')) + '</title>\n<style>body{max-width:760px;margin:40px auto;padding:0 20px;' +
+      'font:16px/1.75 system-ui,sans-serif;color:#1b2422}pre{background:#f4f6f5;padding:12px;border-radius:8px;overflow:auto}' +
+      'code{background:#f0f3f2;padding:.1em .35em;border-radius:4px}blockquote{border-left:3px solid #9ac;margin:1em 0;' +
+      'padding:.2em 1em;color:#555}table{border-collapse:collapse}td,th{border:1px solid #ccd;padding:5px 9px}</style>\n' + body;
+    saveFileRaw(spotExportName((this.path ? baseName(this.path) : 'markdown').replace(/\.[^.]+$/, '') + '.html'),
+      html, 'text/html;charset=utf-8');
+  }
+  downloadMd() {
+    const n = (this.path ? baseName(this.path) : 'untitled.md');
+    saveFileRaw(spotExportName(n.endsWith('.md') ? n : n + '.md'), this.src.value, 'text/markdown;charset=utf-8');
+  }
+}
+
+/* ============================================================================
+ * 4. 维护中的壳子
+ *
+ * 为什么做成壳子而不是「随便糊一个」：
+ *   录音 / 定位 / 3D / 音频播放 都能用浏览器 API 硬凑出来，但凑出来的东西
+ *   要么需要用户授权、要么需要几十 MB 的运行时（three.js / wasm 解码器），
+ *   在没有设计清楚「录下来的东西存哪、离开页面怎么办」之前，先不假装能用。
+ *   壳子会把「打算怎么做」写清楚，比一个半残的按钮诚实。
+ * ==========================================================================*/
+const MAINT_DEFS = {
+  recorder: {
+    icon: '◎', title: '录音机',
+    desc: '计划：MediaRecorder + AudioContext，录完直接落进 spotfs（<code>.home</code>），可以拖出去。',
+    why: '需要麦克风权限；而且「录到一半关窗口」的收尾逻辑（Blob 落盘、权限释放）还没设计。'
+  },
+  geo: {
+    icon: '⌖', title: '定位',
+    desc: '计划：Geolocation API，显示坐标、精度、海拔，并能一键存成 <code>.home.geo.json</code>。',
+    why: '定位是敏感权限，且浏览器只在 HTTPS / localhost 下给。先把「要不要记录、记录多久」想清楚。'
+  },
+  view3d: {
+    icon: '◫', title: '3D 视图',
+    desc: '计划：WebGL + 自写的最小场景（轨道相机、网格、光照），能读 <code>.home</code> 里的 .obj / .gltf。',
+    why: '要么引 three.js（几十万行、要进许可证清单），要么自己写一套矩阵与着色器 —— 都值得单独一轮。'
+  },
+  audio: {
+    icon: '♫', title: '音频播放',
+    desc: '计划：读 spotfs 里的音频文件，用 <code>&lt;audio&gt;</code> + WebAudio 做波形与频谱。',
+    why: '解码格式受浏览器限制（mp3/aac 可以，flac/ape 不行），得先把「能播什么」的边界测清楚。'
+  }
+};
+
+class MaintApp {
+  constructor(container, key) {
+    const d = MAINT_DEFS[key] || { icon:'◌', title:'施工中', desc:'', why:'' };
+    this.el = container;
+    this.el.innerHTML = `<div class="tl"><div class="tl-maint">
+      <div>
+        <div class="ic">${d.icon}</div>
+        <span class="badge">维护中</span>
+        <h3>${esc(d.title)} · 暂不可用</h3>
+        <p>${d.desc}<br><br><span style="opacity:.75">为什么先不做：${d.why}</span></p>
+        <p style="margin-top:14px;opacity:.6">这个窗口留着占位 —— 等做的时候，位置就是这里。</p>
+      </div>
+    </div></div>`;
+  }
+}
+
+/* ============================================================================
+ * HTerMinaL · tools: 数据套件（编码 / 时间戳 / 哈希 / 随机）+ 链接即状态
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ * 由 AI 智能体生成并维护。
+ *
+ * 这里的算法全部自己写：Base32、MD5、进制转换、大整数。
+ * 理由不是「不想用库」，是这些东西都只有几十行，而依赖一旦引进来，
+ * 许可证、体积、离线可用性三件事都要跟着重新算一遍。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 编解码原语 */
+const B32_ALPHA = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function b64Of(bytes) {
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  return btoa(s);
+}
+function b64UrlOf(bytes) {
+  return b64Of(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function bytesOfB64(s) {
+  let t = String(s || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!t) return new Uint8Array(0);
+  const pad = t.length % 4;
+  if (pad === 2) t += '==';
+  else if (pad === 3) t += '=';
+  else if (pad === 1) throw new Error('Base64 长度不对（多了一个字符？）');
+  const bin = atob(t);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function b32Of(bytes) {
+  let out = '', bits = 0, val = 0;
+  for (const b of bytes) {
+    val = (val << 8) | b; bits += 8;
+    while (bits >= 5) { out += B32_ALPHA[(val >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32_ALPHA[(val << (5 - bits)) & 31];
+  while (out.length % 8) out += '=';
+  return out;
+}
+function bytesOfB32(s) {
+  let t = String(s || '').toUpperCase().replace(/[\s=]/g, '');
+  let bits = 0, val = 0;
+  const out = [];
+  for (const ch of t) {
+    const i = B32_ALPHA.indexOf(ch);
+    if (i < 0) throw new Error('Base32 里有非法字符：' + ch);
+    val = (val << 5) | i; bits += 5;
+    if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return new Uint8Array(out);
+}
+function hexOf(bytes, sep) {
+  return [...bytes].map(b => b.toString(16).padStart(2, '0')).join(sep || '');
+}
+function bytesOfHex(s) {
+  const t = String(s || '').replace(/0x/gi, '').replace(/[^0-9a-fA-F]/g, '');
+  if (t.length % 2) throw new Error('十六进制要去掉空格后长度为偶数');
+  const out = new Uint8Array(t.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(t.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+function binOf(bytes) {
+  return [...bytes].map(b => b.toString(2).padStart(8, '0')).join(' ');
+}
+function bytesOfBin(s) {
+  const t = String(s || '').replace(/[^01]/g, '');
+  if (!t.length) return new Uint8Array(0);
+  if (t.length % 8) throw new Error('二进制要去掉空格后长度为 8 的倍数');
+  const out = new Uint8Array(t.length / 8);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(t.slice(i * 8, i * 8 + 8), 2);
+  return out;
+}
+function bigOfBytes(bytes) {
+  let v = 0n;
+  for (const b of bytes) v = (v << 8n) | BigInt(b);
+  return v;
+}
+function bytesOfBig(v) {
+  if (v === 0n) return new Uint8Array([0]);
+  const out = [];
+  let x = v;
+  while (x > 0n) { out.unshift(Number(x & 255n)); x >>= 8n; }
+  return new Uint8Array(out);
+}
+function utf16Of(str, be) {
+  const out = new Uint8Array(str.length * 2);
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    out[i * 2 + (be ? 0 : 1)] = c >> 8;
+    out[i * 2 + (be ? 1 : 0)] = c & 255;
+  }
+  return out;
+}
+function textOfUtf16(bytes, be) {
+  let s = '';
+  const n = bytes.length - (bytes.length % 2);
+  for (let i = 0; i < n; i += 2) {
+    s += String.fromCharCode(be ? (bytes[i] << 8) | bytes[i + 1] : (bytes[i + 1] << 8) | bytes[i]);
+  }
+  return s;
+}
+
+/* ---------------------------------------------------------------- 哈希
+ * SHA 家族用 Web Crypto；MD5 它不支持（也不打算支持），所以自己写一遍。
+ * 为什么还要 MD5：校验下载文件时，很多上游只给 MD5。它不是「安全哈希」，
+ * 界面上会明确标出来，不让它和 SHA-256 混为一谈。
+ */
+function rotl32(x, c) { return ((x << c) | (x >>> (32 - c))) >>> 0; }
+const MD5_S = [7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+               5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+               4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+               6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21];
+const MD5_K = (() => {
+  const k = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296);
+  return k;
+})();
+function md5Of(bytes) {
+  const msg = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const len = msg.length;
+  const total = (((len + 8) >> 6) + 1) * 64;
+  const buf = new Uint8Array(total);
+  buf.set(msg);
+  buf[len] = 0x80;
+  const dv = new DataView(buf.buffer);
+  const bitLen = len * 8;
+  dv.setUint32(total - 8, bitLen >>> 0, true);
+  dv.setUint32(total - 4, Math.floor(bitLen / 4294967296), true);
+
+  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  const M = new Uint32Array(16);
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i++) M[i] = dv.getUint32(off + i * 4, true);
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16) { F = (B & C) | (~B & D); g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+      else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+      F = (F + A + MD5_K[i] + M[g]) >>> 0;
+      A = D; D = C; C = B;
+      B = (B + rotl32(F, MD5_S[i])) >>> 0;
+    }
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+  }
+  const out = new Uint8Array(16);
+  const odv = new DataView(out.buffer);
+  odv.setUint32(0, a0, true); odv.setUint32(4, b0, true);
+  odv.setUint32(8, c0, true); odv.setUint32(12, d0, true);
+  return out;
+}
+/** alg: 'MD5' | 'SHA-1' | 'SHA-256' | 'SHA-384' | 'SHA-512' */
+async function hashBytes(alg, bytes) {
+  if (String(alg).toUpperCase() === 'MD5') return md5Of(bytes);
+  if (!(window.crypto && crypto.subtle)) throw new Error('这个环境没有 crypto.subtle（需要 HTTPS 或 localhost）');
+  const buf = await crypto.subtle.digest(alg, bytes);
+  return new Uint8Array(buf);
+}
+const HASH_ALGS = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512', 'MD5'];
+
+/* ---------------------------------------------------------------- 数据套件 */
+const CODEC_SOURCES = [
+  ['text', '文本（UTF-8）'],
+  ['b64', 'Base64'],
+  ['b64url', 'Base64URL'],
+  ['b32', 'Base32'],
+  ['hex', '十六进制'],
+  ['bin', '二进制'],
+  ['dec', '十进制（大整数）'],
+  ['url', 'URL 编码'],
+  ['html', 'HTML 实体']
+];
+
+class DataApp {
+  constructor(container) {
+    this.el = container;
+    this.el.innerHTML = `<div class="tl">
+      <div class="tl-hd">
+        <div class="tl-tabs">
+          <button class="tl-tab on" data-t="codec">编码转换</button>
+          <button class="tl-tab" data-t="time">时间戳</button>
+          <button class="tl-tab" data-t="hash">哈希</button>
+          <button class="tl-tab" data-t="rand">随机</button>
+        </div>
+        <span class="tl-note">也有 CLI：<b>b64 / b32 / hex / bin / dec / url / hash / rand / ts</b></span>
+      </div>
+      <div class="tl-body">
+        <section data-p="codec"></section>
+        <section data-p="time" hidden></section>
+        <section data-p="hash" hidden></section>
+        <section data-p="rand" hidden></section>
+      </div>
+    </div>`;
+    this.panes = {};
+    for (const s of this.el.querySelectorAll('[data-p]')) this.panes[s.dataset.p] = s;
+    this.el.querySelector('.tl-hd').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-t]');
+      if (!b) return;
+      this.show(b.dataset.t);
+    });
+    this.buildCodec();
+    this.buildTime();
+    this.buildHash();
+    this.buildRand();
+  }
+  show(t) {
+    this.el.querySelectorAll('.tl-tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    for (const [k, s] of Object.entries(this.panes)) s.hidden = k !== t;
+    if (t === 'time') this.refreshNow();
+  }
+
+  /* ------------------------------------------------ 编码转换 */
+  buildCodec() {
+    const p = this.panes.codec;
+    p.innerHTML = `<div class="tl-card">
+        <div class="tl-row"><label>来源</label>
+          <select class="tl-in" data-f="src">${CODEC_SOURCES.map(([v, n]) => `<option value="${v}">${n}</option>`).join('')}</select>
+          <button class="tl-btn" data-a="swap" title="把结果的第一项放到输入框">↺ 结果回填</button>
+          <span style="flex:1 1 auto"></span>
+          <span class="tl-note" data-f="stat"></span>
+        </div>
+        <textarea class="tl-in" data-f="in" rows="7" spellcheck="false" placeholder="在这里输入或粘贴…">你好，HTerMinaL</textarea>
+      </div>
+      <div class="tl-card"><h4>各种表示（点右侧复制）</h4><div data-f="out"></div></div>
+      <div class="tl-note">说明：文本一律按 UTF-8 编成字节，再从字节算出其它表示。
+        「十进制」把整串字节当成一个大整数（不是逐字节转数字），所以可以用来做超长数字的进制换算。
+        解码失败会直接说哪一步错了，不会给你一串乱码。</div>`;
+    const run = () => this.codecRun();
+    p.querySelector('[data-f="in"]').addEventListener('input', run);
+    p.querySelector('[data-f="src"]').addEventListener('change', run);
+    p.querySelector('[data-a="swap"]').onclick = () => {
+      const first = p.querySelector('[data-f="out"] code');
+      if (!first) return;
+      p.querySelector('[data-f="in"]').value = first.textContent;
+      p.querySelector('[data-f="src"]').value = first.dataset.fmt || 'text';
+      this.codecRun();
+    };
+    this.codecRun();
+  }
+  codecRun() {
+    const p = this.panes.codec;
+    const src = p.querySelector('[data-f="src"]').value;
+    const raw = p.querySelector('[data-f="in"]').value;
+    const out = p.querySelector('[data-f="out"]');
+    const stat = p.querySelector('[data-f="stat"]');
+    let bytes, text;
+    try {
+      if (src === 'text') { text = raw; bytes = new TextEncoder().encode(raw); }
+      else if (src === 'b64') bytes = bytesOfB64(raw);
+      else if (src === 'b64url') bytes = bytesOfB64(raw);
+      else if (src === 'b32') bytes = bytesOfB32(raw);
+      else if (src === 'hex') bytes = bytesOfHex(raw);
+      else if (src === 'bin') bytes = bytesOfBin(raw);
+      else if (src === 'dec') bytes = bytesOfBig(BigInt(raw.replace(/[\s,_]/g, '') || '0'));
+      else if (src === 'url') bytes = new TextEncoder().encode(decodeURIComponent(raw));
+      else if (src === 'html') {
+        const d = document.createElement('textarea');
+        d.innerHTML = raw;
+        bytes = new TextEncoder().encode(d.value);
+      }
+      if (text === undefined) {
+        try { text = new TextDecoder('utf-8', { fatal:true }).decode(bytes); }
+        catch (e) { text = new TextDecoder('utf-8').decode(bytes); }
+      }
+    } catch (e) {
+      out.innerHTML = `<div class="tl-note" style="color:var(--red)">解析失败：${esc(e.message || e)}</div>`;
+      stat.textContent = '';
+      return;
+    }
+    const rows = [
+      ['文本', 'text', text],
+      ['UTF-16LE', 'u16', textOfUtf16(utf16Of(text, false), false)],
+      ['十六进制', 'hex', hexOf(bytes, ' ')],
+      ['Base64', 'b64', b64Of(bytes)],
+      ['Base64URL', 'b64url', b64UrlOf(bytes)],
+      ['Base32', 'b32', b32Of(bytes)],
+      ['二进制', 'bin', binOf(bytes)],
+      ['十进制', 'dec', bigOfBytes(bytes).toString()],
+      ['URL 编码', 'url', encodeURIComponent(text)],
+      ['HTML 实体', 'html', [...text].map(c => {
+        const cp = c.codePointAt(0);
+        return cp > 126 || cp < 32 ? '&#' + cp + ';' : c;
+      }).join('').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')]
+    ];
+    out.innerHTML = rows.map(([label, fmt, val]) =>
+      `<div class="tl-kv"><b>${label}</b>
+        <code data-fmt="${fmt}">${esc(String(val).slice(0, 4000))}</code>
+        <button class="tl-btn sm" data-cp="${fmt}">复制</button></div>`).join('');
+    out.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = () => {
+        const row = b.parentElement.querySelector('code');
+        ToolKit.copy(row.textContent);
+      };
+    });
+    stat.textContent = bytes.length + ' 字节 · ' + [...text].length + ' 字符';
+  }
+
+  /* ------------------------------------------------ 时间戳 */
+  buildTime() {
+    const p = this.panes.time;
+    const zones = ['Asia/Shanghai', 'UTC', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London',
+      'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'];
+    p.innerHTML = `<div class="tl-card"><h4>现在</h4><div data-f="now"></div></div>
+      <div class="tl-card"><h4>换算</h4>
+        <div class="tl-row"><label>输入</label>
+          <input class="tl-in" data-f="ts" style="flex:1 1 auto" spellcheck="false"
+            placeholder="1700000000 / 1700000000000 / 2024-01-01 12:00 / now">
+          <button class="tl-btn primary" data-a="conv">换算</button></div>
+        <div class="tl-row"><label>时区</label>
+          <input class="tl-in" data-f="tz" list="tzList" value="Asia/Shanghai" style="flex:1 1 auto">
+          <datalist id="tzList"></datalist>
+          <span class="tl-note">IANA 名称，如 Europe/Berlin</span></div>
+        <div data-f="res"></div>
+      </div>
+      <div class="tl-note">
+        <b>自动识别</b>：纯数字 10 位当秒、13 位当毫秒；带 <code>-</code> 或 <code>/</code> 当日期字符串；
+        写 <code>now</code> 取当前时间。<br>
+        时区换算用 <code>Intl</code>，不是自己算偏移 —— 夏令时这种东西自己算一定会错。
+      </div>`;
+    const dl = p.querySelector('#tzList');
+    let list = zones;
+    try {
+      if (Intl.supportedValuesOf) list = Intl.supportedValuesOf('timeZone');
+    } catch (e) {}
+    dl.innerHTML = list.map(z => `<option value="${esc(z)}">`).join('');
+    p.querySelector('[data-a="conv"]').onclick = () => this.timeConv();
+    p.querySelector('[data-f="ts"]').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.timeConv();
+    });
+    this.timeConv();
+  }
+  refreshNow() {
+    const el = this.panes.time && this.panes.time.querySelector('[data-f="now"]');
+    if (!el) return;
+    const d = new Date();
+    el.innerHTML = `<div class="tl-kv"><b>秒</b><code>${Math.floor(d.getTime() / 1000)}</code>
+        <button class="tl-btn sm" data-cp>复制</button></div>
+      <div class="tl-kv"><b>毫秒</b><code>${d.getTime()}</code><button class="tl-btn sm" data-cp>复制</button></div>
+      <div class="tl-kv"><b>ISO</b><code>${d.toISOString()}</code><button class="tl-btn sm" data-cp>复制</button></div>
+      <div class="tl-kv"><b>本地</b><code>${esc(d.toString())}</code><button class="tl-btn sm" data-cp>复制</button></div>`;
+    el.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = () => ToolKit.copy(b.parentElement.querySelector('code').textContent);
+    });
+  }
+  timeConv() {
+    const p = this.panes.time;
+    const raw = p.querySelector('[data-f="ts"]').value.trim();
+    const tz = p.querySelector('[data-f="tz"]').value.trim() || 'Asia/Shanghai';
+    const res = p.querySelector('[data-f="res"]');
+    let d = null;
+    if (!raw || /^now$/i.test(raw)) d = new Date();
+    else if (/^\d{1,11}$/.test(raw)) d = new Date(Number(raw) * 1000);
+    else if (/^\d{12,16}$/.test(raw)) d = new Date(Number(raw));
+    else {
+      const s = raw.replace(/\//g, '-').replace(' ', 'T');
+      d = new Date(s);
+      if (isNaN(d.getTime())) d = new Date(raw);
+    }
+    if (!d || isNaN(d.getTime())) {
+      res.innerHTML = '<div class="tl-note" style="color:var(--red)">看不懂这个时间：' + esc(raw) + '</div>';
+      return;
+    }
+    const fmt = (zone) => {
+      try {
+        return new Intl.DateTimeFormat('zh-CN', {
+          timeZone: zone, year:'numeric', month:'2-digit', day:'2-digit',
+          hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, weekday:'short'
+        }).format(d);
+      } catch (e) { return '时区名不对：' + zone; }
+    };
+    const diff = Math.round((d.getTime() - Date.now()) / 1000);
+    const rel = (() => {
+      const a = Math.abs(diff);
+      const u = [[31536000, '年'], [2592000, '个月'], [86400, '天'], [3600, '小时'], [60, '分钟'], [1, '秒']];
+      for (const [n, name] of u) if (a >= n) return (diff < 0 ? '' : '还有 ') + Math.floor(a / n) + ' ' + name + (diff < 0 ? '前' : '');
+      return '就是现在';
+    })();
+    const rows = [
+      ['秒', String(Math.floor(d.getTime() / 1000))],
+      ['毫秒', String(d.getTime())],
+      ['ISO 8601', d.toISOString()],
+      ['UTC', fmt('UTC')],
+      [tz, fmt(tz)],
+      ['相对', rel]
+    ];
+    res.innerHTML = rows.map(([k, v]) =>
+      `<div class="tl-kv"><b>${esc(k)}</b><code>${esc(v)}</code>
+        <button class="tl-btn sm" data-cp>复制</button></div>`).join('');
+    res.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = () => ToolKit.copy(b.parentElement.querySelector('code').textContent);
+    });
+  }
+
+  /* ------------------------------------------------ 哈希 */
+  buildHash() {
+    const p = this.panes.hash;
+    p.innerHTML = `<div class="tl-card">
+        <textarea class="tl-in" data-f="in" rows="6" spellcheck="false" placeholder="要计算哈希的文本…"></textarea>
+        <div class="tl-row" style="margin:8px 0 0">
+          <button class="tl-btn primary" data-a="calc">计算</button>
+          <span class="tl-note">SHA 走 Web Crypto；MD5 是本文件里自己写的，仅用于校验老文件</span>
+        </div>
+      </div>
+      <div class="tl-card"><h4>结果</h4><div data-f="out"><div class="tl-note">还没有计算。</div></div></div>
+      <div class="tl-card"><h4>校验</h4>
+        <div class="tl-row"><label>期望值</label>
+          <input class="tl-in" data-f="expect" style="flex:1 1 auto" spellcheck="false" placeholder="粘贴上游给的哈希">
+          <button class="tl-btn" data-a="verify">比对</button></div>
+        <div data-f="verdict"></div>
+      </div>
+      <div class="tl-card"><h4>文件</h4>
+        <div class="tl-row"><input type="file" data-f="file" style="flex:1 1 auto;color:var(--fg-dim)">
+          <button class="tl-btn" data-a="filehash">算文件哈希</button></div>
+        <div class="tl-note">大文件只读一遍：先读成 ArrayBuffer，再依次算 —— 不会把文件留在内存之外的地方。</div>
+      </div>`;
+    p.querySelector('[data-a="calc"]').onclick = () => this.hashRun();
+    p.querySelector('[data-a="verify"]').onclick = async () => {
+      const want = p.querySelector('[data-f="expect"]').value.trim().toLowerCase();
+      const box = p.querySelector('[data-f="verdict"]');
+      if (!want) { box.innerHTML = ''; return; }
+      await this.hashRun();
+      const got = [...p.querySelectorAll('[data-f="out"] code')].map(c => c.textContent.toLowerCase());
+      const hit = got.find(h => h === want);
+      box.innerHTML = hit
+        ? '<div class="tl-note" style="color:var(--green)">✓ 与某个算法的结果一致</div>'
+        : '<div class="tl-note" style="color:var(--red)">✗ 没有任何一个算法的结果与它相同</div>';
+    };
+    p.querySelector('[data-a="filehash"]').onclick = async () => {
+      const f = p.querySelector('[data-f="file"]').files[0];
+      if (!f) { toast('先选一个文件', true); return; }
+      const buf = new Uint8Array(await f.arrayBuffer());
+      await this.hashRun(buf, f.name);
+    };
+  }
+  async hashRun(bytes, label) {
+    const p = this.panes.hash;
+    const out = p.querySelector('[data-f="out"]');
+    const data = bytes || new TextEncoder().encode(p.querySelector('[data-f="in"]').value);
+    out.innerHTML = '<div class="tl-note">计算中…</div>';
+    const rows = [];
+    for (const alg of HASH_ALGS) {
+      try {
+        const h = await hashBytes(alg, data);
+        rows.push([alg, hexOf(h)]);
+      } catch (e) {
+        rows.push([alg, '不可用：' + (e.message || e)]);
+      }
+    }
+    out.innerHTML = (label ? `<div class="tl-note" style="margin-bottom:6px">文件：${esc(label)} · ${ToolKit.bytes(data.length)}</div>` : '') +
+      rows.map(([alg, v]) =>
+        `<div class="tl-kv"><b>${alg}</b><code>${esc(v)}</code>
+          <button class="tl-btn sm" data-cp>复制</button></div>`).join('') +
+      `<div class="tl-note" style="margin-top:6px">${alg_note()}</div>`;
+    out.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = () => ToolKit.copy(b.parentElement.querySelector('code').textContent);
+    });
+    function alg_note() {
+      return '<b>SHA-1 与 MD5</b> 只适合校验「文件有没有损坏」，不能用来证明「没被人改过」。';
+    }
+  }
+
+  /* ------------------------------------------------ 随机 */
+  buildRand() {
+    const p = this.panes.rand;
+    p.innerHTML = `<div class="tl-card">
+        <div class="tl-row"><label>类型</label>
+          <select class="tl-in" data-f="kind">
+            <option value="str">随机字符串</option>
+            <option value="hex">随机十六进制</option>
+            <option value="bytes">随机字节（Base64）</option>
+            <option value="int">随机整数</option>
+            <option value="uuid">UUID v4</option>
+            <option value="pwd">随机密码（分组）</option>
+          </select>
+          <label style="flex:0 0 auto">数量</label>
+          <input class="tl-in" type="number" data-f="count" value="1" min="1" max="200" style="width:72px">
+        </div>
+        <div class="tl-row" data-f="lenRow"><label>长度</label>
+          <input class="tl-in" type="number" data-f="len" value="32" min="1" max="4096" style="width:88px">
+          <span class="tl-note">字符数（bytes 类型是字节数）</span></div>
+        <div class="tl-row" data-f="rangeRow" hidden><label>范围</label>
+          <input class="tl-in" type="text" data-f="min" value="1" style="width:96px">
+          <span class="tl-note">到</span>
+          <input class="tl-in" type="text" data-f="max" value="100" style="width:96px">
+          <span class="tl-note">闭区间</span></div>
+        <div class="tl-row" data-f="setRow"><label>字符集</label>
+          <label class="tl-note"><input type="checkbox" data-f="up" checked> 大写</label>
+          <label class="tl-note"><input type="checkbox" data-f="low" checked> 小写</label>
+          <label class="tl-note"><input type="checkbox" data-f="num" checked> 数字</label>
+          <label class="tl-note"><input type="checkbox" data-f="sym"> 符号</label>
+          <label class="tl-note"><input type="checkbox" data-f="nodup"> 去易混（0O1lI）</label>
+        </div>
+        <div class="tl-row" style="margin:8px 0 0"><button class="tl-btn primary" data-a="gen">生成</button>
+          <span class="tl-note" data-f="ent"></span></div>
+      </div>
+      <div class="tl-card"><h4>结果</h4>
+        <textarea class="tl-in" data-f="out" rows="6" readonly style="font-size:12px"></textarea>
+        <div class="tl-row" style="margin:6px 0 0"><button class="tl-btn" data-a="cp">复制</button></div>
+      </div>
+      <div class="tl-note">
+        用 <code>crypto.getRandomValues</code>（操作系统 CSPRNG），不是 <code>Math.random</code>。
+        右边的「熵」按字符集大小和长度算，是理论下限：真随机源有问题时它也看不出来，
+        但它能告诉你「这串东西够不够长」。
+      </div>`;
+    const kind = p.querySelector('[data-f="kind"]');
+    const sync = () => {
+      const k = kind.value;
+      p.querySelector('[data-f="lenRow"]').hidden = k === 'uuid' || k === 'int';
+      p.querySelector('[data-f="rangeRow"]').hidden = k !== 'int';
+      p.querySelector('[data-f="setRow"]').hidden = k !== 'str' && k !== 'pwd';
+    };
+    kind.addEventListener('change', sync);
+    sync();
+    p.querySelector('[data-a="gen"]').onclick = () => this.genRand();
+    p.querySelector('[data-a="cp"]').onclick = () => ToolKit.copy(p.querySelector('[data-f="out"]').value);
+    this.genRand();
+  }
+  _charset(p) {
+    let s = '';
+    if (p.querySelector('[data-f="up"]').checked) s += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    if (p.querySelector('[data-f="low"]').checked) s += 'abcdefghijklmnopqrstuvwxyz';
+    if (p.querySelector('[data-f="num"]').checked) s += '0123456789';
+    if (p.querySelector('[data-f="sym"]').checked) s += '!@#$%^&*()-_=+[]{};:,.?/~';
+    if (p.querySelector('[data-f="nodup"]').checked) s = s.replace(/[0O1lI|`'"]/g, '');
+    return s;
+  }
+  _randInt(max) {
+    /* 拒绝采样，避免取模偏差 */
+    if (max <= 0) return 0;
+    const lim = Math.floor(4294967296 / max) * max;
+    const buf = new Uint32Array(1);
+    for (;;) {
+      crypto.getRandomValues(buf);
+      if (buf[0] < lim) return buf[0] % max;
+    }
+  }
+  genRand() {
+    const p = this.panes.rand;
+    const k = p.querySelector('[data-f="kind"]').value;
+    const count = Math.max(1, Math.min(200, Number(p.querySelector('[data-f="count"]').value) || 1));
+    const len = Math.max(1, Math.min(4096, Number(p.querySelector('[data-f="len"]').value) || 32));
+    const out = [];
+    let ent = 0;
+    if (k === 'int') {
+      const a = BigInt(String(p.querySelector('[data-f="min"]').value).trim() || '0');
+      const b = BigInt(String(p.querySelector('[data-f="max"]').value).trim() || '100');
+      const lo = a < b ? a : b, hi = a < b ? b : a;
+      const span = hi - lo + 1n;
+      for (let i = 0; i < count; i++) {
+        /* 跨度可能超过 2^32：拼两个 32 位再取模，仍走拒绝采样 */
+        if (span <= 4294967296n) {
+          out.push(String(lo + BigInt(this._randInt(Number(span)))));
+        } else {
+          const buf = new Uint32Array(2);
+          crypto.getRandomValues(buf);
+          const v = (BigInt(buf[0]) << 32n) | BigInt(buf[1]);
+          out.push(String(lo + (v % span)));
+        }
+      }
+      ent = Math.log2(Number(span));
+    } else if (k === 'uuid') {
+      for (let i = 0; i < count; i++) {
+        const b = new Uint8Array(16);
+        crypto.getRandomValues(b);
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        const h = hexOf(b);
+        out.push(h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20));
+      }
+      ent = 122;
+    } else if (k === 'bytes') {
+      for (let i = 0; i < count; i++) {
+        const b = new Uint8Array(len);
+        crypto.getRandomValues(b);
+        out.push(b64UrlOf(b));
+      }
+      ent = len * 8;
+    } else if (k === 'hex') {
+      for (let i = 0; i < count; i++) {
+        const b = new Uint8Array(Math.ceil(len / 2));
+        crypto.getRandomValues(b);
+        out.push(hexOf(b).slice(0, len));
+      }
+      ent = len * 4;
+    } else {
+      const set = this._charset(p);
+      if (!set) { toast('字符集是空的', true); return; }
+      const groups = k === 'pwd' ? 4 : 1;
+      const per = k === 'pwd' ? Math.max(1, Math.floor(len / groups)) : len;
+      for (let i = 0; i < count; i++) {
+        const chunks = [];
+        for (let g = 0; g < groups; g++) {
+          let s = '';
+          for (let j = 0; j < per; j++) s += set[this._randInt(set.length)];
+          chunks.push(s);
+        }
+        out.push(chunks.join('-'));
+      }
+      ent = len * Math.log2(set.length);
+    }
+    p.querySelector('[data-f="out"]').value = out.join('\n');
+    p.querySelector('[data-f="ent"]').textContent = '约 ' + Math.round(ent) + ' bit 熵';
+  }
+}
+
+/* ============================================================================
+ * 链接即状态（URLHash）
+ *
+ * 把一段文本/JS 压进 URL 的 # 片段：复制链接发给别人，对方打开就能看到同样的内容。
+ * 用 # 而不是 ? 是刻意的：# 不会发给服务器，内容只存在于浏览器里。
+ *
+ * 关于「打开即运行」：默认关闭。带 run=1 的链接打开时会弹一个确认框，
+ * 把要执行的代码原样显示出来，用户点「运行」才执行 ——
+ * 自动执行别人发来的链接，等于把 XSS 做成了功能。
+ * ==========================================================================*/
+async function deflateText(str) {
+  if (!('CompressionStream' in window)) return null;
+  const cs = new CompressionStream('deflate-raw');
+  const writer = cs.writable.getWriter();
+  writer.write(new TextEncoder().encode(str));
+  writer.close();
+  const buf = await new Response(cs.readable).arrayBuffer();
+  return new Uint8Array(buf);
+}
+async function inflateText(bytes) {
+  const ds = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const buf = await new Response(ds.readable).arrayBuffer();
+  return new TextDecoder().decode(new Uint8Array(buf));
+}
+
+const UrlHash = {
+  async encode(text, mode) {
+    const bytes = new TextEncoder().encode(String(text));
+    let payload = b64UrlOf(bytes);
+    let packed = false;
+    try {
+      const z = await deflateText(String(text));
+      if (z && z.length < bytes.length - 8) { payload = b64UrlOf(z); packed = true; }
+    } catch (e) {}
+    return { payload, packed };
+  },
+  async decode(payload) {
+    const bytes = bytesOfB64(payload);
+    try { return await inflateText(bytes); }
+    catch (e) { return new TextDecoder().decode(bytes); }
+  },
+  link(text, mode) {
+    return this.encode(text, mode).then(({ payload, packed }) => {
+      const base = location.origin === 'null' || location.protocol === 'file:'
+        ? location.href.split('#')[0]
+        : location.origin + location.pathname;
+      return base + '#ht=' + payload + (packed ? '&z=1' : '') + (mode === 'js' ? '&run=1' : '');
+    });
+  },
+  parse(hash) {
+    const h = String(hash == null ? location.hash : hash).replace(/^#/, '');
+    if (!h) return null;
+    const p = new URLSearchParams(h);
+    const payload = p.get('ht');
+    if (!payload) return null;
+    return { payload, run: p.get('run') === '1', packed: p.get('z') === '1' };
+  }
+};
+
+class UrlHashApp {
+  constructor(container) {
+    this.el = container;
+    this.el.innerHTML = `<div class="tl">
+      <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">链接即状态</b>
+        <span style="flex:1 1 auto"></span>
+        <span class="tl-note" data-f="len"></span></div>
+      <div class="tl-body">
+        <div class="tl-card">
+          <div class="tl-row"><label>类型</label>
+            <select class="tl-in" data-f="mode">
+              <option value="text">文本</option>
+              <option value="js">JavaScript</option>
+            </select>
+            <label class="tl-note"><input type="checkbox" data-f="run"> 打开链接时提示运行</label>
+            <span style="flex:1 1 auto"></span>
+            <button class="tl-btn primary" data-a="mk">生成链接</button></div>
+          <textarea class="tl-in" data-f="src" rows="7" spellcheck="false" placeholder="写点什么，或者一段 JS…">console.log('hello from a URL')</textarea>
+        </div>
+        <div class="tl-card"><h4>链接</h4>
+          <div class="uh-link" data-f="link">—</div>
+          <div class="tl-row" style="margin:6px 0 0">
+            <button class="tl-btn" data-a="cp">复制链接</button>
+            <button class="tl-btn" data-a="open">在新标签打开</button>
+            <span class="tl-note" data-f="info"></span>
+          </div>
+        </div>
+        <div class="tl-card"><h4>解析别人的链接</h4>
+          <div class="tl-row"><input class="tl-in" data-f="in" style="flex:1 1 auto" placeholder="粘贴一个带 #ht= 的链接">
+            <button class="tl-btn" data-a="parse">解析</button></div>
+          <div class="tl-note" data-f="parsed"></div>
+        </div>
+        <div class="tl-note">
+          内容放在 <code>#</code> 后面：<b>不会发给服务器</b>，也不会进访问日志。
+          大于几十字节会自动用 <code>deflate-raw</code> 压一次（浏览器自带，不需要库）。<br>
+          带 <code>run=1</code> 的链接打开时会先弹确认框、把代码原样显示出来，点「运行」才执行 ——
+          自动执行别人发来的链接，等于把 XSS 做成功能。
+        </div>
+      </div>
+    </div>`;
+    this.el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b) return;
+      const a = b.dataset.a;
+      if (a === 'mk') this.make();
+      else if (a === 'cp') ToolKit.copy(this.linkText || '');
+      else if (a === 'open') { if (this.linkText) window.open(this.linkText, '_blank', 'noopener'); }
+      else if (a === 'parse') this.parseIn();
+    });
+    this.loadFromHash();
+  }
+  async make() {
+    const p = this.el;
+    const src = p.querySelector('[data-f="src"]').value;
+    const mode = p.querySelector('[data-f="mode"]').value;
+    const run = p.querySelector('[data-f="run"]').checked;
+    const link = await UrlHash.link(src, mode === 'js' && run ? 'js' : 'text');
+    this.linkText = link;
+    p.querySelector('[data-f="link"]').textContent = link;
+    p.querySelector('[data-f="len"]').textContent = link.length + ' 字符';
+    p.querySelector('[data-f="info"]').textContent = link.length > 2000
+      ? '（超过 2000 字符，部分聊天软件会自动截断）' : '';
+  }
+  async parseIn() {
+    const raw = this.el.querySelector('[data-f="in"]').value.trim();
+    const meta = UrlHash.parse(raw.includes('#') ? raw.slice(raw.indexOf('#')) : raw);
+    if (!meta) { this.el.querySelector('[data-f="parsed"]').textContent = '这个链接里没有 #ht= 内容。'; return; }
+    try {
+      const text = await UrlHash.decode(meta.payload);
+      this.el.querySelector('[data-f="parsed"]').innerHTML =
+        `<div style="margin:4px 0 6px">解出 ${text.length} 个字符${meta.run ? ' · <b style="color:var(--amber)">请求运行</b>' : ''}</div>
+         <textarea class="tl-in" rows="5" readonly>${esc(text)}</textarea>`;
+      this.el.querySelector('[data-f="src"]').value = text;
+    } catch (e) {
+      this.el.querySelector('[data-f="parsed"]').textContent = '解不开：' + (e.message || e);
+    }
+  }
+  async loadFromHash() {
+    const meta = UrlHash.parse();
+    if (!meta) return;
+    try {
+      const text = await UrlHash.decode(meta.payload);
+      this.el.querySelector('[data-f="src"]').value = text;
+      if (meta.run) {
+        this.el.querySelector('[data-f="mode"]').value = 'js';
+        setTimeout(() => {
+          modal({
+            title: '这个链接想运行一段脚本',
+            body: `<div class="tl-note" style="margin-bottom:8px">链接里带 <code>run=1</code>。
+              下面就是它要执行的全部代码 —— 只信任你自己写的，或者你看得懂的。</div>
+              <pre style="max-height:240px;overflow:auto;background:var(--bg-terminal);border:1px solid var(--line);
+                border-radius:7px;padding:9px;font-size:11px;line-height:1.6;white-space:pre-wrap">${esc(text.slice(0, 4000))}</pre>`,
+            buttons: [
+              { label:'不运行', value:false },
+              { label:'运行', primary:true, value:true }
+            ]
+          }).then((ok) => {
+            if (ok) this.runCode(text);
+          });
+        }, 200);
+      }
+    } catch (e) {
+      toast('链接内容解不开：' + (e && e.message || e), true);
+    }
+  }
+  runCode(code) {
+    /* 在终端里跑，而不是本页 eval：这样输出落在用户熟悉的地方，也和 JSHeL 的语义一致 */
+    try {
+      WindowManager.open({ type:'shell', code:String(code) });
+      toast('已在一个新终端里执行');
+    } catch (e) { toast('执行失败：' + (e.message || e), true); }
+  }
+}
+
+/* ============================================================================
+ * HTerMinaL · tools: 调色盘
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ * 由 AI 智能体生成并维护。
+ *
+ * 设计目标只有一个：**界面设计时不用切出去**。
+ * 所以它必须同时给出 HEX/RGBA、CMYK、HSV、HSL、YUV、Lab 六种表示，
+ * 并且任何一种改动都立刻同步到其它五种 —— 单向转换的取色器，用起来像在猜。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 颜色数学
+ * 全部按 sRGB（gamma 编码值）工作；只有算 Lab 时才转线性光。
+ * 参考：IEC 61966-2-1（sRGB）、ITU-R BT.601（YUV）、CIE 15:2004（Lab, D65）。 */
+const ColorMath = {
+  clamp(n, a, b) { return Math.min(b, Math.max(a, n)); },
+  hexToRgb(hex) {
+    let s = String(hex || '').trim().replace(/^#/, '');
+    if (/^[0-9a-f]{3}$/i.test(s)) s = s.split('').map(c => c + c).join('');
+    if (/^[0-9a-f]{4}$/i.test(s)) s = s.split('').map(c => c + c).join('');
+    if (/^[0-9a-f]{8}$/i.test(s)) {
+      return { r: parseInt(s.slice(0, 2), 16), g: parseInt(s.slice(2, 4), 16), b: parseInt(s.slice(4, 6), 16), a: parseInt(s.slice(6, 8), 16) / 255 };
+    }
+    if (!/^[0-9a-f]{6}$/i.test(s)) throw new Error('十六进制要 3/6/8 位');
+    return { r: parseInt(s.slice(0, 2), 16), g: parseInt(s.slice(2, 4), 16), b: parseInt(s.slice(4, 6), 16), a: 1 };
+  },
+  rgbToHex(r, g, b) {
+    return '#' + [r, g, b].map(v => Math.round(this.clamp(v, 0, 255)).toString(16).padStart(2, '0')).join('').toUpperCase();
+  },
+  rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+    const d = max - min;
+    if (d) {
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        default: h = (r - g) / d + 4;
+      }
+      h *= 60;
+    }
+    return { h, s: s * 100, l: l * 100 };
+  },
+  hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let rgb;
+    if (h < 60) rgb = [c, x, 0];
+    else if (h < 120) rgb = [x, c, 0];
+    else if (h < 180) rgb = [0, c, x];
+    else if (h < 240) rgb = [0, x, c];
+    else if (h < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    return rgb.map(v => Math.round((v + m) * 255));
+  },
+  rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d) {
+      switch (max) {
+        case r: h = ((g - b) / d + (g < b ? 6 : 0)) * 60; break;
+        case g: h = ((b - r) / d + 2) * 60; break;
+        default: h = ((r - g) / d + 4) * 60;
+      }
+    }
+    return { h, s: max ? d / max * 100 : 0, v: max * 100 };
+  },
+  hsvToRgb(h, s, v) {
+    h = ((h % 360) + 360) % 360; s /= 100; v /= 100;
+    const c = v * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = v - c;
+    let rgb;
+    if (h < 60) rgb = [c, x, 0];
+    else if (h < 120) rgb = [x, c, 0];
+    else if (h < 180) rgb = [0, c, x];
+    else if (h < 240) rgb = [0, x, c];
+    else if (h < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    return rgb.map(t => Math.round((t + m) * 255));
+  },
+  rgbToCmyk(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const k = 1 - Math.max(r, g, b);
+    if (k === 1) return { c:0, m:0, y:0, k:100 };
+    return {
+      c: (1 - r - k) / (1 - k) * 100,
+      m: (1 - g - k) / (1 - k) * 100,
+      y: (1 - b - k) / (1 - k) * 100,
+      k: k * 100
+    };
+  },
+  cmykToRgb(c, m, y, k) {
+    c /= 100; m /= 100; y /= 100; k /= 100;
+    return [
+      Math.round(255 * (1 - c) * (1 - k)),
+      Math.round(255 * (1 - m) * (1 - k)),
+      Math.round(255 * (1 - y) * (1 - k))
+    ];
+  },
+  /* BT.601 全范围。U/V 用 ±0.5 的归一化，显示时乘 255 —— 这是视频里最常见的一套。 */
+  rgbToYuv(r, g, b) {
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const u = -0.168736 * r - 0.331264 * g + 0.5 * b;
+    const v = 0.5 * r - 0.418688 * g - 0.081312 * b;
+    return { y, u: u + 128, v: v + 128 };
+  },
+  yuvToRgb(y, u, v) {
+    u -= 128; v -= 128;
+    return [
+      Math.round(y + 1.402 * v),
+      Math.round(y - 0.344136 * u - 0.714136 * v),
+      Math.round(y + 1.772 * u)
+    ].map(x => this.clamp(x, 0, 255));
+  },
+  _lin(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); },
+  rgbToXyz(r, g, b) {
+    const R = this._lin(r), G = this._lin(g), B = this._lin(b);
+    return {
+      x: (R * 0.4124564 + G * 0.3575761 + B * 0.1804375) * 100,
+      y: (R * 0.2126729 + G * 0.7151522 + B * 0.0721750) * 100,
+      z: (R * 0.0193339 + G * 0.1191920 + B * 0.9503041) * 100
+    };
+  },
+  rgbToLab(r, g, b) {
+    const { x, y, z } = this.rgbToXyz(r, g, b);
+    const wx = 95.047, wy = 100.0, wz = 108.883;
+    const f = (t) => t > 0.008856 ? Math.cbrt(t) : (7.787 * t + 16 / 116);
+    const fx = f(x / wx), fy = f(y / wy), fz = f(z / wz);
+    return { l: 116 * fy - 16, a: 500 * (fx - fy), b: 200 * (fy - fz) };
+  },
+  labToRgb(L, A, B) {
+    const wx = 95.047, wy = 100.0, wz = 108.883;
+    const fy = (L + 16) / 116, fx = fy + A / 500, fz = fy - B / 200;
+    const inv = (t) => { const t3 = t * t * t; return t3 > 0.008856 ? t3 : (t - 16 / 116) / 7.787; };
+    const x = wx * inv(fx) / 100, y = wy * inv(fy) / 100, z = wz * inv(fz) / 100;
+    let R = x * 3.2404542 + y * -1.5371385 + z * -0.4985314;
+    let G = x * -0.9692660 + y * 1.8760108 + z * 0.0415560;
+    let Bb = x * 0.0556434 + y * -0.2040259 + z * 1.0572252;
+    const g2 = (c) => 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055);
+    return [R, G, Bb].map(c => Math.round(this.clamp(g2(c), 0, 255)));
+  },
+  luminance(r, g, b) {
+    return 0.2126 * this._lin(r) + 0.7152 * this._lin(g) + 0.0722 * this._lin(b);
+  },
+  contrast(rgb1, rgb2) {
+    const a = this.luminance(...rgb1), b = this.luminance(...rgb2);
+    const hi = Math.max(a, b), lo = Math.min(a, b);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+};
+
+class ColorApp {
+  constructor(container) {
+    this.el = container;
+    this.h = 174; this.s = 62; this.l = 48; this.a = 1;
+    this.picking = false;
+    this.el.innerHTML = `<div class="tl">
+      <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">调色盘</b>
+        <span style="flex:1 1 auto"></span>
+        <button class="tl-btn sm" data-a="eye">取色器</button>
+        <button class="tl-btn sm" data-a="page">从页面取色</button>
+        <button class="tl-btn sm" data-a="rand">随机</button>
+      </div>
+      <div class="tl-body">
+        <div class="col-wrap">
+          <div class="col-left">
+            <div class="col-patch" data-f="patch"></div>
+            <div class="col-wheel" data-f="wheel"><canvas width="400" height="400" style="width:200px;height:200px"></canvas></div>
+            <div class="col-sl">
+              <span>L</span><input type="range" min="0" max="100" step="1" data-f="sl">
+              <span data-f="slv">48%</span>
+              <span>A</span><input type="range" min="0" max="100" step="1" data-f="sa" value="100">
+              <span data-f="sav">100%</span>
+            </div>
+            <div class="tl-note">历史</div>
+            <div class="col-sw" data-f="sw"></div>
+          </div>
+          <div class="col-right" data-f="right"></div>
+        </div>
+      </div>
+    </div>`;
+    this.patch = this.el.querySelector('[data-f="patch"]');
+    this.wheelBox = this.el.querySelector('[data-f="wheel"]');
+    this.canvas = this.wheelBox.querySelector('canvas');
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently:true });
+    this.right = this.el.querySelector('[data-f="right"]');
+    this.buildRight();
+    this.bind();
+    this.drawWheel();
+    this.sync();
+  }
+  /* ---------- 右侧六种表示 ---------- */
+  buildRight() {
+    const rows = [
+      ['HEX', 'hex', 'text'],
+      ['RGBA', 'rgba', 'text'],
+      ['RGB', 'rgb', 'text'],
+      ['HSL', 'hsl', 'text'],
+      ['HSV', 'hsv', 'text'],
+      ['CMYK', 'cmyk', 'text'],
+      ['YUV', 'yuv', 'text'],
+      ['Lab', 'lab', 'text'],
+      ['CSS', 'css', 'text']
+    ];
+    this.right.innerHTML = rows.map(([label, k]) =>
+      `<div class="col-kv"><b>${label}</b>
+        <input class="tl-in" data-f="${k}" spellcheck="false">
+        <button class="tl-btn sm" data-cp="${k}">复制</button></div>`).join('') +
+      `<div class="tl-card" style="margin-top:10px"><h4>对比度（WCAG）</h4>
+        <div data-f="wcag"></div></div>
+      <div class="tl-note">
+        任何一格都能直接改：改 HEX 会反向算出 HSL，改 CMYK 会回到 RGB ——
+        六个表示是同一份状态的不同投影，不存在「以谁为准」。<br>
+        YUV 用 BT.601 全范围；Lab 用 D65 白点。CMYK 是<b>无色彩管理的近似值</b>，
+        真要印刷请以印厂的 ICC 为准。HSV 就是 HSB（B = Value，同一件事的两个名字）。
+      </div>`;
+    this.right.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = () => ToolKit.copy(this.right.querySelector('[data-f="' + b.dataset.cp + '"]').value);
+    });
+    this.right.querySelectorAll('input[data-f]').forEach(inp => {
+      inp.addEventListener('change', () => this.commit(inp.dataset.f, inp.value));
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.commit(inp.dataset.f, inp.value); });
+    });
+  }
+  bind() {
+    const sl = this.el.querySelector('[data-f="sl"]');
+    const sa = this.el.querySelector('[data-f="sa"]');
+    sl.addEventListener('input', () => { this.l = Number(sl.value); this.drawWheel(); this.sync(); });
+    sa.addEventListener('input', () => { this.a = Number(sa.value) / 100; this.sync(); });
+    this.el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b) return;
+      if (b.dataset.a === 'eye') this.eyedropper();
+      else if (b.dataset.a === 'page') this.pickFromPage();
+      else if (b.dataset.a === 'rand') {
+        const hsl = ColorMath.hslToRgb(Math.random() * 360, 45 + Math.random() * 55, 30 + Math.random() * 40);
+        const t = ColorMath.rgbToHsl(...hsl);
+        this.h = t.h; this.s = t.s; this.l = t.l;
+        this.drawWheel(); this.sync();
+      }
+    });
+    const drag = (e) => {
+      if (!this.picking) return;
+      e.preventDefault();
+      this.pickAt(e.clientX, e.clientY);
+    };
+    this.wheelBox.addEventListener('pointerdown', (e) => {
+      this.picking = true;
+      try { this.wheelBox.setPointerCapture(e.pointerId); } catch (err) {}
+      this.pickAt(e.clientX, e.clientY);
+    });
+    this.wheelBox.addEventListener('pointermove', drag);
+    this.wheelBox.addEventListener('pointerup', () => { this.picking = false; });
+    this.wheelBox.addEventListener('pointercancel', () => { this.picking = false; });
+    this.el.querySelector('[data-f="sw"]').addEventListener('click', (e) => {
+      const i = e.target.closest('i');
+      if (!i) return;
+      const c = ColorMath.hexToRgb(i.dataset.hex);
+      const t = ColorMath.rgbToHsl(c.r, c.g, c.b);
+      this.h = t.h; this.s = t.s; this.l = t.l; this.a = c.a;
+      this.drawWheel(); this.sync();
+    });
+  }
+  get rgb() { return ColorMath.hslToRgb(this.h, this.s, this.l); }
+
+  /* ---------- 色相环 ---------- */
+  drawWheel() {
+    const N = 200, cv = this.canvas, ctx = this.ctx;
+    const img = ctx.createImageData(N, N);
+    const R = N / 2 - 2;
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const dx = x - N / 2 + 0.5, dy = y - N / 2 + 0.5;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const i = (y * N + x) * 4;
+        if (dist > R) { img.data[i + 3] = 0; continue; }
+        /* 边缘 1.5px 做羽化，省得看着像锯齿 */
+        const edge = Math.min(1, R - dist);
+        const hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+        const sat = Math.min(1, dist / R) * 100;
+        const [r, g, b] = ColorMath.hslToRgb(hue, sat, this.l);
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b;
+        img.data[i + 3] = Math.round(255 * edge);
+      }
+    }
+    /* canvas 是 400×400 但 CSS 200，用离屏再放大，避免 ImageData 每次重算 */
+    const off = document.createElement('canvas');
+    off.width = off.height = N;
+    off.getContext('2d').putImageData(img, 0, 0);
+    ctx.clearRect(0, 0, 400, 400);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off, 0, 0, 400, 400);
+    /* 当前点的十字标记：内外两圈保证深浅底上都看得见 */
+    const ang = this.h * Math.PI / 180;
+    const rad = (this.s / 100) * (200 - 2);
+    const cx = 200 + Math.cos(ang) * rad, cy = 200 + Math.sin(ang) * rad;
+    ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 4; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  pickAt(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    const cx = r.width / 2, cy = r.height / 2;
+    const dx = clientX - r.left - cx, dy = clientY - r.top - cy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const maxR = r.width / 2 - 1;
+    this.h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    this.s = ColorMath.clamp(dist / maxR, 0, 1) * 100;
+    this.drawWheel();
+    this.sync();
+  }
+
+  /* ---------- 同步六种表示 ---------- */
+  sync() {
+    const [r, g, b] = this.rgb;
+    const a = this.a;
+    const hsl = ColorMath.rgbToHsl(r, g, b);
+    const hsv = ColorMath.rgbToHsv(r, g, b);
+    const cmyk = ColorMath.rgbToCmyk(r, g, b);
+    const yuv = ColorMath.rgbToYuv(r, g, b);
+    const lab = ColorMath.rgbToLab(r, g, b);
+    const hex = ColorMath.rgbToHex(r, g, b);
+    const hexA = a < 1 ? hex + Math.round(a * 255).toString(16).padStart(2, '0').toUpperCase() : hex;
+    const f = (n, d = 0) => Number(n).toFixed(d);
+    const vals = {
+      hex: hexA,
+      rgba: `rgba(${r}, ${g}, ${b}, ${f(a, 2)})`,
+      rgb: `${r}, ${g}, ${b}`,
+      hsl: `${f(hsl.h)}, ${f(hsl.s)}%, ${f(hsl.l)}%`,
+      hsv: `${f(hsv.h)}, ${f(hsv.s)}%, ${f(hsv.v)}%`,
+      cmyk: `${f(cmyk.c)}, ${f(cmyk.m)}, ${f(cmyk.y)}, ${f(cmyk.k)}`,
+      yuv: `${f(yuv.y)}, ${f(yuv.u)}, ${f(yuv.v)}`,
+      lab: `${f(lab.l, 1)}, ${f(lab.a, 1)}, ${f(lab.b, 1)}`,
+      css: a < 1 ? `rgb(${r} ${g} ${b} / ${f(a, 2)})` : `rgb(${r} ${g} ${b})`
+    };
+    for (const [k, v] of Object.entries(vals)) {
+      const inp = this.right.querySelector('[data-f="' + k + '"]');
+      if (!inp || inp === document.activeElement) continue;
+      inp.value = v;
+    }
+    this.patch.style.background = `rgba(${r},${g},${b},${a})`;
+    this.patch.innerHTML = `<span style="position:absolute;right:6px;bottom:3px;font-size:9px;letter-spacing:.06em;
+      color:${ColorMath.luminance(r, g, b) > 0.35 ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.6)'}">${hexA}</span>`;
+    this.el.querySelector('[data-f="sl"]').value = Math.round(this.l);
+    this.el.querySelector('[data-f="slv"]').textContent = Math.round(this.l) + '%';
+    this.el.querySelector('[data-f="sa"]').value = Math.round(a * 100);
+    this.el.querySelector('[data-f="sav"]').textContent = Math.round(a * 100) + '%';
+    const cw = ColorMath.contrast([r, g, b], [255, 255, 255]);
+    const cb = ColorMath.contrast([r, g, b], [0, 0, 0]);
+    const mark = (v, need) => v >= need ? `<span style="color:var(--green)">✓ ${v.toFixed(2)}</span>` : `<span style="color:var(--amber)">${v.toFixed(2)}</span>`;
+    this.right.querySelector('[data-f="wcag"]').innerHTML =
+      `<div class="tl-kv"><b>对白底</b><code style="border:0;background:none;padding:0">${mark(cw, 4.5)} · AA 需 4.5，AAA 需 7</code><span></span></div>
+       <div class="tl-kv"><b>对黑底</b><code style="border:0;background:none;padding:0">${mark(cb, 4.5)} · AA 需 4.5，AAA 需 7</code><span></span></div>`;
+    this.pushSwatch(hex);
+  }
+  pushSwatch(hex) {
+    try {
+      const key = 'ht.colors';
+      let arr = JSON.parse(localStorage.getItem(key) || '[]');
+      if (arr[0] !== hex) {
+        arr = [hex].concat(arr.filter(x => x !== hex)).slice(0, 18);
+        localStorage.setItem(key, JSON.stringify(arr));
+      }
+      this.el.querySelector('[data-f="sw"]').innerHTML = arr.map(h =>
+        `<i data-hex="${esc(h)}" style="background:${esc(h)}" title="${esc(h)}"></i>`).join('');
+    } catch (e) {}
+  }
+  commit(field, raw) {
+    const s = String(raw || '').trim();
+    if (!s) return;
+    try {
+      let rgb = null, a = this.a;
+      if (field === 'hex') {
+        const c = ColorMath.hexToRgb(s);
+        rgb = [c.r, c.g, c.b]; a = c.a;
+      } else if (field === 'rgb' || field === 'rgba') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 3) throw new Error('要三个数');
+        rgb = n.slice(0, 3).map(Number);
+        if (n.length > 3) a = ColorMath.clamp(Number(n[3]), 0, 1);
+      } else if (field === 'hsl') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 3) throw new Error('要三个数');
+        rgb = ColorMath.hslToRgb(Number(n[0]), Number(n[1]), Number(n[2]));
+      } else if (field === 'hsv') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 3) throw new Error('要三个数');
+        rgb = ColorMath.hsvToRgb(Number(n[0]), Number(n[1]), Number(n[2]));
+      } else if (field === 'cmyk') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 4) throw new Error('要四个数');
+        rgb = ColorMath.cmykToRgb(Number(n[0]), Number(n[1]), Number(n[2]), Number(n[3]));
+      } else if (field === 'yuv') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 3) throw new Error('要三个数');
+        rgb = ColorMath.yuvToRgb(Number(n[0]), Number(n[1]), Number(n[2]));
+      } else if (field === 'lab') {
+        const n = s.match(/-?\d+(\.\d+)?/g) || [];
+        if (n.length < 3) throw new Error('要三个数');
+        rgb = ColorMath.labToRgb(Number(n[0]), Number(n[1]), Number(n[2]));
+      } else if (field === 'css') {
+        const m = s.match(/rgba?\(([^)]+)\)/i);
+        if (!m) throw new Error('形如 rgb(1 2 3)');
+        const n = m[1].split(/[\s,/]+/).filter(Boolean).map(Number);
+        rgb = n.slice(0, 3);
+        if (n.length > 3) a = ColorMath.clamp(n[3], 0, 1);
+      }
+      if (!rgb) return;
+      rgb = rgb.map(v => ColorMath.clamp(Math.round(v), 0, 255));
+      const t = ColorMath.rgbToHsl(...rgb);
+      this.h = t.h; this.s = t.s; this.l = t.l;
+      this.a = a;
+      this.drawWheel();
+      this.sync();
+    } catch (e) {
+      toast('格式不对：' + (e.message || e), true);
+      this.sync();
+    }
+  }
+
+  /* ---------- 取色 ---------- */
+  async eyedropper() {
+    if (!window.EyeDropper) {
+      toast('这个浏览器没有 EyeDropper，改用「从页面取色」');
+      return this.pickFromPage();
+    }
+    try {
+      const res = await new EyeDropper().open();
+      this.commit('hex', res.sRGBHex);
+    } catch (e) { /* 用户按 Esc 取消，不算错 */ }
+  }
+  async pickFromPage() {
+    let url;
+    try {
+      /* 先拍一张，再在照片上点 —— 这样点到的就是「截图那一刻」的像素，
+       * 不会因为遮罩挡住了页面而永远取到遮罩的颜色。 */
+      url = await shot(document.body, { scale:1 });
+    } catch (e) { toast('截图失败：' + (e && e.message || e), true); return; }
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#000;cursor:crosshair;overflow:auto';
+    const img = new Image();
+    img.src = url;
+    img.style.cssText = 'position:absolute;left:0;top:0;width:100%;display:block;max-width:none';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;padding:8px 12px;background:rgba(0,0,0,.78);' +
+      'color:#d6e7e3;font:11px/1.6 ui-monospace,monospace;z-index:2;text-align:center';
+    bar.textContent = '点图片任意位置取色 · Esc 取消（注意：截图里包含调色盘窗口自身，先把窗口挪开更准）';
+    wrap.appendChild(img);
+    wrap.appendChild(bar);
+    document.body.appendChild(wrap);
+    const done = () => { wrap.remove(); document.removeEventListener('keydown', esc, true); };
+    const esc = (e) => { if (e.key === 'Escape') done(); };
+    document.addEventListener('keydown', esc, true);
+    await new Promise((res) => { img.onload = res; img.onerror = res; });
+    wrap.addEventListener('click', (e) => {
+      const r = img.getBoundingClientRect();
+      const x = Math.floor((e.clientX - r.left) / r.width * img.naturalWidth);
+      const y = Math.floor((e.clientY - r.top) / r.height * img.naturalHeight);
+      const cv = document.createElement('canvas');
+      cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      const ctx = cv.getContext('2d', { willReadFrequently:true });
+      ctx.drawImage(img, 0, 0);
+      try {
+        const d = ctx.getImageData(x, y, 1, 1).data;
+        this.commit('rgb', d[0] + ',' + d[1] + ',' + d[2]);
+        this.a = d[3] / 255;
+        this.sync();
+      } catch (err) { toast('读不到像素：' + (err.message || err), true); }
+      done();
+    }, { once:true });
+  }
 }
 
 /* ============================================================================
@@ -10413,6 +13000,7 @@ const RPC = {
       case 'fs.sptr': return await FS.sptr(a[0]);
       case 'fs.sptx': return await FS.sptx(a[0], a[1] || []);
       case 'fs.sptd': return await FS.sptd(a[0]);
+      case 'fs.sptm': return await FS.sptm(a[0], a[1], a[2] || {});
       case 'fs.escape': return spotEscape(a[0]);
       case 'fs.unescape': return spotUnescape(a[0]);
       case 'fs.exportName': return spotExportName(a[0]);
@@ -10482,6 +13070,38 @@ const RPC = {
       case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
       /* ---- 原生 API：Worker 里没有，转回主线程调真的 ----
        * 白名单是「浏览器真实存在的 window 方法」，不做任何替换或包装。 */
+      case 'util.hash': {
+        const bytes = a[1] instanceof Uint8Array ? a[1]
+          : (a[1] instanceof ArrayBuffer ? new Uint8Array(a[1]) : new TextEncoder().encode(String(a[1] == null ? '' : a[1])));
+        return hexOf(await hashBytes(a[0], bytes));
+      }
+      case 'util.algos': return HASH_ALGS.slice();
+      /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
+       * HSL 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+      case 'util.codec': {
+        const op = String(a[0] || '');
+        const d = a[1];
+        const bytes = d instanceof Uint8Array ? d
+          : d instanceof ArrayBuffer ? new Uint8Array(d)
+          : new TextEncoder().encode(String(d == null ? '' : d));
+        switch (op) {
+          case 'b64': return b64Of(bytes);
+          case 'b64url': return b64UrlOf(bytes);
+          case 'b32': return b32Of(bytes);
+          case 'hex': return hexOf(bytes);
+          case 'hexs': return hexOf(bytes, ' ');
+          case 'bin': return binOf(bytes);
+          case 'dec': return bigOfBytes(bytes).toString();
+          case 'url': return encodeURIComponent(new TextDecoder().decode(bytes));
+          case 'unb64': return bytesOfB64(String(d));
+          case 'unb32': return bytesOfB32(String(d));
+          case 'unhex': return bytesOfHex(String(d));
+          case 'unbin': return bytesOfBin(String(d));
+          case 'undec': return bytesOfBig(BigInt(String(d).trim() || '0'));
+          case 'unurl': return new TextEncoder().encode(decodeURIComponent(String(d)));
+          default: throw new Error('util.codec: 不认识的操作 ' + op);
+        }
+      }
       case 'native': return nativeCall(a[0], a[1] || []);
       case 'sys.info': return sysInfo();
       default: throw new Error('未知 RPC：' + op);

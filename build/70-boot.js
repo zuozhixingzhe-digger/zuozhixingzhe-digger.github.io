@@ -76,6 +76,7 @@ const RPC = {
       case 'fs.sptr': return await FS.sptr(a[0]);
       case 'fs.sptx': return await FS.sptx(a[0], a[1] || []);
       case 'fs.sptd': return await FS.sptd(a[0]);
+      case 'fs.sptm': return await FS.sptm(a[0], a[1], a[2] || {});
       case 'fs.escape': return spotEscape(a[0]);
       case 'fs.unescape': return spotUnescape(a[0]);
       case 'fs.exportName': return spotExportName(a[0]);
@@ -145,6 +146,38 @@ const RPC = {
       case 'dom.op': return await DomRpc.op(a[0], a[1] || []);
       /* ---- 原生 API：Worker 里没有，转回主线程调真的 ----
        * 白名单是「浏览器真实存在的 window 方法」，不做任何替换或包装。 */
+      case 'util.hash': {
+        const bytes = a[1] instanceof Uint8Array ? a[1]
+          : (a[1] instanceof ArrayBuffer ? new Uint8Array(a[1]) : new TextEncoder().encode(String(a[1] == null ? '' : a[1])));
+        return hexOf(await hashBytes(a[0], bytes));
+      }
+      case 'util.algos': return HASH_ALGS.slice();
+      /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
+       * HSL 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+      case 'util.codec': {
+        const op = String(a[0] || '');
+        const d = a[1];
+        const bytes = d instanceof Uint8Array ? d
+          : d instanceof ArrayBuffer ? new Uint8Array(d)
+          : new TextEncoder().encode(String(d == null ? '' : d));
+        switch (op) {
+          case 'b64': return b64Of(bytes);
+          case 'b64url': return b64UrlOf(bytes);
+          case 'b32': return b32Of(bytes);
+          case 'hex': return hexOf(bytes);
+          case 'hexs': return hexOf(bytes, ' ');
+          case 'bin': return binOf(bytes);
+          case 'dec': return bigOfBytes(bytes).toString();
+          case 'url': return encodeURIComponent(new TextDecoder().decode(bytes));
+          case 'unb64': return bytesOfB64(String(d));
+          case 'unb32': return bytesOfB32(String(d));
+          case 'unhex': return bytesOfHex(String(d));
+          case 'unbin': return bytesOfBin(String(d));
+          case 'undec': return bytesOfBig(BigInt(String(d).trim() || '0'));
+          case 'unurl': return new TextEncoder().encode(decodeURIComponent(String(d)));
+          default: throw new Error('util.codec: 不认识的操作 ' + op);
+        }
+      }
       case 'native': return nativeCall(a[0], a[1] || []);
       case 'sys.info': return sysInfo();
       default: throw new Error('未知 RPC：' + op);

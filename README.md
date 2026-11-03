@@ -3,7 +3,7 @@
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
 > 当前版本 **0.0.1.1**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 533 KB，无构建依赖、可直接双击打开）。
+`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
 依赖（xterm / Pyodide / marked / html2canvas）走 CDN，**首次加载后统一进 IndexedDB**，
@@ -44,6 +44,8 @@ readme     welcome
 12. [AI 智能体](#12-ai-智能体)
 13. [后端 modelserver](#13-后端-modelserver)
 14. [常见问题](#14-常见问题)
+15. [沙箱里的工具](#15-沙箱里的工具)
+16. [设计理念 · 给用户的话](#16-设计理念--给用户的话)
 
 **第二部分 · 维护指南（给接手的 AI / 人看）**
 
@@ -60,8 +62,9 @@ readme     welcome
 11. [许可证](#11-许可证)
 12. [AI 生成内容声明](#12-ai-生成内容声明)
 
-**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子（目前一条：**在浏览器里跑 Linux 程序**，原名 HSL，
-但 HSL 这三个字母现在已经是本项目的交互 shell 名字，真开工前得先改名）。
+**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子，目前三条：
+**在浏览器里跑 Linux 程序**（原名 HSL，但 HSL 这三个字母现在已经是本项目的交互 shell 名字，真开工前得先改名）、
+**移植第三方程序的许可证规则**、**`sptm` 挂载要先把五件事想清楚**。
 
 ---
 
@@ -78,8 +81,13 @@ readme     welcome
 | 文件系统 | 点分隔路径、命名像标识符、**一切皆文件**（函数、设备、进程、权限都是文件） |
 | 内核 | 每个终端窗口一个 Web Worker，真多线程 |
 | 智能体 | 单会话 harness，能直接在当前沙箱执行 JS，不问许可 |
+| 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 链接即状态（见[§15](#15-沙箱里的工具)） |
 
 它**不需要后端**。后端（`modelserver.*`）只用于替你保管 API 密钥，可选。
+
+定位上我们很清楚自己不是什么：**这不是一个「能演示的 WebOS」，而是一个沙箱运行时**
+（浏览器沙箱 + 文件系统 + JS 执行 + 工具 + 可选的 AI）。完整的想法写在
+[§16 设计理念 · 给用户的话](#16-设计理念--给用户的话)，包括安全边界与「哪些事我们不做」。
 
 ## 2. 三十秒上手
 
@@ -122,6 +130,11 @@ readme     welcome
 - **中**：`⌃ ⌥ ⇧` 修饰键 + **方向摇杆** + `␛`/`⇥`。手机上没有实体键盘时，
   `Ctrl+C`、`Tab` 补全、历史翻页全靠它。摇杆拖动中心圆点按主导方向发方向键，按住连发（180 ms）。
 - **右**：`▦` 应用启动器 / `⛶` 全屏 / **`≥` 更多**（原来的 `☰` 换成 `≥`，单字符更利落）。
+
+`▦` 里分三段：基础应用（终端/浏览器/文件/编辑器/Python/智能体）、**工具**
+（计算器/数据转换/调色盘/Markdown/截图/链接即状态，见[§15](#15-沙箱里的工具)）、
+以及四个置灰的「维护中」（录音机/定位/3D/音频）。置灰不是禁用：点进去会看到
+「计划怎么做」和「为什么先不做」，比一个点了没反应的按钮诚实。
 
 > 为什么用 `≥`：它本身是「大于等于」的数学符号，视觉上是一个指向右侧的折角，
 > 天然表达「展开到右边」；`☰` 会被不少系统当成列表/菜单图标做特粗处理，字重不可控。
@@ -650,7 +663,7 @@ await write('.dev.tty', 'hello\n');     // 屏幕上直接出现 hello
 「权限」不是文件属性；`.perm.*` 是**授权申请单**，点它才会去问浏览器（摄像头 / 通知 / 定位…）。
 fext4（虚拟 ext4 镜像）才需要模仿 ext4 的权限，spotfs 和它**不直接兼容**，只能靠转换或勉强使用——这是设计使然。
 
-只有六个原子操作，其余命令都是它们的组合：
+只有**七个**原子操作，其余命令都是它们的组合：
 
 | 动词 | syscall | 干什么 |
 | --- | --- | --- |
@@ -660,6 +673,12 @@ fext4（虚拟 ext4 镜像）才需要模仿 ext4 的权限，spotfs 和它**不
 | execute | `sptx(p)` | 执行：JS 脚本 / HTML 页面 / 对象 / 目录 / 权限，自动判别 |
 | read | `sptr(p)` | 读内容（文件）或索引（目录、对象） |
 | delete | `sptd(p)` | 删除：文件删、目录递归删、进程结束、链接解除 |
+| mount | `sptm(target, source)` | **占位，未实现**：调用会明确抛错，不会假装挂上 |
+
+`sptm` 之所以先占坑：`sptx` 的判别表、`mount` 命令的展示、这套模型的语义都已经把它算进去了，
+缺了它模型不完整；但真做起来要先想清楚「同一份节点归谁持有」「卸载时数据归谁」「路径怎么跨挂载点解析」，
+这些问题没有答案之前，给一个**假能用**比给一个**明确的还没做**更糟。
+`mount`（不带参数）能列出当前五个内建挂载点：`idb://hterm`、`ls://local`、`tmpfs`、`procfs`、`devfs`、`pkgfs`。
 
 ```js
 await sptn('.home.notes', { data: 'hi' });   // 新建
@@ -812,6 +831,7 @@ askFile()                   // 弹出选择框，写进 .queryfile.<名>，返�
 readFile(p) / writeFile(p, data, meta)
 listDir(p) / stat(p) / remove(p, {r}) / mkdir(p) / move(a,b) / copy(a,b)
 sptc(p,data) / sptn(p,opts) / spta(p,data) / sptr(p) / sptx(p) / sptd(p)   // spotfs 六个原子操作
+sptm(target, source)                                  // 第七个：挂载。占位，调用会抛「还没做」
 spotEscape(s) / spotUnescape(s) / spotExportName(s)   // 名字转义（-xx 哨兵 + -HH 字节）
 importFiles(fileList, dir)                            // File 列表 → spotfs（拖拽/上传共用）
 dropIntoDir(items, dir, {move})                        // 窗口间拖拽的落点：复制/移动一批项
@@ -1051,6 +1071,101 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 
 ---
 
+## 15. 沙箱里的工具
+
+工具不是「演示用的小玩意」，是这个沙箱**日常真的会用**的那一面。
+全部自研，只用浏览器自带 API；没有一个工具需要联网（Markdown 的 `marked` 除外，它走 CDN，
+加载不到会自动退到内置的迷你渲染器）。
+
+入口有三个，都是同一个东西：
+
+```text
+顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 链接即状态
+终端里        → tool calc        （不带参数敲 tools 看清单）
+文件系统      → .app.calc 也能 open
+```
+
+| 工具 | 状态 | 能做什么 |
+| --- | --- | --- |
+| **计算器** `calc` | 完整 | 递归下降表达式解析（不是 `eval`）、`DEG/RAD`、记忆、历史、键盘直输、阶乘/幂/多参函数 |
+| **数据转换** `data` | 完整 | 编码互转（文本/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体）、时间戳与时区、哈希（SHA-1/256/384/512 + MD5）、随机数 |
+| **调色盘** `color` | 完整 | 色相环 + RGB/HSL/HSV/CMYK/YUV/Lab 六种表示联动、EyeDropper、从页面截图取色、WCAG 对比度、历史色 |
+| **Markdown** `markdown` | 完整 | 分栏实时预览、白名单清洗（`<script>`/`on*`/`javascript:` 一律删）、导出 HTML、下载 `.md` |
+| **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载 |
+| **链接即状态** `urlhash` | 完整 | 把文本或 JS 压进 URL 的 `#` 片段，复制链接即可还原；带 `run=1` 时**先弹确认框**再执行 |
+| **录音机** `recorder` | 壳 | 维护中，暂不可用 |
+| **定位** `geo` | 壳 | 维护中，暂不可用 |
+| **3D 视图** `view3d` | 壳 | 维护中，暂不可用 |
+| **音频播放** `audio` | 壳 | 维护中，暂不可用 |
+
+> 四个壳子不是「忘了做」，是**没想清楚就不假装能做**。每个壳子里都写了「计划怎么做」和
+> 「为什么先不做」——录音要处理权限与关窗时的落盘，定位只在 HTTPS/localhost 给，
+> 3D 要么引 three.js 要么自己写矩阵与着色器，音频的解码格式受浏览器限制。
+> 与其给一个半残的按钮，不如把边界说清楚。
+
+### 15.1 CLI：同一套算法的另一个入口
+
+编码、哈希、随机这些**必须能在管道里用**，否则「数据套件」就只是个网页。
+
+```text
+b64 hello                  → aGVsbG8=
+b64 -d aGVsbG8=            → hello
+b64 -u 你好                → 5L2g5aW9        （URL 安全，去掉 = 和 +/）
+b32 hello                  → NBSWY3DP
+hex readme                 → 直接对文件取十六进制（-s 带空格）
+hex -d 68656c6c6f          → hello
+bin hello                  → 01101000 01100101 …
+dec hello                  → 十进制大整数（整串字节当一个数）
+url "a b"                  → a%20b
+cat readme | hash          → 从管道算 SHA-256
+hash -a md5 readme         → 文件哈希（多文件逐个输出）
+hash abc                   → 不是文件就当文本，不报「没有那个文件」
+rand -l 32 -s safe         → 去易混字符的随机串（CSPRNG，拒绝采样）
+rand -s uuid               → UUID v4
+ts 1700000000              → 秒/毫秒/ISO/本地/UTC 五行
+mount                      → 列挂载点（挂载本身还没做，见 §7.1）
+tools / tool color         → 工具清单 / 打开某个工具
+```
+
+`hash` 的 SHA 家族走 Web Crypto，MD5 是仓库里自己实现的（Web Crypto 不支持 MD5，
+但校验老文件时上游常常只给 MD5，所以它必须在，并且界面上明确标了「只能校验完整性」）。
+
+### 15.2 为什么这些工具值得存在
+
+它们对应四种真实用法：
+
+1. **写页面时**：调色盘给出六种表示，是因为设计稿可能来自 Figma（HEX）、印刷（CMYK）、
+   视频（YUV）或论文（Lab），来回换算不该开五个网页。
+2. **调试时**：编码与哈希是排查「这串东西到底是什么」的常用手段，放在终端里可以直接接管道。
+3. **给别人看时**：链接即状态把一段代码压进 URL，发过去对方打开就能看到同样的东西，
+   而且 `#` 后面的内容不会进服务器日志。
+4. **留下证据时**：截图能把桌面或某个窗口拍下来存进 `.home`，之后可以拖出去。
+
+---
+
+## 16. 设计理念 · 给用户的话
+
+### 16.1 我们想造什么
+
+我们希望造一个真正有用的沙箱运行时环境，而不是一个只能演示的WebOS（是的，它们也很不错，比我做的好多了，但他们，我觉得更多是界面设计项目，而我是沙箱项目，我们道路不同罢了），希望大家一起探索，发挥它不同的价值；希望它能接入AI能力，帮助你探索HTML设计；我们利用浏览器自身的沙箱，来尽可能地确保你在使用时的数据安全（我们主要保护您的本地内容和浏览器沙箱之间的隔离，而不是沙箱和网络之间的隔离，这点需要注意），你可以随便游玩（不碰外面你自己电脑电脑内容的话），而不用过度担心未经授权的个人数据泄露；
+
+### 16.2 我们认为沙箱至少有几个功能
+
+- 设计HTML，运行基本JS操作页面
+- 运行AI agent帮你处理一些问题
+- 使用一些小工具（请避免涉及隐私或机密或未授权或违法违规等不适宜内容；一个粗略的判断标准：你敢把这个直接发给AI（比如豆包，deepseek，...），那么你就可以用，否则别用；比如密钥，个人信息，密码，身份证，未经授权的他人肖像，版权内容，违法内容，这些请勿涉及；我们无法审核您沙箱内的内容，如造成不良后果请自己负责）
+- 自由探索，研究，游玩，探索更多内容
+
+### 16.3 安全提醒
+
+尽管我们利用了一些基础安全设施，我们也不是完全安全的；还请您注意保护自己，不要随意运行不明脚本，以防**浏览器沙箱逃逸**或者**社会工程学攻击**（比如欺骗输入账号密码，密钥，助记词，个人信息，你不希望上传的文件等），还或者是诱骗授权您的位置，录音等你不希望授予的权限；记住，文件进入了沙箱，你自己的AI，或者其他你运行的脚本，就可以获取，请做好泄露的准备；另外，如果你对AI智能体有顾虑，你也可以不接入，那么这就和AI无关了（AI本来就需要你主动接入提供密钥或后端运行的，而非自动配置好的）；我们无法提供所谓“本地模式”的安全方案，并明确不支持这类需求，因为方便和安全，很多时候是互相排斥的，如果您有顾虑，请勿使用本软件，并换成其他本地工具，而且我们从技术上就不支持离线使用，因为依赖本身就需要联网下载；
+
+### 16.4 关于破坏性更新
+
+代码会持续进行破坏性更新，所以请勿（是不建议，不是强制禁止）依赖它写插件，开发你自己的项目等，要写也请只写通用的HTML/JS内容 我们有办法处理
+
+---
+
 # 第二部分 · 维护指南
 
 ## 1. 交接速览
@@ -1092,6 +1207,12 @@ build/
   40-term.js               ← xterm 装载、Keys（顶栏控制键）、自定义光标、TerminalSession、
                              WindowManager（拖拽/缩放/窗动效）
   50-apps.js               ← BrowserApp / FilesApp / EditorApp（srcdoc、协议拦截、内部新标签）
+  55-tools.js              ← 工具底座：ToolKit / CalcParser / CalcApp / ShotApp / MdApp / MaintApp
+                             + modalPrompt / pickFileInFs（通用对话框）
+  56-data.js               ← 编解码原语（Base64/Base32/Hex/二进制/大整数）、MD5、DataApp
+                             （编码/时间戳/哈希/随机）、UrlHash + UrlHashApp
+  57-color.js              ← ColorMath（RGB/HSL/HSV/CMYK/YUV/Lab 互转）、ColorApp
+                             （色相环 canvas、六表示联动、取色、对比度）
   60-agent.js              ← 智能体：prompt、工具定义、循环、JSONL 会话、Markdown 渲染
   65-tui.js                ← 终端内智能体宿主（AgentTuiHost）+ DOM RPC + 截图
   70-boot.js               ← RPC 分发、AppMenu、Drawer、window API、快捷键、启动流程、DepCache
@@ -1567,6 +1688,20 @@ dataTransfer 判断内容，只能：①用 `types.includes('application/x-ht-sp
 **收尾比开头更重要**：`dragend` 不一定来（切窗口、系统打断），所以 `blur` 与
 `visibilitychange` 各补一次 `DragBus.clear()`——否则遮板会一直盖着，小浏览器从此点不动。
 
+**42. CSS Grid 不给 `grid-template-columns`，它不会报错，只会把顺序排乱**
+计算器是 35 个按钮按 5 列写死的，但 `.calc-pad` 只写了 `display:grid;gap:5px`。
+浏览器于是按「自动放置」排成 4 列，第 5 个按钮掉到下一行，`=` 的 `grid-row:span 2`
+把整块往下推——**看起来像按钮少了、顺序错了，实际上是列数没定义**。
+这个坑没有报错、没有警告，只有截图能看出来（`element.screenshot()` 救了我）。
+教训：Grid 容器和它的列数是**两件事**，写了 `display:grid` 不等于写好了布局。
+
+**43. 懒加载的库要把「正在加载」缓存下来，不然每敲一个字就发一次请求**
+Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。输入框每 180ms 触发一次渲染，
+于是每 180ms 就发一次 `loadScriptCached` —— 首次加载慢的时候，预览会长时间停在旧内容上，
+网络面板在刷请求。**修法**：把 Promise 本身存起来（`_markedP`），失败的记一个时间戳，
+一分钟内不再重试。顺带把渲染加上序号（`_seq`），只让最后一次落地，
+否则「先发起的慢渲染」会盖掉「后发起的新内容」——这类竞态在异步预览里几乎必然出现。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1590,12 +1725,41 @@ dataTransfer 判断内容，只能：①用 `types.includes('application/x-ht-sp
 没有借鉴的部分：点分隔路径的文件系统、Worker 多线程模型、窗口管理器、智能体 harness、三份后端——
 这些是本项目新写的。
 
+### 8.1 致谢：帮我们做过实测的开源项目
+
+0.0.1.6 这一轮做「真实页面实测」时，我们把几个**真实的开源项目**下载到仓库**之外**的临时目录，
+用一个静态服务器跑起来，再塞进 HTerMinaL 的小浏览器（iframe）里看能不能活。
+**一行代码都没有合并进本仓库**，也没有把它们打进 `index.html`——它们只是测试素材。
+但没有它们，这一轮就只能靠「我觉得应该能跑」。
+
+感谢这些作者把东西做得这么好，也感谢他们选了宽松的许可证：
+
+| 项目 | 作者 | 许可证 | 我们拿它测什么 |
+| --- | --- | --- | --- |
+| [2048](https://github.com/gabrielecirulli/2048) | Gabriele Cirulli | MIT | 一个完整的前端小游戏：DOM、事件、`localStorage`、动画在沙箱里是否正常 |
+| [WinBox.js](https://github.com/nextapps-de/winbox) | Nextapps | Apache-2.0 | 一个**窗口管理器**跑在另一个窗口管理器里：定位、拖拽、层叠、iframe 内事件 |
+| [98.css](https://github.com/jdan/98.css) | Jordan Scales | MIT | 纯设计系统（CSS）：老式控件、字体、图像边框在 iframe 里的还原度 |
+| [three.js](https://github.com/mrdoob/three.js) | three.js authors | MIT | 3D 运行时：ESM 模块加载、WebGL 上下文（无头环境拿不到 GPU，见下） |
+| [Chart.js](https://github.com/chartjs/Chart.js) | Chart.js contributors | MIT | canvas 2D 绘图与定时器：`requestAnimationFrame` + `setInterval` 的持续动画 |
+| [p5.js](https://github.com/processing/p5.js) | Processing Foundation | LGPL-2.1 | 创意编程：`noise()` 流场、逐帧重绘、窗口尺寸变化 |
+| [lodash](https://github.com/lodash/lodash) | John-David Dalton 及贡献者 | MIT | 一个真实的 UMD 脚本：`fetch` 下来后 `eval` 进 Worker，验证「沙箱里能跑第三方 JS」 |
+
+两点如实说明：
+
+- **p5.js 是 LGPL-2.1**，不在本项目的「可引入清单」里。我们**没有**把它打包或链接进产物，
+  只是把它当成「用户从外面拖进来的第三方脚本」在运行时加载——这正是沙箱该做的事，
+  也是本项目对 GPL 系代码的一贯口径（见 §11 兼容性红线）。
+- **three.js 在无头测试环境里拿不到 WebGL 上下文**（`--use-angle=swiftshader` 也不行），
+  所以那一张截图是空白的。能确认的是：ESM 模块加载成功、脚本跑到底、HUD 渲染出来了；
+  WebGL 本身要真机验证，我们不在文档里假装它通过了。
+
 ## 9. 开发日志
 
 > 倒序：最新在最上方。禁止删除历史条目。
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.6 | 2026-11-03 | **沙箱工具集 + 真实页面实测 + 理念章节**：①**十个工具**（`build/55-tools.js`、`56-data.js`、`57-color.js`，共约 1900 行，全部自研）——**计算器**（递归下降解析 `expr/term/unary/power/postfix/primary`，不用 `eval`；`2^3^2` 右结合、`5!`、`log(2,8)`、`sin(30)` 走 DEG/RAD、记忆 M+/M−、40 条历史、键盘直输）；**数据**（编码互转：文本/UTF-16/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体；时间戳 + `Intl` 多时区 + 相对时间；哈希 SHA-1/256/384/512 + 自写 MD5 + 期望值比对 + 文件哈希；随机：字符串/hex/bytes/int/uuid/分组密码，`crypto.getRandomValues` + 拒绝采样 + 熵估算）；**调色盘**（色相环 canvas 逐像素按当前亮度重绘、六种表示双向联动 HEX/RGB/HSL/HSV/CMYK/YUV/Lab、`EyeDropper`、从整页截图逐像素取色、WCAG 对比度、历史色存 localStorage）；**Markdown**（`marked` 懒加载 + 失败退内置迷你渲染器、`sanitizeHtml` 白名单清洗 `<script>`/`on*`/`javascript:`、渲染序号防旧盖新、导出 HTML/下载 .md）；**截图**（桌面/指定窗口/整文档、1–3×、PNG/JPEG/WebP、存 `.home` 或下载、复制图片）；**链接即状态**（文本/JS → `deflate-raw` + base64url 压进 `#`，`run=1` 打开时先弹确认框展示代码再执行）；**四个壳子**（录音机/定位/3D/音频：写明「计划怎么做」与「为什么先不做」）。②**CLI**（`25-compat.js`）——`b64/b32/hex/bin/dec/url/hash/rand/uuid/ts/mount/tools/tool`，与窗口共用主线程 `util.codec` / `util.hash`（Base32、MD5 只写一份）；`hash` 对不存在的文件回退成「把参数当文本」，不报「没有那个文件」。③**`sptm`（mount）占位**——第七个 syscall，注册进 FS/RPC/worker API，调用明确抛「还没做」，`mount` 命令可列五个内建挂载点；不假装成功的原因写在 §7。④**窗口/启动器**——`APP_DEFS` 加 10 项、`WindowManager._render` 加分支、`TYPE_TITLES/TYPE_SIZE` 补齐、启动器加「工具」分组（维护中的置灰带标签）并支持滚动。⑤**真实页面实测**——把 2048、WinBox、98.css、three.js、Chart.js、p5.js、lodash 下到**仓库之外**的临时目录跑起来（见 §8.1 致谢），2048 能玩、WinBox 能在窗口里再开窗口、Chart.js 曲线在动、p5.js 流场在跑、lodash 在 Worker 里 `eval` 后 `_.camelCase` 正常。⑥**自举**——把 `index.html` 用静态服务跑起来、塞进自己的小浏览器，内层 `2+3` → 5、`hsl('uname -a')` → `HTerMinaL 0.0.1.6`、`hsl('ls')` → `readme welcome`。⑦**README**——新增 §15 工具、§16 设计理念（原文照录）、§8.1 致谢开源、§7 `sptm` 说明、§11 API、开发日志/操作记录/踩坑。⑧**修**——计算器 `.calc-pad` 忘了 `grid-template-columns`（按钮排成 4 列、顺序全乱）；`ensureMarked()` 没缓存 Promise，输入时每个字都重新拉一次 CDN；`MdApp.render()` 无序号，慢的旧渲染会盖掉新内容。 |
 | 0.0.1.5 | 2026-11-03 | **窗口间拖拽 + 小浏览器一键存网页**：①**`DragBus` 拖拽信道**——同一文档里所有窗口共用一份 `{items}`，`dragenter/dragover` 阶段就能读（`dataTransfer` 的内容要等 `drop` 才允许读），所以「拖到哪个窗口先亮」才做得到；`dataTransfer` 里同时写 `application/x-ht-spot`（JSON）与 `text/plain`，管跨进程与变量丢失时的兜底。②**文件管理器 ↔ 文件管理器**——每行 `dragstart` 发布 `{kind:'spot', path, name}`，落点调 `dropIntoDir()` 复制（目录整棵递归）；**按住 Shift = 移动**；同目录拖出 `name-2`；拖进自己内部直接跳过。③**多窗口**——文件管理器工具栏加 `⧉`：同目录再开一个窗口，两个窗口并排互相拖；窗口本来就是一个 `FilesApp` 实例一个 `path`，互不共享状态。④**文件 → 智能体**——`addItems()` 从 spotfs 读内容：图片转 dataURL、文本内联（≤256 KB）、二进制提示用 `read_file`，仍受「一次最多 6 个附件」约束。⑤**文件 → 终端**——`TerminalSession.insert()` 用括号粘贴（`\x1b[200~…\x1b[201~`）把路径插进命令行**不执行**；从系统拖文件到终端则先导入它当前 `cwd` 再粘路径。⑥**文件 → 浏览器**——`BrowserApp.openPath()`：html/text 直接渲染、图片按图片显示、其它交给编辑器窗口。⑦**浏览器标签 → 文件管理器 / 智能体 / 终端**——标签 `draggable`，携带 `{kind:'page', name, url, html}`（跨域时 `html:null`）：落到文件管理器存 `<标题>.html`（跨域存跳转页），落到智能体当附件，落到终端粘地址。⑧**小浏览器一键保存**——`br-bar` 新增「保存」（写进 spotfs 的 `.home`，撞名自动 `-2`）与「下载」（落本机磁盘），`pageHtml()` 用 `contentDocument.documentElement.outerHTML`，跨域读不到时存跳转页并如实提示；标题已带 `.html` 不会变成 `.html.html`。⑨**iframe 吃事件的解法**——拖拽期间给 `body` 挂 `drag-internal`，`.br-shield` 盖住 iframe，`drop` 才能回到父文档；`dragend` 之外补 `blur` / `visibilitychange` 清场，避免遮板卡住把小浏览器挡死。⑩**落点提示**——所有落点统一 `data-drop` + `::after` 小标签（「复制到 .bin」「粘贴路径」「在浏览器里打开」「附加到对话」），不用靠猜。⑪**实测**——两个 FM 窗口各 3/4 行、A→B 复制后两边都在、Shift 后源消失、目录 `.home.sub` 整棵复制到 `.bin`、同目录得到 `.home.one-2`；拖到桌面终端与终端窗口都出现 `.home> .home.alpha`（未执行）；拖到浏览器 `srcdoc` 含文件内容；标签→FM 生成 `.bin.-xxpage-2dhtml-2ehtml`、标签→智能体附件 `测试页.html` 且正文含 `HELLO`；保存生成 `.home.-xxpage-2dhtml-2ehtml`；遮板 `display:block` 且 drop 后 `body.drag-internal` 归位；无 pageerror。 |
 | 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSL 进来就回 HSL）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
 | 0.0.1.3 | 2026-11-02 | **拖拽导入/导出 + spotfs 节点文件系统**：①**拖进来 = 导入**——外部文件拖到窗口出现全屏虚线遮罩（图标浮动动画 + 「松手导入到 X」），松手即进 spotfs：智能体输入框 → `.queryfile` 并挂到对话，文件管理器 → 当前目录，其它地方 → `.home`；`dragenter/leave` 用计数避免闪。②**拖出去 = 下载**——文件管理器每行 `draggable`，`pointerdown` 预读成 Blob URL，`dragstart` 同步 `setData('DownloadURL', 'mime:原名:url')`，拖到桌面/资源管理器即落盘。③**spotfs 六个 syscall**——`sptc`(cover，只覆盖不新建) / `sptn`(new，`.queryfile` 下=向用户要文件、`.savefile` 下=关闭时保存) / `spta`(append) / `sptx`(execute:JS/HTML/对象/目录/权限/包/设备，自动判别) / `sptr`(read:内容或索引) / `sptd`(delete:文件/目录递归/进程结束)；worker 侧 `sptx` 把「动作描述」落地（编译执行 JS、开浏览器、`cd`、请求权限、`kill`）。④**名字转义**——UTF-8 字节级：字母数字原样，其余（`-` `_` `.` `/` 空格 中文 控制符）写 `-HH`，首位数字也转义，整体加 `-xx` 哨兵；导出反向解析，目标系统不接受的字符保留 `-HH`；`checkName` 放行 `-xx…` 转义名；`normPath` 一律小写，所以哨兵/十六进制在存储层是小写（解析时大小写都认）。⑤**`.savefile`**——新建并写入，关闭/删除时 `saveFileRaw(原名)` 导出后节点消失。⑥**统一入口**——`importFiles()` 被拖拽、上传、`askFile` 复用；`saveFileRaw` 专用于导出（不走 `sanitizeName`，否则会把 `-xx` 前的短横线剥掉）。⑦**文档/种子**——`.home.readme` 改写为 spotfs 世界观（六操作、转义、`.savefile`）；README 第 7 章新增 spotfs / 转义 / 拖拽三节，第 11 章补 `spt*`。⑧**实测**——转义往返 `hello world.txt ↔ -xxhello-20world-2etxt`、`a/b.txt → a-2Fb.txt`（导出）、`readme` 原样、`123abc ↔ -xx-3123abc`；六 syscall 覆盖/新建/追加/读/删/目录索引全对，`sptc` 对不存在、`sptn` 对已存在都正确报错；`.savefile` 存在→`saveOnClose`→导出删除；文件管理器 drop 生成 `-xxhello-20world-2etxt`、`#desk` drop 生成 `-xxg-20note-2emd`、智能体 drop 进 `.queryfile` 且附件 +1；遮罩显隐、`DownloadURL=text/plain:export me.txt:blob:…` 均正确。 |
@@ -1617,6 +1781,7 @@ dataTransfer 判断内容，只能：①用 `types.includes('application/x-ht-sp
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSL(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
 | 2026-11-03 10:20 | 0.0.1.5：窗口间拖拽（文件↔文件/智能体/终端/浏览器）+ 小浏览器一键存网页 + 文件管理器多开 | `build/30-core.js`（`DRAG_MIME`/`DragBus`/`hasInternalDrag`/`uniquePathIn`/`isSameOrInside`/`dropIntoDir`/`htmlFileName`/`contentToDataUrl`）、`build/50-apps.js`（FilesApp `⧉` + `_bindDrop` 双通道 + dragstart 发布 item；BrowserApp 保存/下载按钮、`pageHtml`/`_pageName`/`saveToFs`/`downloadPage`/`openPath`/`_bindDrop`、标签 `draggable`、`.br-shield`）、`build/60-agent.js`（`addItems` + drop 分支）、`build/40-term.js`（`container.__term` + `insert()` 括号粘贴）、`build/70-boot.js`（`initDropImport` 双通道、`_termAt`、落点高亮、拖到终端先导入再粘路径、`dragend`/`blur`/`visibilitychange` 清场）、`build/00-head.html`（`.drop::after` 标签、`#term`/`.fm` 定位、`.br-shield`、`.txt` 按钮、`[draggable]` 光标）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.5）、`README.md`（第 7 章拖拽整节重写、第 11 章补 `dropIntoDir`/`DragBus`、日志、踩坑第 41 条） | 无头 Chromium：两个 FM 窗口 A→B 复制 / Shift 移动 / 目录整棵复制 / 同目录 `-2`；FM→桌面终端与终端窗口均显示 `.home> .home.alpha` 且未执行；FM→浏览器 `srcdoc` 含文件内容；标签→FM 存 html、标签→智能体附件含正文；保存生成 `.home.*-2ehtml`、标题带 `.html` 不重复；遮板拖拽中 `display:block`、结束后 `body.drag-internal` 归位；无 pageerror | `main` |
 | 2026-11-02 20:55 | 0.0.1.4：修「TUI 智能体进去就自己退出来」——`open()` 只打横幅不切模式 | `build/20-worker.js`（`AGENT_PROMPT`；`prompt()` 三路；`onSubmit` 新增 `mode==='agent'` 分支；`LineEditor` 新增 `onInterrupt` / `onCtrlD` 钩子并接进 `feed()`；`agentTui` 重写：`open/_run/line/send/queue/_drain/stop/close/helpOut` + `agentWidth/agentWrap` 折行 + `_startSpin/_stopSpin` 帧动画 + `_back` 记忆来路）、`build/30-core.js`（版本 0.0.1.4）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.2 重写、§11 注明、开发日志、操作记录、踩坑第 40 条） | 无头 Chromium：`agentTui.open()` 后提示符变 `agent> ` 且停住；`:help` / `:q` 正常；未配置后端时错误留在 TUI 内不退出；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；mock 慢模型下 `Ctrl+C` 0.7s 中断并回提示符（`■ 已请求停止当前轮`）；窗口版 `agentOpen()` 仍存活；无 pageerror | `main` |
 | 2026-11-02 17:45 | 0.0.1.3：拖拽导入/导出 + spotfs（六 syscall + 名字转义 + `.savefile`） | `build/30-core.js`（`spotEscape/spotUnescape/spotExportName`、`SPOT_NAME_RE`、`checkName` 放行转义名、`DIRS` 加 `.savefile`、`FS.sptc/sptn/spta/sptr/sptx/sptd`、`flushSavefile`、`saveFileRaw`、`importFiles`、种子 readme 改 spotfs）、`build/70-boot.js`（`initDropImport` + 遮罩 + `_hasFiles/_dropTarget`、RPC `fs.spt*`/`fs.escape|unescape|exportName`、boot 调用）、`build/20-worker.js`（`sptc/sptn/spta/sptr/sptx/sptd` + `spotEsc/spotUnesc/spotExport`，`api`/`api.fs` 暴露）、`build/50-apps.js`（FilesApp `_bindDrop`/`_prefetchBlob`/draggable 行/`DownloadURL`、`upload`/`download` 走 `importFiles`/`saveFileRaw`）、`build/60-agent.js`（drop → `.queryfile` + 附件）、`build/00-head.html`（`#dropVeil` 与动画）、`build/10-body.html`（遮罩 DOM）、`build/30-core.js`+`modelserver.{py,js,go}`（版本）、`README.md`（第 7 章三节、第 11 章、日志、踩坑 38-39） | playwright：转义往返 5 例、六 syscall 全通过、`.savefile` 导出删除、FilesApp/#desk/智能体三种 drop 落点正确、遮罩显隐、`DownloadURL` 格式正确、无 pageerror | `main` |
@@ -1678,7 +1843,7 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 
 - `index.html` 及其全部 `build/` 分片、`build.sh`、三份 `modelserver`、本 README —— AI 生成
 - `LICENSE-APACHE`、`LICENSE-MIT`、`licenses/LICENSE.*.txt` —— 从各自上游复制原文（非 AI 创作）
-- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 41 条）由 AI 与人类共同排查完成
+- 调试过程（[踩坑记录](#7-设计取舍与踩坑记录) 里的 43 条）由 AI 与人类共同排查完成
 
 这意味着：
 

@@ -164,6 +164,32 @@ const COMPAT = (function () {
     return IO.call('fs.list', p);
   }
 
+  /* 命令的输入统一成字节：参数里第一个「看起来像文件且真的存在」的当文件名，
+   * 否则把参数当文本；没有参数就用管道送进来的 stdin。
+   * 这样 `b64 hello` 和 `b64 readme` 都符合直觉，也不用发明 -f 开关。 */
+  async function inputBytes(args, stdin) {
+    const rest = (args || []).filter(x => !/^-/.test(x));
+    if (rest.length) {
+      let p = null;
+      try { p = await realPath(rest[0]); } catch (e) { p = null; }
+      if (p) {
+        let st = null;
+        try { st = await IO.call('fs.stat', p); } catch (e) {}
+        if (st && st.kind === 'file') {
+          const r = await IO.call('fs.read', p);
+          if (typeof r.content === 'string') return new TextEncoder().encode(r.content);
+          if (r.content instanceof ArrayBuffer) return new Uint8Array(r.content);
+          return new TextEncoder().encode(String(r.content == null ? '' : r.content));
+        }
+      }
+      return new TextEncoder().encode(rest.join(' '));
+    }
+    return new TextEncoder().encode(String(stdin == null ? '' : stdin));
+  }
+
+  const codec = (op, data) => IO.call('util.codec', op, data);
+  const dec = (bytes) => new TextDecoder().decode(bytes);
+
   /* ---------------------------------------------------------------- 命令 */
   const CMDS = Object.create(null);
 
@@ -543,6 +569,194 @@ const COMPAT = (function () {
     if (a[0] === '+%s') return { out: String(Math.floor(Date.now() / 1000)) + '\n' };
     return { out: new Date().toString() + '\n' };
   }, '日期');
+
+  /* ---------------------------------------------------------------- 数据工具
+   * 和「数据」窗口共用同一套算法（主线程 util.codec）：
+   * Base32 / MD5 这种「看着简单」的东西写两遍，必然有一遍是错的。
+   */
+  const FLAGS = (a) => a.filter(x => /^-[a-zA-Z]+$/.test(x)).join('');
+
+  def('b64', async (a, stdin) => {
+    const f = FLAGS(a), url = f.includes('u');
+    if (!f.includes('d')) {
+      const bytes = await inputBytes(a, stdin);
+      return { out: await codec(url ? 'b64url' : 'b64', bytes) + '\n' };
+    }
+    const t = dec(await inputBytes(a, stdin)).trim();
+    if (!t) return { out: '' };
+    try { return { out: dec(await codec('unb64', t)) }; }
+    catch (e) { return { code: 1, err: 'b64: ' + (e.message || e) + '\n' }; }
+  }, 'Base64 编解码（-d 解，-u URL 安全）');
+
+  def('b32', async (a, stdin) => {
+    const f = FLAGS(a);
+    if (!f.includes('d')) return { out: await codec('b32', await inputBytes(a, stdin)) + '\n' };
+    try { return { out: dec(await codec('unb32', dec(await inputBytes(a, stdin)).trim())) }; }
+    catch (e) { return { code: 1, err: 'b32: ' + (e.message || e) + '\n' }; }
+  }, 'Base32 编解码（-d 解）');
+
+  def('hex', async (a, stdin) => {
+    const f = FLAGS(a);
+    const bytes = await inputBytes(a, stdin);
+    if (!f.includes('d')) return { out: await codec(f.includes('s') ? 'hexs' : 'hex', bytes) + '\n' };
+    try { return { out: dec(await codec('unhex', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'hex: ' + (e.message || e) + '\n' }; }
+  }, '十六进制编解码（-d 解，-s 带空格）');
+
+  def('bin', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('bin', bytes) + '\n' };
+    try { return { out: dec(await codec('unbin', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'bin: ' + (e.message || e) + '\n' }; }
+  }, '二进制编解码（-d 解）');
+
+  def('dec', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('dec', bytes) + '\n' };
+    try { return { out: dec(await codec('undec', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'dec: ' + (e.message || e) + '\n' }; }
+  }, '十进制大整数编解码（-d 解）');
+
+  def('url', async (a, stdin) => {
+    const bytes = await inputBytes(a, stdin);
+    if (!FLAGS(a).includes('d')) return { out: await codec('url', bytes) + '\n' };
+    try { return { out: dec(await codec('unurl', dec(bytes))) }; }
+    catch (e) { return { code: 1, err: 'url: 不是合法的百分号编码\n' }; }
+  }, 'URL 百分号编解码（-d 解）');
+
+  def('hash', async (a, stdin) => {
+    let alg = 'sha256';
+    const files = [];
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '-a' || x === '--alg') { alg = String(a[++i] || 'sha256').toLowerCase(); continue; }
+      if (/^-(md5|sha1|sha256|sha384|sha512)$/.test(x)) { alg = x.slice(1); continue; }
+      files.push(x);
+    }
+    const MAP = { md5:'MD5', sha1:'SHA-1', sha256:'SHA-256', sha384:'SHA-384', sha512:'SHA-512' };
+    const A = MAP[alg];
+    if (!A) return { code: 1, err: 'hash: 不支持的算法 ' + alg + '（md5 / sha1 / sha256 / sha384 / sha512）\n' };
+    if (!files.length) {
+      return { out: (await IO.call('util.hash', A, await inputBytes([], stdin))) + '  -\n' };
+    }
+    /* 参数既可能是文件，也可能就是一段文字。
+     * 规则：能当成文件的按文件算；全都不是文件，就把参数拼起来当文字算 ——
+     * 这样 `hash abc` 得到 "abc" 的哈希，而不是一句「没有那个文件」。 */
+    let out = '', missing = 0, hit = 0;
+    for (const f of files) {
+      let p = null;
+      try { p = await realPath(f); } catch (e) { p = null; }
+      let st = null;
+      if (p) { try { st = await IO.call('fs.stat', p); } catch (e) {} }
+      if (!st || st.kind !== 'file') { missing++; continue; }
+      hit++;
+      const r = await IO.call('fs.read', p);
+      const bytes = typeof r.content === 'string' ? new TextEncoder().encode(r.content) : new Uint8Array(r.content);
+      out += (await IO.call('util.hash', A, bytes)) + '  ' + f + '\n';
+    }
+    if (!hit) return { out: (await IO.call('util.hash', A, new TextEncoder().encode(files.join(' ')))) + '  -\n' };
+    if (missing) return { code: 1, out, err: 'hash: ' + missing + ' 个文件不存在\n' };
+    return { out };
+  }, '哈希（-a md5|sha1|sha256…，可接文件或管道）');
+
+  def('rand', async (a) => {
+    let len = 16, n = 1, kind = 'hex';
+    for (let i = 0; i < a.length; i++) {
+      const x = a[i];
+      if (x === '-l') len = Math.max(1, Math.min(4096, parseInt(a[++i], 10) || 16));
+      else if (x === '-n') n = Math.max(1, Math.min(200, parseInt(a[++i], 10) || 1));
+      else if (x === '-s') kind = String(a[++i] || 'hex');
+      else if (!x.startsWith('-')) kind = x;
+    }
+    const pick = (max) => {
+      if (max <= 0) return 0;
+      const lim = Math.floor(4294967296 / max) * max;
+      const b = new Uint32Array(1);
+      for (;;) { crypto.getRandomValues(b); if (b[0] < lim) return b[0] % max; }
+    };
+    const ALPH = {
+      alnum: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+      safe: 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789',
+      pwd: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+',
+      hex: '0123456789abcdef'
+    };
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      if (kind === 'uuid') {
+        const b = new Uint8Array(16);
+        crypto.getRandomValues(b);
+        b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+        const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+        out.push(h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20));
+      } else if (kind === 'bytes') {
+        const b = new Uint8Array(len);
+        crypto.getRandomValues(b);
+        out.push(await codec('b64url', b));
+      } else {
+        const set = ALPH[kind] || ALPH.hex;
+        let s = '';
+        for (let i = 0; i < len; i++) s += set[pick(set.length)];
+        out.push(s);
+      }
+    }
+    return { out: out.join('\n') + '\n' };
+  }, '随机串（-l 长度 -n 条数 -s hex|alnum|safe|pwd|uuid|bytes）');
+
+  def('uuid', async (a) => {
+    const n = Math.max(1, Math.min(200, parseInt(a[0], 10) || 1));
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+      const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+      out.push(h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) + '-' + h.slice(20));
+    }
+    return { out: out.join('\n') + '\n' };
+  }, 'UUID v4');
+
+  def('ts', async (a) => {
+    const raw = String(a[0] == null ? '' : a[0]).trim();
+    let d = null;
+    if (!raw || /^now$/i.test(raw)) d = new Date();
+    else if (/^\d{1,11}$/.test(raw)) d = new Date(Number(raw) * 1000);
+    else if (/^\d{12,16}$/.test(raw)) d = new Date(Number(raw));
+    else d = new Date(raw.replace(/\//g, '-').replace(' ', 'T'));
+    if (!d || isNaN(d.getTime())) return { code: 1, err: 'ts: 看不懂 ' + raw + '\n' };
+    const rows = [
+      ['秒', String(Math.floor(d.getTime() / 1000))],
+      ['毫秒', String(d.getTime())],
+      ['ISO', d.toISOString()],
+      ['本地', d.toString()],
+      ['UTC', d.toUTCString()]
+    ];
+    const w = Math.max(...rows.map(r => r[0].length));
+    return { out: rows.map(([k, v]) => k.padEnd(w) + '  ' + v).join('\n') + '\n' };
+  }, '时间戳换算（默认现在）');
+
+  def('mount', async (a) => {
+    if (a[0]) {
+      return { code: 1, err: 'mount: sptm 还没做（占位）。目前只有内建挂载点，不能自己挂。\n' };
+    }
+    const ms = await IO.call('fs.mounts');
+    const w = Math.max(...ms.map(m => m.path.length), 5);
+    return { out: ms.map(m => m.path.padEnd(w) + '  ' + m.type.padEnd(12) + '  ' + m.mount).join('\n') + '\n' };
+  }, '列出挂载点（挂载本身未实现）');
+
+  def('tools', async () => {
+    const names = ['calc', 'data', 'color', 'markdown', 'shot', 'urlhash', 'recorder', 'geo', 'view3d', 'audio'];
+    return { out: names.map(n => n.padEnd(10) + ({ calc:'科学计算器', data:'数据转换', color:'调色盘', markdown:'Markdown 渲染',
+      shot:'网页内截屏', urlhash:'链接即状态', recorder:'录音机（维护中）', geo:'定位（维护中）',
+      view3d:'3D 视图（维护中）', audio:'音频播放（维护中）' })[n]).join('\n') + '\n' };
+  }, '列出工具');
+
+  def('tool', async (a) => {
+    const name = String(a[0] || '').trim();
+    if (!name) return { code: 1, err: 'tool: 用法 tool <名字>，不带参数看 tools\n' };
+    const w = await IO.call('win.open', { app:name });
+    if (!w) return { code: 1, err: 'tool: 没有这个工具：' + name + '\n' };
+    return { out: '已打开 ' + w.title + '\n' };
+  }, '打开工具窗口');
 
   def('whoami', async () => ({ out: (IO.state.user || 'human') + '\n' }), '当前用户');
   def('hostname', async () => ({ out: 'browser\n' }), '主机名');

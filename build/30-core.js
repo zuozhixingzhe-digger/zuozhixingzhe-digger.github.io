@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.5';
+const HT_VERSION = '0.0.1.6';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -330,6 +330,17 @@ const APP_DEFS = [
   { name:'agent', title:'智能体', desc:'轻量 AI harness（需要后端）', type:'agent', icon:'✦' },
   { name:'files', title:'文件', desc:'浏览一切皆文件的世界', type:'files', icon:'▤' },
   { name:'editor', title:'编辑器', desc:'查看/编辑文本文件', type:'editor', icon:'✎' },
+  /* 工具：沙箱的「日常用得上」那一面。全部自研，不引第三方库。 */
+  { name:'calc', title:'计算器', desc:'科学计算器（表达式、角度、记忆）', type:'calc', icon:'∑' },
+  { name:'data', title:'数据', desc:'编码 / 时间戳 / 哈希 / 随机', type:'data', icon:'⇄' },
+  { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
+  { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
+  { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
+  { name:'urlhash', title:'链接即状态', desc:'把文本/JS 压进 URL 片段', type:'urlhash', icon:'⌗' },
+  { name:'recorder', title:'录音机', desc:'维护中，暂不可用', type:'recorder', icon:'◎' },
+  { name:'geo', title:'定位', desc:'维护中，暂不可用', type:'geo', icon:'⌖' },
+  { name:'view3d', title:'3D 视图', desc:'维护中，暂不可用', type:'view3d', icon:'◫' },
+  { name:'audio', title:'音频播放', desc:'维护中，暂不可用', type:'audio', icon:'♫' },
   { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'≥' },
   { name:'about', title:'关于', desc:'版本、许可与第三方声明', type:'about', icon:'ⓘ' },
 ];
@@ -985,6 +996,17 @@ const FS = {
     await saveFileRaw(spotExportName(baseName(p)), r.content, (r.meta && r.meta.mime) || 'application/octet-stream');
     await this.remove(p, true);
     return true;
+  },
+
+  /* sptm —— 挂载。**占坑，未实现。**
+   * 为什么留一个只会抛错的 syscall：sptx 的判别表、.mounts 的展示、文档里的
+   * 语义都已经把它算进去了，缺了它这套模型就不完整；但真做起来要先解决
+   * 「同一份节点该被谁持有」「卸载时数据归谁」「路径跨挂载点怎么解析」，
+   * 这些没有想清楚之前，给一个假能用比给一个明确的「还没做」更糟。 */
+  async sptm(target, source, opts) {
+    opts = opts || {};
+    throw new Error('sptm: 挂载还没做（占位）。目标 ' + normPath(target) +
+      (source ? '，来源 ' + String(source) : '') + ' —— 现在只有 idb / tmpfs / procfs / devfs / pkgfs 五个内建挂载点');
   },
 
   async usage() {

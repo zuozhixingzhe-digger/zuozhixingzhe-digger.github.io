@@ -749,6 +749,8 @@ function makeShell(ctx) {
     if (r && r.act === 'kill') return kill(r.pid);
     return r;
   }
+  /* sptm：挂载。占坑 —— 主线程那边会明确抛「还没做」，不在 worker 里假装成功。 */
+  async function sptm(target, source, opts) { return call('fs.sptm', abs(target), source, opts || {}); }
   async function sptx(p, ...args) {
     const d = await call('fs.sptx', abs(p), args);
     if (!d || !d.act) return d;
@@ -847,7 +849,7 @@ function makeShell(ctx) {
       ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
-      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  —— 六个原子操作'],
+      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  m sptm(target,src)  —— 七个 syscall（m 是占坑）'],
       ['转义', 'spotEscape(s) 名字→-xx…；spotUnescape 还原；spotExportName 导出去掉病态字符；拖拽/上传共用 importFiles()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
@@ -1016,7 +1018,7 @@ function makeShell(ctx) {
     },
     mkdir, rm, mv, cp, stat, exists, tree, find, head, tail, grep, open, exec, run, du, df, mount,
     /* spotfs 六个 syscall（canonical）+ 名字转义 */
-    sptc, sptn, spta, sptr, sptx, sptd,
+    sptc, sptn, spta, sptr, sptx, sptd, sptm,
     spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport,
     // 包
     install, uninstall, require:requirePkg, pkg:{ install, remove:uninstall, list:() => call('pkg.list'), require:requirePkg },
@@ -1041,7 +1043,7 @@ function makeShell(ctx) {
     // 内建对象
     console:con,
     fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
-         sptc, sptn, spta, sptr, sptx, sptd, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
+         sptc, sptn, spta, sptr, sptx, sptd, sptm, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
     envVars:{},
     __state:state
