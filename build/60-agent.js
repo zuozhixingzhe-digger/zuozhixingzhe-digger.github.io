@@ -24,6 +24,8 @@ const AGENT_ENV = `你是 HarTMLes——HTerMinaL 里的智能体，运行在一
 - 常用目录：.home（用户文件）、.bin（可执行函数）、.app（应用）、.dev（设备）、.proc（进程）、.pkg（包）、.config（设置）、.agent（会话）、.sys（只读系统信息）、.temp（临时）、.queryfile（用户提供的文件）。
 - 终端在 Worker 里跑 JS；你通过工具在主页面执行，所以 document / window / localStorage
   都是真的（不是模拟）。也能直接用全局 hterm API：hterm.readFile/writeFile/listDir/openWindow/exec/saveFile。
+- 抓网页用 fetch_url（有后端时由本机后端代抓，不受跨域限制；返回的是正文，不是原始 HTML）。
+  要新闻/热搜直接用 news 工具，不要自己猜新闻站首页，更不要抓 .js 地址。
 - 浏览器是沙箱，不需要额外安全许可；不要询问“是否允许执行”，直接做。`;
 
 const AGENT_PERSONA_PATH = '.config.persona';
@@ -131,8 +133,12 @@ const AGENT_TOOLS = [
     parameters:{ type:'object', properties:{ id:{ type:'string' } }, required:['id'] }
   }},
   { type:'function', function:{
-    name:'fetch_url', description:'抓取一个 URL 的文本内容。跨域被拦时会自动改用文本化代理（r.jina.ai / allorigins），一般都能拿到正文。',
+    name:'fetch_url', description:'抓取一个 URL 的正文（HTML 会转成纯文本，RSS/Atom 会拆成条目，JSON 会格式化）。有后端时由本机后端代抓，不受跨域限制。要新闻/热搜请直接用 news，不要猜首页地址。',
     parameters:{ type:'object', properties:{ url:{ type:'string' }, method:{ type:'string' }, headers:{ type:'object' }, body:{ type:'string' } }, required:['url'] }
+  }},
+  { type:'function', function:{
+    name:'news', description:'取最近的新闻/热搜标题（不需要 URL）。source=auto（默认，热榜+滚动新闻）/ hot（热搜榜）/ roll（最新滚动新闻）。用户说「抓几条新闻」「今天有什么热搜」时用它。',
+    parameters:{ type:'object', properties:{ count:{ type:'number', description:'条数，默认 10，最多 30' }, source:{ type:'string', description:'auto | hot | roll' } } }
   }},
   { type:'function', function:{
     name:'screenshot', description:'把页面或某个窗口截成 PNG。返回值里带图片，可以直接看。适合确认界面是否正常、排查布局问题。',
@@ -189,55 +195,194 @@ function jsonSafe(v, limit) {
   return out;
 }
 
-/* 抓网页：直连 → 文本化代理 → 通用 CORS 代理。
+/* 抓网页：本机后端 → 直连 → 文本化代理 → 通用 CORS 代理。
  *
- * 直连失败基本都是 CORS（百度、新闻站 100% 会拦）。过去这里一失败就报错，
- * 智能体于是「卡在工具调用」上下不来。现在按顺序降级，并且优先用 r.jina.ai：
- * 它把页面转成 markdown 再返回，对模型来说比原始 HTML 干净得多，还省 token。 */
-async function agentFetch(args) {
-  const url = String(args.url || '').trim();
-  if (!url) throw new Error('url 为空');
+ * 为什么把「本机后端」放在第一位：浏览器 fetch 受同源策略管，新闻站、政务站
+ * 一律不带 Access-Control-Allow-Origin，直连 100% 失败；r.jina.ai 和 allorigins
+ * 在国内经常连不上。智能体明明有 fetch_url 却抓不到任何网页，工具就成了摆设。
+ * modelserver 是本机进程，不受同源策略限制，由它代抓最稳（/v1/fetch，带 SSRF 防护）。
+ *
+ * 拿到的不再是原始 HTML：HTML 抽正文、RSS/Atom 抽条目、JSON 格式化。
+ * 直接把 200 KB 标签塞给模型，既费 token 又读不出内容——「抓到了但看不懂」
+ * 和「抓不到」对用户是一回事。 */
+async function rawFetch(url) {
+  const useBackend = String(Settings.get('agentMode') || 'backend') !== 'direct';
+  const base = useBackend ? String(Settings.get('agentUrl') || '').replace(/\/+$/, '') : '';
   const tries = [];
-  if (!args.method || /^get$/i.test(args.method)) {
+  if (base) {
     tries.push(async () => {
-      const r = await fetch(url, { headers:args.headers || {}, credentials:'omit' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return { text: await r.text(), via:'直连', status:r.status };
-    });
-    tries.push(async () => {
-      const r = await fetch('https://r.jina.ai/' + url, { credentials:'omit', headers:{ 'Accept':'text/plain' } });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return { text: await r.text(), via:'r.jina.ai 文本化', status:r.status };
-    });
-    tries.push(async () => {
-      const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url), { credentials:'omit' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return { text: await r.text(), via:'allorigins 代理', status:r.status };
-    });
-  } else {
-    tries.push(async () => {
-      const r = await fetch(url, { method:args.method, headers:args.headers || {}, body:args.body, credentials:'omit' });
-      return { text: await r.text(), via:'直连', status:r.status };
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30000);
+      try {
+        const r = await fetch(base + '/v1/fetch', {
+          method:'POST', signal:ctrl.signal, credentials:'omit',
+          headers:{ 'Content-Type':'application/json', 'X-HTerm-Client':'HTerMinaL' },
+          body:JSON.stringify({ url })
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j.error) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+        return { text:j.text, status:j.status, contentType:j.contentType || '', via:'本机后端', finalUrl:j.finalUrl || url };
+      } finally { clearTimeout(timer); }
     });
   }
+  tries.push(async () => {
+    const r = await fetch(url, { credentials:'omit' });
+    return { text: await r.text(), status:r.status, contentType:r.headers.get('content-type') || '', via:'直连', finalUrl:url };
+  });
+  tries.push(async () => {
+    const r = await fetch('https://r.jina.ai/' + url, { credentials:'omit', headers:{ 'Accept':'text/plain' } });
+    return { text: await r.text(), status:r.status, contentType:'text/plain', via:'r.jina.ai 文本化', finalUrl:url };
+  });
+  tries.push(async () => {
+    const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url), { credentials:'omit' });
+    return { text: await r.text(), status:r.status, contentType:r.headers.get('content-type') || '', via:'allorigins 代理', finalUrl:url };
+  });
 
   const errs = [];
   for (const fn of tries) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
     try {
       const r = await fn();
-      clearTimeout(timer);
-      const head = 'HTTP ' + r.status + ' · 来自 ' + r.via + '\n\n';
-      const body = String(r.text || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
-      return head + body.slice(0, 12000);
+      /* 4xx/5xx 也把正文带回去：新闻站的 403 页面、API 的错误 JSON 都是线索，
+       * 模型看到「403 + 原因」比看到一句「失败」更容易换策略。 */
+      if (r.status >= 400) {
+        const brief = String(r.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+        throw new Error('HTTP ' + r.status + (brief ? '：' + brief : ''));
+      }
+      return r;
     } catch (e) {
-      clearTimeout(timer);
       errs.push((e && e.message || e) + (e && e.name === 'AbortError' ? '（超时）' : ''));
     }
   }
-  throw new Error('抓取失败，三种方式都不通：' + errs.join(' / ')
-    + '。\n可以改用 window_html 或 browser 打开这个地址让用户自己看，不要反复重试同一个 URL。');
+  throw new Error('抓取失败，四种方式都不通：' + errs.join(' / ')
+    + '。\n不要反复重试同一个 URL：换一个来源，或用 news 工具直接取新闻标题。');
+}
+
+/* RSS / Atom → 一行一条，带时间与链接。新闻站大多还留着 RSS，它比 HTML 干净得多。 */
+function rssToText(xml) {
+  let doc;
+  try { doc = new DOMParser().parseFromString(xml, 'application/xml'); } catch (e) { return ''; }
+  if (!doc || doc.querySelector('parsererror')) return '';
+  const items = [...doc.querySelectorAll('item, entry')].slice(0, 30);
+  if (!items.length) return '';
+  const pick = (el, sels) => {
+    for (const s of sels) { const n = el.querySelector(s); if (n && n.textContent.trim()) return n.textContent.trim(); }
+    return '';
+  };
+  return items.map((it, i) => {
+    const title = pick(it, ['title']);
+    const link = pick(it, ['link']) || (it.querySelector('link') && it.querySelector('link').getAttribute('href')) || '';
+    const date = pick(it, ['pubDate', 'updated', 'published', 'dc\\:date']);
+    const desc = pick(it, ['description', 'summary']).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 160);
+    return (i + 1) + '. ' + title + (date ? ' · ' + date : '') + (link ? '\n   ' + link : '') + (desc ? '\n   ' + desc : '');
+  }).join('\n');
+}
+
+/* HTML → 正文。用 DOMParser 而不是正则：正文里带 `<` 的代码、注释掉的标签，
+ * 正则一剪就乱。块级元素补换行，保证列表/段落不会粘成一整行。 */
+function htmlToText(html) {
+  let doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return html; }
+  if (!doc || !doc.body) return html;
+  doc.querySelectorAll('script,style,noscript,svg,iframe,template').forEach(n => n.remove());
+  doc.querySelectorAll('br').forEach(n => n.replaceWith('\n'));
+  doc.querySelectorAll('p,div,li,tr,h1,h2,h3,h4,h5,h6,section,article,header,footer,dd,dt,pre,blockquote,table')
+    .forEach(n => { n.append('\n'); });
+  let text = doc.body.textContent || '';
+  text = text.replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ')
+    .split('\n').map(l => l.trim()).filter(Boolean).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+  const title = (doc.title || '').trim();
+  return (title && text.indexOf(title) < 0 ? title + '\n\n' : '') + text;
+}
+
+function readable(text, contentType, url) {
+  const s = String(text || '');
+  const ct = String(contentType || '').toLowerCase();
+  const head = s.slice(0, 400).trim();
+  if (/rss|atom|xml/.test(ct) || /^<\?xml|^<rss|^<feed/i.test(head)) {
+    const r = rssToText(s);
+    if (r) return r;
+  }
+  if (/json/.test(ct) || /^[\[{]/.test(head)) {
+    try {
+      const o = JSON.parse(s);
+      return JSON.stringify(o, null, 1);
+    } catch (e) {}
+  }
+  if (/html|xml/.test(ct) || /^<!doctype|^<html|^<head|^<body/i.test(head)) return htmlToText(s);
+  return s;
+}
+
+async function agentFetch(args) {
+  const url = String(args.url || '').trim();
+  if (!url) throw new Error('url 为空');
+  const r = await rawFetch(url);
+  const body = readable(r.text, r.contentType, url);
+  const head = 'HTTP ' + r.status + ' · 来自 ' + r.via
+    + (r.finalUrl && r.finalUrl !== url ? ' · 最终地址 ' + r.finalUrl : '')
+    + '\n\n';
+  return head + String(body || '').slice(0, 12000);
+}
+
+/* ---------------------------------------------------------------- 新闻
+ * 「给我抓几条新闻」是最高频的一类请求，但它恰恰最容易被当成「随便 fetch 一个
+ * 首页」。模型猜出来的 URL 经常是 JS 渲染的榜单（163 的 rank_whole.js、知乎 hot），
+ * 抓回来只有一坨脚本，最后交不出东西。这里把两个稳定、结构化、无需登录的源
+ * 固化下来：今日头条热榜（JSON）、新浪滚动新闻（JSON）。都走 rawFetch，
+ * 所以有后端时由后端代抓，没有后端才可能被 CORS 拦。 */
+const NEWS_SOURCES = [
+  { id:'hot', label:'今日头条热榜', url:'https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc',
+    pick:(j) => ((j && j.data) || []).map(x => ({ title:x.Title, hot:x.HotValue, url:x.Url })) },
+  { id:'hot', label:'百度热搜', url:'https://top.baidu.com/api/board?platform=wise&tab=realtime',
+    pick:(j) => {
+      const card = j && j.data && j.data.cards && j.data.cards[0];
+      const rows = (card && card.content) || [];
+      return rows.map(r => {
+        const c = (r.content && r.content[0]) || r;
+        return { title:c.word || c.query || r.word, hot:r.hotScore, url:c.url };
+      });
+    } },
+  { id:'roll', label:'新浪最新新闻', url:'https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=20&page=1',
+    pick:(j) => (((j || {}).result || {}).data || []).map(x => ({ title:x.title, url:x.url, hot:x.intro })) }
+];
+
+async function agentNews(args) {
+  const count = Math.max(1, Math.min(30, parseInt(args.count, 10) || 10));
+  const only = String(args.source || 'auto').toLowerCase();
+  const list = NEWS_SOURCES.filter(s => only === 'auto' || s.id === only);
+  const rows = [], errs = [];
+  for (const src of list) {
+    if (rows.length >= count) break;
+    try {
+      const r = await rawFetch(src.url);
+      let j;
+      try { j = JSON.parse(readable(r.text, r.contentType, src.url)); } catch (e) { throw new Error('返回的不是 JSON'); }
+      const got = src.pick(j).filter(x => x && x.title).slice(0, count - rows.length);
+      if (!got.length) throw new Error('JSON 里没有条目');
+      for (const x of got) rows.push({ ...x, from: src.label });
+    } catch (e) {
+      errs.push(src.label + '：' + (e && e.message || e));
+    }
+  }
+  if (!rows.length) {
+    const direct = String(Settings.get('agentMode') || 'backend') === 'direct';
+    throw new Error('新闻源都没取到：' + errs.join(' / ')
+      + (direct ? '\n直连模式下浏览器跨域会挡住这两个源。启动 modelserver、切到「后端」模式再试（后端会代抓）。' : '')
+      + '\n请如实告诉用户抓取失败，不要继续硬试。');
+  }
+  const fmt = (t) => {
+    const d = new Date(Number(t) * (String(t).length <= 10 ? 1000 : 1));
+    return isNaN(d) ? '' : d.toLocaleString('zh-CN', { hour12:false });
+  };
+  const out = rows.map((x, i) => {
+    const hot = x.hot && !/^https?:/.test(String(x.hot)) && String(x.hot).length < 24 ? ' · 热度 ' + x.hot : '';
+    /* 头条热榜的链接带一长串 log_pb 埋点参数（几百字符），对模型和用户都没用，
+     * 直接砍掉查询串；短链仍然能打开同一条内容。 */
+    const link = x.url ? String(x.url).split('?')[0].slice(0, 140) : '';
+    return (i + 1) + '. ' + x.title + hot + (x.from ? ' — ' + x.from : '')
+      + (link ? '\n   ' + link : '');
+  }).join('\n');
+  return '共 ' + rows.length + ' 条（' + new Date().toLocaleString('zh-CN', { hour12:false }) + '）：\n' + out;
 }
 
 /* ---------------------------------------------------------------- Markdown
@@ -1283,6 +1428,9 @@ class AgentApp {
     }
     if (name === 'fetch_url') {
       return await agentFetch(args);
+    }
+    if (name === 'news') {
+      return await agentNews(args);
     }
     if (name === 'screenshot') {
       let url;

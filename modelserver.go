@@ -30,7 +30,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.14"
+const version = "0.0.1.15"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -544,7 +544,9 @@ func securityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
-	w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+	/* self：沙箱自带录音机/定位；空值会让页内 getUserMedia 直接报
+	   Permissions policy violation（0.0.1.15 修）。 */
+	w.Header().Set("Permissions-Policy", "geolocation=(self), microphone=(self), camera=(self)")
 }
 
 func cors(w http.ResponseWriter, r *http.Request) {
@@ -669,8 +671,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "只接受 POST /v1/chat/completions", "type": "forbidden"}})
 		return
 	}
-	if r.Header.Get("X-HTerm-Client") != "hterminal" {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "缺少 X-HTerm-Client", "type": "forbidden"}})
+	/* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，这里曾小写全等比较，
+	   自家前端每次都被自己 403（0.0.1.15 修）。 */
+	if strings.ToLower(strings.TrimSpace(r.Header.Get("X-HTerm-Client"))) != "hterminal" {
+		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "缺少或错误的 X-HTerm-Client", "type": "forbidden"}})
 		return
 	}
 	/* 只收 application/json：text/plain、form-urlencoded 属于「不触发预检的简单请求」 */

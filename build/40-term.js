@@ -502,6 +502,12 @@ class TerminalSession {
      * 滚动是内容整体位移，再给 22% 阻尼缓动就成了「飘过去」，反而更假。 */
     this.term.onScroll(() => this._cursorSnap());
     this.term.onResize(() => this._cursorSnap());
+    /* onScroll 只在「缓冲区滚动」时触发（新输出把内容顶上去），**用户拖滚动条 /
+     * 滚轮回看历史不算**——viewportY 变了，onScroll 一声不响。实测：wheel 之后
+     * viewportY 183→120、光标行已经跑到 84（共 22 行），.ht-cursor 还亮在最后一行。
+     * 直接监听 .xterm-viewport 的 scroll 事件，这条路径不挑渲染器，canvas / DOM 都有。 */
+    const vp = this.term.element.querySelector('.xterm-viewport');
+    if (vp) vp.addEventListener('scroll', () => this._cursorSnap(), { passive:true });
 
     const ta = this.term.textarea;
     if (ta) {
@@ -567,7 +573,12 @@ class TerminalSession {
      * 滚动之后这个算法依然准，不依赖任何尺寸测量。
      * 越界就藏起来：用户回看历史时光标确实不在屏幕上，硬画在边上是在撒谎。 */
     const vRow = buf.cursorY + buf.baseY - buf.viewportY;
-    if (vRow < 0 || vRow >= t.rows) { c.el.style.display = 'none'; return; }
+    if (vRow < 0 || vRow >= t.rows) {
+      c.el.style.display = 'none';
+      /* 下次重新出现时直接落位：隐藏期间的内容位移不需要「补一段动画」。 */
+      c.init = false;
+      return;
+    }
     c.el.style.display = '';
 
     const screen = t.element.querySelector('.xterm-screen');
@@ -870,7 +881,7 @@ const WindowManager = {
       recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
       calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], image:[940, 660], urlhash:[700, 620],
-      recorder:[460, 400], geo:[460, 400], view3d:[460, 400], audio:[460, 400] };
+      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     /* `jshel` 可以一层层开出新窗口，全都叫「终端」就分不清哪个是哪个了。
      * 后缀带上落地目录，cd 之后跟着变。 */
@@ -1021,11 +1032,10 @@ const WindowManager = {
         case 'shot': win.content = new ShotApp(win.body, opts); break;
         case 'image': win.content = new ImageApp(win.body, opts); break;
         case 'urlhash': win.content = new UrlHashApp(win.body, opts); break;
-        case 'recorder':
-        case 'geo':
-        case 'view3d':
-        case 'audio':
-          win.content = new MaintApp(win.body, win.type); break;
+        case 'recorder': win.content = new RecorderApp(win.body); break;
+        case 'geo': win.content = new GeoApp(win.body); break;
+        case 'view3d': win.content = new View3DApp(win.body); break;
+        case 'audio': win.content = new AudioApp(win.body); break;
         case 'agent': win.content = new AgentApp(win.body, opts, win); break;
         case 'html': win.body.innerHTML = opts.html || ''; break;
         case 'about': win.body.classList.add('pad'); win.body.innerHTML = aboutHtml(); break;

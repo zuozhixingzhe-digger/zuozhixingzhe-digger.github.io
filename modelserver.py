@@ -18,11 +18,15 @@
 #   HT_DEFAULT_PROVIDER=openai   openai | anthropic | responses | custom
 
 import hashlib
+import ipaddress
 import json
 import os
+import re
+import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -37,7 +41,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.1.14"
+VERSION = "0.0.1.15"
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -82,6 +86,118 @@ def upstream(url, payload, headers):
         return status, json.loads(raw.decode("utf-8", "replace"))
     except Exception:
         return 502, {"error": {"message": "上游返回了非 JSON（HTTP %s）" % status, "type": "bad_upstream"}}
+
+
+# ------------------------------------------------------------------ 抓网页（/v1/fetch）
+#
+# 为什么需要它：浏览器里的 fetch 受同源策略管，新闻站（163/百度/知乎）一律不带
+# CORS 头，直连必失败；r.jina.ai / allorigins 这类公共代理在国内经常连不上。
+# 于是「让智能体抓 10 条新闻」在真实网络里几乎必然失败——工具摆着却不能用。
+# 本机后端不受同源策略约束，由它代抓是最稳的一条路。
+#
+# 安全：不做「任意代理」。只允许 http/https、只允许 80/443、目标必须解析到公网 IP
+# （逐跳校验，重定向也算新的一跳），挡掉拿来打内网/本机端口的 SSRF；响应上限 3 MB。
+FETCH_MAX = 3 * 1024 * 1024
+FETCH_TIMEOUT = float(os.environ.get("HT_FETCH_TIMEOUT", "20"))
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """自己处理重定向：每一跳都要重新查一次「是不是公网地址」。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _public_host(host):
+    host = (host or "").strip().lower().strip("[]")
+    if not host or host == "localhost" or host.endswith(".local") or host.endswith(".internal"):
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except Exception:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+def _charset_of(headers, raw):
+    ctype = headers.get("Content-Type", "") or ""
+    m = re.search(r"charset=([\w-]+)", ctype, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(br'charset=["\']?([\w-]+)', raw[:4096], re.I)
+    if m:
+        return m.group(1).decode("ascii", "ignore")
+    return "utf-8"
+
+
+def fetch_public(url):
+    url = str(url or "").strip()
+    if not url:
+        raise ValueError("url 为空")
+    seen = []
+    for _ in range(5):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https"):
+            raise ValueError("只支持 http/https")
+        if parts.username or parts.password:
+            raise ValueError("URL 不能带账号密码")
+        if not parts.hostname:
+            raise ValueError("URL 缺少主机名")
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+        if port not in (80, 443):
+            raise ValueError("只允许 80/443 端口")
+        if not _public_host(parts.hostname):
+            raise ValueError("目标不是公网地址：%s" % parts.hostname)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+        })
+        try:
+            resp = _OPENER.open(req, timeout=FETCH_TIMEOUT)
+            status = resp.status
+        except urllib.error.HTTPError as e:
+            resp = e
+            status = e.code
+        if status in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location")
+            if not loc:
+                raise ValueError("HTTP %s 但没给 Location" % status)
+            url = urllib.parse.urljoin(url, loc)
+            seen.append(url)
+            if len(seen) > 4:
+                raise ValueError("重定向太多")
+            continue
+        raw = resp.read(FETCH_MAX + 1)
+        if len(raw) > FETCH_MAX:
+            raw = raw[:FETCH_MAX]
+        cs = _charset_of(resp.headers, raw)
+        try:
+            text = raw.decode(cs, "replace")
+        except LookupError:
+            text = raw.decode("utf-8", "replace")
+        return {
+            "status": status,
+            "finalUrl": url,
+            "contentType": resp.headers.get("Content-Type", "") or "",
+            "text": text,
+            "redirects": seen,
+        }
+    raise ValueError("重定向太多")
 
 
 # ------------------------------------------------------------------ OpenAI / custom
@@ -366,7 +482,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+        # 沙箱里自带录音机 / 定位，这两个能力必须对本页面开放（self），
+        # 但绝不对第三方 iframe 开放：`()` 会让页内 getUserMedia 直接抛
+        # "Permissions policy violation"，工具做好了也用不了（0.0.1.15 修）。
+        self.send_header("Permissions-Policy", "geolocation=(self), microphone=(self), camera=(self)")
 
     def cors(self):
         """只对「已经通过 Origin 校验」的请求回 CORS 头，绝不回显任意 Origin，
@@ -493,11 +612,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.local_only():
             return
-        if self.path.split("?")[0] != "/v1/chat/completions":
-            self.reply(403, {"error": {"message": "只接受 POST /v1/chat/completions", "type": "forbidden"}})
+        route = self.path.split("?")[0]
+        if route not in ("/v1/chat/completions", "/v1/fetch"):
+            self.reply(403, {"error": {"message": "只接受 POST /v1/chat/completions 与 /v1/fetch", "type": "forbidden"}})
             return
-        if self.headers.get("X-HTerm-Client", "") != "hterminal":
-            self.reply(403, {"error": {"message": "缺少 X-HTerm-Client", "type": "forbidden"}})
+        # 大小写不敏感：客户端 0.0.1.2 起产品名统一成 HTerMinaL，头值也改成了
+        # "HTerMinaL"，而这里一直拿小写全等比较 —— 结果是自家前端每次都被自己
+        # 403（0.0.1.15 修）。这个头的意义只是「必须触发 CORS 预检 + 自证是自家
+        # 页面」，不是在验口令，没必要卡大小写。
+        if self.headers.get("X-HTerm-Client", "").strip().lower() != "hterminal":
+            self.reply(403, {"error": {"message": "缺少或错误的 X-HTerm-Client", "type": "forbidden"}})
             return
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
@@ -516,6 +640,13 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode("utf-8", "replace"))
         except Exception as e:
             self.reply(400, {"error": {"message": "JSON 解析失败：%s" % e, "type": "bad_request"}})
+            return
+        if route == "/v1/fetch":
+            try:
+                data = fetch_public(body.get("url"))
+                self.reply(200, data)
+            except Exception as e:
+                self.reply(502, {"error": {"message": "抓取失败：%s" % e, "type": "fetch_failed"}})
             return
         if body.get("stream"):
             self.reply(400, {"error": {"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})

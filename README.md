@@ -31,6 +31,7 @@ readme     welcome
 
 **第一部分 · 使用文档**
 
+0. [接活规则：被打断时怎么办](#0-接活规则被打断时怎么办)
 1. [这是什么](#1-这是什么)
 2. [三十秒上手](#2-三十秒上手)
 3. [界面：顶栏 / 桌面 / 更多](#3-界面顶栏--桌面--更多)
@@ -70,6 +71,22 @@ readme     welcome
 ---
 
 # 第一部分 · 使用文档
+
+## 0. 接活规则：被打断时怎么办
+
+> 这一节是用户 2026-11-03 定下的工作约定。它约束的是**接手这个仓库的 AI**，不是用户。
+
+用户常常在任务做到一半时插一句新问题：一张截图、一个 bug、一个想法。默认处理是三条：
+
+1. **先记住**：把这句话照原样记进当前任务清单，不丢，也不擅自改写成「以后再说」。
+2. **不切走**：手上的活继续做完。打断不是「立刻改做新任务」，而是「排进队列」。
+3. **收尾必查**：说「做完了」之前，把这一轮以及历史里所有被插进来的句子逐条对一遍——
+   哪些做了、哪些没做、哪些是刻意不做（并写明理由）。**没查过，不许说做完。**
+
+真正需要立刻停下的只有两种情况：用户明确说「先做这个」，或者当前操作会破坏已有数据。
+
+为什么写进 README：这个仓库的返工大多不是「做错」，而是「漏了」——上一轮被一句话打断，
+回头只做了主线，插进来的那条永远躺在对话记录里。把「收尾必查」写成硬规则，比事后解释便宜。
 
 ## 1. 这是什么
 
@@ -134,8 +151,8 @@ readme     welcome
 
 `▦` 里分三段：基础应用（终端/浏览器/文件/编辑器/Python/智能体）、**工具**
 （计算器/数据转换/调色盘/Markdown/截图/看图修图/链接即状态，见[§15](#15-沙箱里的工具)）、
-以及四个置灰的「维护中」（录音机/定位/3D/音频）。置灰不是禁用：点进去会看到
-「计划怎么做」和「为什么先不做」，比一个点了没反应的按钮诚实。
+以及媒体与 3D（录音机/定位/3D 视图/音频播放）。这四项 0.0.1.15 之前一直是「维护中」，
+现在都能用了；拿不到权限或 WebGL 时，界面会直接说清是哪一种限制，而不是转圈。
 
 > 为什么用 `≥`：它本身是「大于等于」的数学符号，视觉上是一个指向右侧的折角，
 > 天然表达「展开到右边」；`☰` 会被不少系统当成列表/菜单图标做特粗处理，字重不可控。
@@ -978,7 +995,7 @@ about() / sleep(ms) / uuid() / storage(IDB)
   几十轮就顶到配额
 - 写盘有节流：流式输出期间 800ms 防抖，一轮结束、清空、导入、关窗时立即落盘
 - 工具集：`js`（在当前沙箱里直接执行 JS）、`read_file`、`write_file`、`list_dir`、`delete_file`、
-  `open_window`、`close_window`、`fetch_url`、`save_file`、**`screenshot`**、**`window_html`**、**`ui`**
+  `open_window`、`close_window`、`fetch_url`、**`news`**、`save_file`、**`screenshot`**、**`window_html`**、**`ui`**
 - **不问许可**。`js` 工具直接在当前上下文执行，没有沙箱、没有审批弹窗。这是设计选择，不是遗漏
 - 停止按钮 = `AbortController.abort()`，随时掐断
 - **最大循环 120 步**（设置里可调，0–120）。到顶就停，不会无限烧 token
@@ -1037,8 +1054,36 @@ persona path                # 只打印文件路径
 `stableKey = name + JSON.stringify(args)`，**同一轮内**重复的直接返回上一次的结果，不再真执行。
 不同轮不拦（重试是合理的）。
 
-网络失败按三级降级：`直连/后端` → `r.jina.ai`（把网页转成纯文本）→ `allorigins`（CORS 代理）。
-三级都挂才把错误抛给模型，让它自己决定换 `js` 还是放弃。
+网络失败按四级降级：**本机后端**（`/v1/fetch`，不受同源策略管）→ 直连 → `r.jina.ai`（把网页转成
+纯文本）→ `allorigins`（CORS 代理）。四级都挂才把错误抛给模型，让它决定换来源还是放弃。
+
+拿到响应之后还要再转一道：HTML 抽正文、RSS/Atom 拆成条目、JSON 重新缩进。
+直接把 200 KB 标签喂给模型，既费 token 又读不出内容——「抓到了但看不懂」和「抓不到」是一回事。
+
+### 抓新闻：不再让模型自己猜 URL
+
+用户说「给我抓取最近 10 条新闻」，模型的第一反应是猜一个新闻站首页。实测它猜的是
+`news.163.com/special/0001386F/rank_whole.js`（一个 JS 文件）和 `zhihu.com/hot`
+（要登录，403）——两次都拿不到正文，最后交白卷。
+
+三个原因叠在一起：
+
+1. 浏览器 `fetch` 受同源策略管，新闻站一律不带 `Access-Control-Allow-Origin`，直连必失败；
+2. `r.jina.ai` / `allorigins` 在国内经常连不上，所谓「三级降级」实际上没有一级能通；
+3. 猜到的 URL 本身就不是可读页面（`.js` / 登录墙）。
+
+修法分三层：
+
+- **后端加 `POST /v1/fetch`**，由本机进程代抓，不受同源策略约束（带 SSRF 防护，见 §13）；
+- **`fetch_url` 统一转正文**：HTML 抽文本、RSS/Atom 拆条目、JSON 缩进，再把 12 000 字符交给模型；
+- **新增 `news` 工具**：内置「今日头条热榜」和「新浪滚动新闻」两个稳定 JSON 源，
+  `count` 直接给条数，`source` 可选 `auto / hot / roll`。用户不用再教它去哪个网站。
+
+实测（DeepSeek V4.1 Flash，后端模式）：窗口版「给我抓取最近 10 条新闻」→ 一次 `news` 调用 →
+**3.3 秒**返回 10 条带热度的标题，并直接排版成表格；TUI 版同样一轮出结果。
+
+> 直连模式没有后端代抓，这两个源会被 CORS 挡住。工具会明确说「直连模式下浏览器跨域会挡住，
+> 请启动 modelserver 并切到后端模式」，而不是丢一句「抓取失败」。
 
 ### 界面里的 Markdown
 
@@ -1141,11 +1186,12 @@ python3 modelserver.py
 | --- | --- | --- |
 | `GET` | `/` `/index.html` | **直接返回同目录下的 `index.html`**，于是 `python3 modelserver.py` 一条命令就能把这个终端跑在 `http://127.0.0.1:8787` |
 | `GET` | `/health` | `{"ok":true,"version":"0.0.0.5",...}`，前端启动后自动探测 |
-| `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**前后端之间只用这一种** |
+| `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**模型调用只用这一种** |
+| `POST` | `/v1/fetch` | 代抓网页：`{"url":"https://…"}` → `{status, finalUrl, contentType, text}`。**只有后端模式会用到** |
 | `OPTIONS` | `*` | CORS 预检，返回 204；**必须带 `Origin` 且通过校验**，否则 403 |
 | 其它 | 任意 | **一律 403**，不列目录、不代理静态文件、不返回错误页 HTML |
 
-「只放行这四条」是刻意的：这个服务能读你的密钥，任何多余的静态文件路由都是攻击面。
+「只放行这几条」是刻意的：这个服务能读你的密钥，任何多余的静态文件路由都是攻击面。
 文件路径按 `scriptDir()`（可执行文件/脚本所在目录）拼，不依赖 `cwd`——从别的目录启动也能找到。
 
 **`index.html` 用协商缓存**（`Cache-Control: no-cache` + `ETag`）。它是把全部代码内联进去的
@@ -1160,7 +1206,7 @@ python3 modelserver.py
 立刻拿到新正文。既不用手动强刷，也不用重下整包。CDN 上的 xterm / marked / pyodide 本来就带
 `max-age=31536000`，浏览器会自己复用，这两项加起来才是首屏的真正开销。
 
-请求头：`X-HTerm-Client: hterminal`（必带，否则 403）、`X-HTerm-Provider: openai|anthropic|responses`。
+请求头：`X-HTerm-Client: HTerMinaL`（必带，**大小写不敏感**，否则 403）、`X-HTerm-Provider: openai|anthropic|responses`。
 上游格式由它自己双向转换，包括 `tool_calls` ↔ Anthropic `tool_use` / Responses `function_call`。
 
 ### 安全模型
@@ -1191,11 +1237,31 @@ CORS 头只在 Origin 通过校验后**回显该 Origin**，绝不回 `*`，也�
 | `Referrer-Policy` | `no-referrer` | 不外泄地址 |
 | `Cross-Origin-Resource-Policy` | `same-origin` | 别的源不能读响应体 |
 | `Cross-Origin-Opener-Policy` | `same-origin` | 隔离 window 引用 |
-| `Permissions-Policy` | `geolocation=(), microphone=(), camera=()` | 不给敏感设备 |
+| `Permissions-Policy` | `geolocation=(self), microphone=(self), camera=(self)` | 只给本页面，不给第三方 iframe |
+
+`Permissions-Policy` 从 `()` 改成 `(self)` 是 0.0.1.15 修的一个自伤：
+沙箱里自带录音机和定位，而 `()` 会让页内的 `getUserMedia` 直接抛
+`Permissions policy violation: microphone is not allowed in this document`——
+工具做出来了也用不了。`(self)` 只对本页面开放，第三方 iframe 仍然拿不到。
+
+### `/v1/fetch` 的 SSRF 边界
+
+代抓网页等于把「让服务器替你访问任意地址」这件事开放给页面，所以它不能是任意代理：
+
+- 只允许 `http` / `https`，只允许 **80 / 443** 端口（`127.0.0.1:8787`、`169.254.169.254` 这类直接拒）；
+- 域名必须解析到**公网 IP**（`ipaddress.is_global`），loopback / 私有网段 / 链路本地 / 保留地址全部拒绝；
+- **逐跳校验**：手动处理 3xx，每一跳都把新 URL 当新目标重新解析、重新查；最多 4 跳；
+- 不发送 cookie、不带 `Authorization`，`credentials: omit`；
+- 响应上限 3 MB，超时 20 秒（`HT_FETCH_TIMEOUT` 可调）；
+- URL 里带账号密码（`http://user:pass@host`）直接拒。
+
+它同样要吃 `X-HTerm-Client` 与 Origin 校验，所以「公网页面 → 本地端口 → 内网」这条路走不通。
 
 请求侧还有两条：
 
-- **必须带 `X-HTerm-Client: hterminal`**——自定义头会触发预检，普通 `<form>` / 裸 `fetch` 打不过来
+- **必须带 `X-HTerm-Client: HTerMinaL`**——自定义头会触发预检，普通 `<form>` / 裸 `fetch` 打不过来。
+  比较时统一转小写：0.0.1.2 把产品名改成 `HTerMinaL` 之后，客户端头值跟着变了，
+  服务端却还在拿小写全等比较，**自家前端每次请求都被自己 403**——这是 0.0.1.15 修的一个真 bug
 - **`Content-Type` 必须是 `application/json`**，其余 415——堵掉 `text/plain` / `form-urlencoded`
   这类「不预检就能发出去」的简单请求
 
@@ -1247,15 +1313,19 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 | **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载；拍完点「编辑」直接送进看图窗口 |
 | **看图修图** `image` | 完整 | 缩放/适应/拖拽平移、裁剪、旋转 90°、水平/垂直翻转、按宽度缩放；矩形 / 箭头 / 画笔 / 文字 / 打码五种标注（带暗色描边，落在同色底上也看得见）；Alt+点击取色、Ctrl+V 粘贴剪贴板图片、Ctrl+Z 撤销（按像素数自动限步）、导出 PNG/JPEG/WebP |
 | **链接即状态** `urlhash` | 完整 | 把文本或 JS 压进 URL 的 `#` 片段，复制链接即可还原；带 `run=1` 时**先弹确认框**再执行 |
-| **录音机** `recorder` | 壳 | 维护中，暂不可用 |
-| **定位** `geo` | 壳 | 维护中，暂不可用 |
-| **3D 视图** `view3d` | 壳 | 维护中，暂不可用 |
-| **音频播放** `audio` | 壳 | 维护中，暂不可用 |
+| **录音机** `recorder` | 完整 | `MediaRecorder` + `AudioContext` 实时波形、暂停/继续、计时、设备选择；停止后试听、存进 `.home`、下载。关窗即停音轨 |
+| **定位** `geo` | 完整 | 单次 / `watchPosition` 持续跟踪，纬度、经度、精度、海拔、速度、方向、时间；复制坐标、存成 `.home.geo-json`、在浏览器里打开 OSM |
+| **3D 视图** `view3d` | 完整 | 自写 WebGL（不引 three.js）：环面结 / 立方体 / 球 / 二十面体，轨道相机（拖动旋转、滚轮缩放）、自转、线框、fps |
+| **音频播放** `audio` | 完整 | 拖入或选择文件，WebAudio 解码出波形（可点击定位）、播放/暂停、进度、音量、0.5–2× 速度、循环；存进 `.home`、下载 |
 
-> 四个壳子不是「忘了做」，是**没想清楚就不假装能做**。每个壳子里都写了「计划怎么做」和
-> 「为什么先不做」——录音要处理权限与关窗时的落盘，定位只在 HTTPS/localhost 给，
-> 3D 要么引 three.js 要么自己写矩阵与着色器，音频的解码格式受浏览器限制。
-> 与其给一个半残的按钮，不如把边界说清楚。
+> 这四个此前一直挂着「维护中」。不做不是「忘了」，而是每道都有一道浏览器给的硬边界：
+> 录音要权限、关窗要收音轨；定位只在 HTTPS / localhost 给，拒绝后没有第二次机会；
+> 3D 要么引 three.js（600 KB + 一个新依赖），要么自己写矩阵和着色器；
+> 音频的解码格式由浏览器决定（flac / ape 不是「没做」，是「做不到」）。
+>
+> 这一版把它们做完了，做法是把边界写进界面：3D 拿不到 WebGL 会直说「这里不假装能画」，
+> 音频解码失败只影响波形、播放照旧（`<audio>` 和 WebAudio 用的不是一套解码器），
+> 定位被拒会显示 `code` 对应的原因而不是转圈。
 
 **看图修图是截图的下半场**，两个窗口是接起来的：
 
@@ -1979,6 +2049,55 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 教训：**「谁算宽度」统一之后，还要问「谁按这个宽度画」**。算和画不在同一层时，
 你修完第一层会以为好了，其实第二层还在改数值。
 
+**54. `term.onScroll` 不是「用户滚动」：滚轮回看历史时它一声不响**
+自定义光标用 `vRow = cursorY + baseY - viewportY` 判断该不该藏，逻辑本身是对的，
+但只在 `onCursorMove` / `onScroll` / `onResize` 里重算。实测滚轮往上滚：
+`viewportY` 从 183 变成 120、光标行算出来 84（一共 22 行），**早就该藏了**，
+`.ht-cursor` 却还亮在最后一行——因为 `onScroll` 只在「缓冲区滚动」（新输出把内容顶上去）时触发，
+用户拖滚动条、滚轮回看历史不算。**修法**：直接监听 `.xterm-viewport` 的 `scroll` 事件，
+这条路径不挑渲染器，canvas / DOM 都有；隐藏时把 `init` 置回 false，下次出现直接落位，
+不补一段「从屏幕外飘回来」的动画。
+教训：**事件名字像什么，不等于它管什么**。要「用户滚动」，就监听真正会滚的那个元素。
+
+**55. 开窗动画用 `transform: scale()`，`getBoundingClientRect()` 会把它算进去**
+3D 窗口的画布按父容器尺寸定大小，用的是 `getBoundingClientRect()`。窗口刚插进 DOM 时
+开窗动画正从 `scale(.9)` 起跳、甚至接近 0，于是画布被定成 **80×80**；而
+`ResizeObserver` 看的是**布局尺寸**（一直没变），不会再回调，最后就是一张 80×80 的空画布，
+外面套着一个 700×500 的窗口。**修法**：量尺寸用 `clientWidth/clientHeight`（不受 transform 影响），
+再在每帧比一次布局尺寸做兜底。教训：**布局尺寸和视觉尺寸是两套数**，
+`getBoundingClientRect()` 给的是后者，做 canvas / 命中测试时要先问自己需要哪一套。
+
+**56. `Permissions-Policy: ()` 把自家的麦克风和定位也关掉了**
+后端的统一响应头里写着 `geolocation=(), microphone=(), camera=()`。它挡住了第三方
+iframe，也顺手把**本页面**的 `getUserMedia` 挡了：录音机一点开始就报
+`Permissions policy violation: microphone is not allowed in this document`，
+`navigator.permissions` 看着是 `granted`，权限弹窗根本不出现。**修法**：改成
+`geolocation=(self), microphone=(self), camera=(self)`——只给本页面，第三方 iframe 仍然拿不到。
+教训：安全头默认「全关」时，要回头检查**自己**是不是也需要这项能力；
+不然会出现「代码没问题、权限也给了、就是不让用」的鬼故事。
+
+**57. `[hidden]` 打不过带 `display` 的类**
+音频窗口载入文件后想把拖拽区收起来，写了 `this.drop.hidden = true`，界面纹丝不动——
+因为 `.au-drop{display:flex}` 的优先级高于 UA 的 `[hidden]{display:none}`。
+**修法**：直接写 `style.display='none'`（或者补一条 `.au-drop[hidden]{display:none}`）。
+教训：`hidden` 只是一个属性选择器，任何显式 `display` 都能盖过它。
+
+**58. 头值大小写：自家前端被自家后端 403**
+0.0.1.2 把产品名统一成 `HTerMinaL`，前端 `X-HTerm-Client` 的头值也跟着变成 `HTerMinaL`；
+三个后端的校验却还是 `!= "hterminal"` 全等比较。结果是**每一次模型调用都 403
+「缺少 X-HTerm-Client」**——而这个头本来只是「强制预检 + 自证是自家页面」，
+不是口令。**修法**：三份后端统一 `trim().toLowerCase() === 'hterminal'`。
+教训：**改产品名时，把所有「拿它当协议值」的地方一起搜一遍**；字符串比较默认区分大小写，
+而 HTTP 头值本身是大小写不敏感的。
+
+**59. 点号是路径分隔符：`rec-….webm` 存不进去**
+录音落盘写 `.home.rec-20261103-215549.webm`，被解析成
+`.home / rec-20261103-215549 / webm`，父目录不存在，直接报错。这个文件系统里
+**点号不是扩展名，是分隔符**。**修法**：落盘前统一走 `spotEscape()`（名字变成
+`rec-…-2ewebm` 这类形式），下载到真机时才用回带点的原名。
+教训：任何「用户看着像文件名」的字符串进 spotfs 之前都要转义，
+写死一个带点的常量路径（`.home.geo.json`）同样会踩——它其实是三层。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -2036,6 +2155,7 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.15 | 2026-11-03 | **光标该藏就藏 + 智能体真的能抓新闻 + 四个「维护中」做完**：①**光标滚出画布不隐藏**——`_cursorPlace()` 的越界判断本来是对的（`vRow = cursorY + baseY - viewportY`），但重算只挂在 `onCursorMove` / `term.onScroll` 上；`onScroll` 只在**缓冲区滚动**（新输出把内容顶上去）时触发，用户拖滚动条、滚轮回看历史时 `viewportY` 变了它一声不响。实测 `vp 183→120`、光标行 84（共 22 行），`.ht-cursor` 还亮在最后一行。**修法**：监听 `.xterm-viewport` 的 `scroll`（不挑渲染器），隐藏时 `init=false`，滚回来直接落位、不补动画。②**智能体抓新闻必失败**——三个后端的 `X-HTerm-Client` 还在和小写 `hterminal` 全等比较，而客户端从 0.0.1.2 起就发 `HTerMinaL`，于是**自家前端每次模型调用都被自己 403**（`缺少 X-HTerm-Client`）。改成 `trim().toLowerCase()` 比较。③**抓网页有了真正能走的路**——浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头，`r.jina.ai` / `allorigins` 在国内经常连不上，所谓「三级降级」实际没有一级能通。后端新增 `POST /v1/fetch` 代抓（只允许 http/https、80/443、目标必须解析到公网 IP、逐跳校验重定向、3 MB / 20 s 上限）；`fetch_url` 拿到 HTML / RSS / JSON 统一转正文；新增 **`news` 工具**（今日头条热榜 + 新浪滚动新闻，`count` / `source`），并在 `AGENT_ENV` 里写明「要新闻用 news，别猜 URL」。④**四个「维护中」做完了**（新 `build/59-media.js`）——**录音机**（MediaRecorder + AnalyserNode 实时波形、暂停、计时、设备选择、试听、存 `.home`、关窗收音轨）；**定位**（单次 / `watchPosition`、七项数据、复制 / 存 `.home.geo-json` / 开 OSM）；**3D 视图**（自写 WebGL：环面结 / 立方体 / 球 / 二十面体、轨道相机、自转、线框、fps，不引 three.js）；**音频播放**（WebAudio 解码波形、点击定位、进度 / 音量 / 0.5–2× / 循环、拖入即放）。⑤**顺带修的四个真坑**——`Permissions-Policy: ()` 把自家页面的麦克风与定位也关了（改 `(self)`）；3D 画布用 `getBoundingClientRect()` 量到开窗动画的 `scale` 值，被定成 80×80（改 `clientWidth`）；`[hidden]` 打不过 `.au-drop{display:flex}`；录音落盘名 `rec-….webm` 被点号拆成三层路径（走 `spotEscape`）。⑥**README 新增 §0「接活规则」**——被打断时先记住、手上的活继续做、收尾前逐条核对历史任务，没查过不许说做完。⑦文档：§12 抓新闻与 `/v1/fetch`、§13 接口与 SSRF 边界、§15 工具表、踩坑 54–59。 |
 | 0.0.1.14 | 2026-11-03 | **emoji 后面还是偏：这次是渲染层在改宽度**：①**现象**——`.home> 👨‍👩‍👧‍👦哈哈`，家庭图标后面紧贴「哈哈」，光标却在右边 6 格空地上，后面输入的字也全部左移。②**根因**——xterm 5.5 默认 **DOM 渲染器**，把一行里同属性的字符塞进同一个 `<span>`；浏览器对 span 内的 ZWJ 序列做连字，`👨‍👩‍👧‍👦` 画成一个家庭图标、只占 2 格，而 buffer 仍按「每个 emoji 2 格」推进 8 格。上一版统一了「谁算宽度」，没管「谁按这个宽度画」。③**修法**——加载 `@xterm/addon-canvas`（CDN 双源、可失败），逐格绘制，视觉宽度与 cell 严格一致；拿不到 addon 就留在 DOM 渲染器，功能不受影响。④**副作用与取舍**——家庭 emoji 显示成 4 个并排的人像（xterm 本来就不认 ZWJ cluster），换位置永远对。⑤**顺带**——canvas 的 cell 宽是整数 8px（DOM 是 8.426px 并靠 `letter-spacing` 补），`_cursorPlace` 的列×格宽更干净。⑥文档 §5.2 补「渲染器必须逐格画」、踩坑 53、第三方许可表加 addon-canvas。 |
 | 0.0.1.13 | 2026-11-03 | **光标在 emoji 后面跑偏**：①**现象**——中文正常，一打 emoji 光标就停在文字右边很远的空地上，折行点也比实际更早。②**根因**——Worker 的 `charWidth` 是手写的「哪些区段算 2 列」，渲染层用的是 xterm 的 Unicode 11 表；两份宽度算法在 ZWJ 序列上分家：`🧑‍🦲` 的 ZWJ 被算 1 列（实际 0，偏 1）、`👨‍👩‍👧‍👦` 三个 ZWJ 各算 1 列（偏 3）、`1️⃣` 的 U+20E3 算 1 列（偏 1）、`🏳️‍🌈` 的 U+1F3F3 算 2 列（xterm 算 1，偏 1）。③**修法**——主线程新增 `termWidthTable(term)`：用 `term._core.unicodeService.wcwidth()` 遍历 0–0x10FFFF，导出「宽 2」114 段、「宽 0」333 段（6 KB，约 16 ms），随 `init` 消息的 `wc` 字段发给 Worker；`charWidth` 有表就二分查表，没表才退回启发式（兜底补了 ZWJ / VS16 / U+20E3）。④**效果**——15 组 emoji 的 `cursorX - 文本结束列` 全部为 0；47 列窄窗里折两行，Home/End/退格位置正确。⑤文档 §5.2 宽度段落改写、踩坑 52。 |\n| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |\n| 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
 | 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
@@ -2064,6 +2184,7 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 22:10 | 0.0.1.15：光标滚出画布隐藏、智能体 403 / 抓新闻、四个维护中工具完成 | `build/40-term.js`（`.xterm-viewport` 监听、隐藏时 `init=false`、四工具接入、窗口尺寸）、`build/00-head.html`（媒体工具样式）、`build/59-media.js`（新增：Recorder/Geo/View3D/Audio）、`build/55-tools.js`（删 `MaintApp` 壳子）、`build/30-core.js`（APP_DEFS 描述、版本）、`build/60-agent.js`（`rawFetch`/`readable`/`agentNews`、`news` 工具、`AGENT_ENV`、保存路径）、`build.sh`（拼入 59-media）、`modelserver.{py,js,go}`（`/v1/fetch` + SSRF、头值大小写、`Permissions-Policy`、版本）、`README.md`（§0、§12、§13、§15、踩坑 54–59、日志） | Playwright：真实 DeepSeek 后端（`deepseek-flash`）「给我抓取最近10条新闻」→ 一次 `news` 调用、3.3 s 返回 10 条，窗口版排版成表格；TUI `agentTui.open()` 同一任务 6.9 s 出结果、`agent>` 提示符只有一条、光标落在提示符后（`cy=23 rows=24`）；滚轮上滚 `display:none`、回滚 `display:block`；录音 15.4 KB webm 落盘、波形绘制 447 px；定位 31.2304/121.4737 ±18 m 并存 `.home.geo-json`；音频波形 900 桶、播放 `currentTime=0.63`；3D 在 xvfb + swiftshader 下 58–60 fps、四种几何体索引数正确、拖动改变 yaw、线框/自转/复位正常；无 pageerror | 本轮 |
 | 2026-11-03 19:52 | 0.0.1.14：修「emoji 连字后光标偏右」（换 canvas 渲染器） | `build/40-term.js`（`CANVAS_JS` 双 CDN；`loadXterm` 去掉「齐了就 return」改为逐个补装；`_mount` 在 `open` 之后 `loadAddon(CanvasAddon)`，失败只 warn）、`licenses/README.md`（登记 addon-canvas 0.7.0，共用 `LICENSE.xterm.js.txt`）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2、踩坑 53、日志） | Playwright（无头 Chromium）：`👀` `🧑‍🦲` `👨‍👩‍👧‍👦` `🇨🇳` `👍🏽` `❤️` `1️⃣` 等 7 组，`cursorX − textEnd` 全 0；`.home> 👨‍👩‍👧‍👦哈哈` 光标 `left=152px`（19×8）与文本末尾齐平，像素扫描确认「哈哈」紧随 emoji、中间无空隙；47 列窄窗折两行、Home/End/退格正常；3000 行输出无卡顿；缩放 1200→820 后 `cols=96`、`cellW=8`；两个 jshel 窗口各自有 canvas、子窗口 `👨‍👩‍👧‍👦ab` 光标 `cx=17 left=136`；HarTMLes 窗口正常；`shot()` 截图 79 KB、终端文字与 emoji 均在图中；路由屏蔽 addon-canvas 后回退 DOM 渲染器、页面无报错；无 pageerror | 本轮 |
 | 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSL 切层/agent 退出回归无重复；无 pageerror | 本轮 |\n| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |\n| 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
 | 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |

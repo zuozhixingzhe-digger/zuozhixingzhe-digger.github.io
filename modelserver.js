@@ -28,7 +28,7 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
-const VERSION = '0.0.1.14';
+const VERSION = '0.0.1.15';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {
@@ -299,7 +299,9 @@ function securityHeaders(res) {
   res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  /* self 而不是空：沙箱自带录音机/定位，空值会让页内 getUserMedia 直接报
+     Permissions policy violation（0.0.1.15 修）。第三方 iframe 仍然拿不到。 */
+  res.setHeader('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=(self)');
 }
 
 function cors(req, res) {
@@ -422,8 +424,10 @@ const server = http.createServer(async (req, res) => {
       reply(req, res, 403, { error: { message: '只接受 POST /v1/chat/completions', type: 'forbidden' } });
       return;
     }
-    if (req.headers['x-hterm-client'] !== 'hterminal') {
-      reply(req, res, 403, { error: { message: '缺少 X-HTerm-Client', type: 'forbidden' } });
+    /* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，而这里一直小写全等比较，
+     * 自家前端每次都被自己 403（0.0.1.15 修）。这个头只用来强制预检 + 自证同源页面。 */
+    if (String(req.headers['x-hterm-client'] || '').trim().toLowerCase() !== 'hterminal') {
+      reply(req, res, 403, { error: { message: '缺少或错误的 X-HTerm-Client', type: 'forbidden' } });
       return;
     }
     const ctype = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();

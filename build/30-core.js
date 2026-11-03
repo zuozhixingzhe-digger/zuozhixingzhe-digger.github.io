@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.14';
+const HT_VERSION = '0.0.1.15';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -338,10 +338,10 @@ const APP_DEFS = [
   { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
   { name:'image', title:'看图修图', desc:'查看图片、裁剪标注打码（截图搭档）', type:'image', icon:'▩' },
   { name:'urlhash', title:'链接即状态', desc:'把文本/JS 压进 URL 片段', type:'urlhash', icon:'⌗' },
-  { name:'recorder', title:'录音机', desc:'维护中，暂不可用', type:'recorder', icon:'◎' },
-  { name:'geo', title:'定位', desc:'维护中，暂不可用', type:'geo', icon:'⌖' },
-  { name:'view3d', title:'3D 视图', desc:'维护中，暂不可用', type:'view3d', icon:'◫' },
-  { name:'audio', title:'音频播放', desc:'维护中，暂不可用', type:'audio', icon:'♫' },
+  { name:'recorder', title:'录音机', desc:'麦克风录音，落进 .home', type:'recorder', icon:'◎' },
+  { name:'geo', title:'定位', desc:'坐标、精度、海拔，可存成 JSON', type:'geo', icon:'⌖' },
+  { name:'view3d', title:'3D 视图', desc:'自写 WebGL 场景，可拖动旋转', type:'view3d', icon:'◫' },
+  { name:'audio', title:'音频播放', desc:'波形、进度、速度，可拖入文件', type:'audio', icon:'♫' },
   { name:'settings', title:'设置', desc:'打开“更多”抽屉', type:'drawer', icon:'≥' },
   { name:'about', title:'关于', desc:'版本、许可与第三方声明', type:'about', icon:'ⓘ' },
 ];
