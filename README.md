@@ -1257,6 +1257,10 @@ CORS 头只在 Origin 通过校验后**回显该 Origin**，绝不回 `*`，也�
 
 它同样要吃 `X-HTerm-Client` 与 Origin 校验，所以「公网页面 → 本地端口 → 内网」这条路走不通。
 
+> 三份后端行为一致，只有一处差别：**Go 标准库没有 GB18030 / GBK 解码表**，
+> 非 UTF-8 页面会原样返回字符串并在 `charset` 字段标注。内置的两个新闻源都是 UTF-8，
+> 不受影响；真要抓老 GBK 站点，用 Python 版后端最稳（`TextDecoder` 在浏览器和 Node 里也都认 GBK）。
+
 请求侧还有两条：
 
 - **必须带 `X-HTerm-Client: HTerMinaL`**——自定义头会触发预检，普通 `<form>` / 裸 `fetch` 打不过来。

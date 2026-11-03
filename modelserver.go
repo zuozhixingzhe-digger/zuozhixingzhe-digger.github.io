@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -598,7 +599,6 @@ func localOnly(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-
 /* scriptDir：可执行文件所在目录。go run 时是临时目录，所以优先用可执行文件路径；
  * 找不到就退回当前工作目录——两种情况都能覆盖「把 index.html 放在旁边」的用法。 */
 func scriptDir() string {
@@ -667,8 +667,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "本服务只提供 index.html、/health 与 /v1/chat/completions", "type": "forbidden"}})
 		return
 	}
-	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "只接受 POST /v1/chat/completions", "type": "forbidden"}})
+	route := r.URL.Path
+	if r.Method != http.MethodPost || (route != "/v1/chat/completions" && route != "/v1/fetch") {
+		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "只接受 POST /v1/chat/completions 与 /v1/fetch", "type": "forbidden"}})
 		return
 	}
 	/* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，这里曾小写全等比较，
@@ -692,6 +693,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "JSON 解析失败：" + err.Error(), "type": "bad_request"}})
 		return
 	}
+	if route == "/v1/fetch" {
+		data, err := fetchPublic(asStr(body["url"]))
+		if err != nil {
+			reply(w, r, 502, map[string]any{"error": map[string]any{"message": "抓取失败：" + err.Error(), "type": "fetch_failed"}})
+			return
+		}
+		reply(w, r, 200, data)
+		return
+	}
 	if body["stream"] == true {
 		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})
 		return
@@ -712,6 +722,158 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, r, status, data)
 	log.Printf("POST /v1/chat/completions provider=%s status=%d %dms", provider, status, time.Since(started).Milliseconds())
+}
+
+/*
+---------------------------------------------------------------- /v1/fetch
+
+	浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头；r.jina.ai / allorigins
+	在国内又经常连不上。由本机进程代抓是唯一稳定的一条路。
+	它不是任意代理：只允许 http/https、80/443，目标必须解析到公网 IP，逐跳校验。
+*/
+const fetchMax = 3 * 1024 * 1024
+
+var fetchTimeout = time.Duration(envInt("HT_FETCH_TIMEOUT", 20)) * time.Second
+
+const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+func ipPublic(ip net.IP) bool {
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+}
+
+func publicHost(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "" || host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ipPublic(ip)
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !ipPublic(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+/*
+标准库只有 UTF-8：GB18030/GBK 这类没有解码表，只能原样返回并在 charset 里标注。
+
+	今日头条、新浪这两个新闻源都是 UTF-8；真遇到 GBK 站点，用 Python 版后端更准。
+*/
+func decodeBody(ct string, buf []byte) (string, string) {
+	cs := ""
+	if mt, params, err := mime.ParseMediaType(ct); err == nil {
+		_ = mt
+		cs = strings.ToLower(params["charset"])
+	}
+	if cs == "" {
+		head := strings.ToLower(string(buf[:min(len(buf), 4096)]))
+		if i := strings.Index(head, "charset="); i >= 0 {
+			rest := head[i+8:]
+			rest = strings.TrimLeft(rest, "\"' ")
+			j := 0
+			for j < len(rest) && (rest[j] == '-' || rest[j] == '_' || (rest[j] >= '0' && rest[j] <= '9') || (rest[j] >= 'a' && rest[j] <= 'z')) {
+				j++
+			}
+			cs = rest[:j]
+		}
+	}
+	if cs == "utf8" {
+		cs = "utf-8"
+	}
+	return string(buf), cs
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func fetchPublic(rawURL string) (map[string]any, error) {
+	cur := strings.TrimSpace(rawURL)
+	if cur == "" {
+		return nil, fmt.Errorf("url 为空")
+	}
+	client := &http.Client{
+		Timeout: fetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse /* 自己处理，才能逐跳校验 */
+		},
+	}
+	redirects := []string{}
+	for hop := 0; hop < 5; hop++ {
+		u, err := url.Parse(cur)
+		if err != nil {
+			return nil, fmt.Errorf("URL 解析失败：%v", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, fmt.Errorf("只支持 http/https")
+		}
+		if u.User != nil {
+			return nil, fmt.Errorf("URL 不能带账号密码")
+		}
+		port := u.Port()
+		if port == "" {
+			if u.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+		if port != "80" && port != "443" {
+			return nil, fmt.Errorf("只允许 80/443 端口")
+		}
+		if !publicHost(u.Hostname()) {
+			return nil, fmt.Errorf("目标不是公网地址：%s", u.Hostname())
+		}
+		req, _ := http.NewRequest(http.MethodGet, cur, nil)
+		req.Header.Set("User-Agent", browserUA)
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == 301 || resp.StatusCode == 302 || resp.StatusCode == 303 || resp.StatusCode == 307 || resp.StatusCode == 308 {
+			loc := resp.Header.Get("Location")
+			resp.Body.Close()
+			if loc == "" {
+				return nil, fmt.Errorf("HTTP %d 但没给 Location", resp.StatusCode)
+			}
+			next, err := u.Parse(loc)
+			if err != nil {
+				return nil, err
+			}
+			cur = next.String()
+			redirects = append(redirects, cur)
+			continue
+		}
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, fetchMax+1))
+		resp.Body.Close()
+		if len(buf) > fetchMax {
+			buf = buf[:fetchMax]
+		}
+		ct := resp.Header.Get("Content-Type")
+		text, cs := decodeBody(ct, buf)
+		return map[string]any{
+			"status":      resp.StatusCode,
+			"finalUrl":    cur,
+			"contentType": ct,
+			"charset":     cs,
+			"text":        text,
+			"redirects":   redirects,
+		}, nil
+	}
+	return nil, fmt.Errorf("重定向太多")
 }
 
 func main() {

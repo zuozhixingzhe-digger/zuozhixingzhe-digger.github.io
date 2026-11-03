@@ -14,6 +14,8 @@
 'use strict';
 
 const http = require('node:http');
+const net = require('node:net');
+const dns = require('node:dns').promises;
 const fs = require('node:fs');
 const nodePath = require('node:path');
 
@@ -28,6 +30,9 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
+const FETCH_MAX = 3 * 1024 * 1024;
+const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const VERSION = '0.0.1.15';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
@@ -280,6 +285,79 @@ async function doResponses(body) {
  *      放过它等于任何网站都能用 <iframe sandbox srcdoc="fetch(...)"> 打本地端口
  *   4. Sec-Fetch-Site: cross-site 一律拒绝 —— 浏览器自己打的标，页面改不了
  */
+/* ---------------------------------------------------------------- /v1/fetch
+ * 浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头；r.jina.ai / allorigins
+ * 在国内又经常连不上。由本机进程代抓是唯一稳定的一条路。
+ * 它不是任意代理：只允许 http/https、80/443，目标必须解析到公网 IP，逐跳校验。 */
+const PRIVATE = new net.BlockList();
+[['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+ ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15],
+ ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]
+].forEach(([a, b]) => PRIVATE.addSubnet(a, b, 'ipv4'));
+[['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+ ['2001:db8::', 32], ['64:ff9b::', 96]
+].forEach(([a, b]) => PRIVATE.addSubnet(a, b, 'ipv6'));
+
+function ipPublic(ip) {
+  const fam = net.isIP(ip);
+  if (!fam) return false;
+  /* IPv4-mapped（::ffff:1.2.3.4）要先拆出 IPv4 再看：把 ::ffff:0:0/96 加进
+   * BlockList 会把**所有** IPv4 都判成私网（写这版时踩过：toutiao 被拒）。 */
+  if (fam === 6) {
+    const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+    if (m) return ipPublic(m[1]);
+  }
+  try { return !PRIVATE.check(ip, fam === 6 ? 'ipv6' : 'ipv4'); } catch (e) { return false; }
+}
+
+async function publicHost(host) {
+  host = String(host || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false;
+  if (net.isIP(host)) return ipPublic(host);
+  try {
+    const list = await dns.lookup(host, { all: true });
+    return list.length > 0 && list.every(a => ipPublic(a.address));
+  } catch (e) { return false; }
+}
+
+async function fetchPublic(rawUrl) {
+  let cur = String(rawUrl || '').trim();
+  if (!cur) throw new Error('url 为空');
+  const redirects = [];
+  for (let hop = 0; hop < 5; hop++) {
+    const u = new URL(cur);
+    if (!['http:', 'https:'].includes(u.protocol)) throw new Error('只支持 http/https');
+    if (u.username || u.password) throw new Error('URL 不能带账号密码');
+    const port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+    if (port !== 80 && port !== 443) throw new Error('只允许 80/443 端口');
+    if (!(await publicHost(u.hostname))) throw new Error('目标不是公网地址：' + u.hostname);
+    const resp = await fetch(cur, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(FETCH_TIMEOUT * 1000),
+      headers: {
+        'user-agent': UA,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.6'
+      }
+    });
+    if ([301, 302, 303, 307, 308].includes(resp.status)) {
+      const loc = resp.headers.get('location');
+      if (!loc) throw new Error('HTTP ' + resp.status + ' 但没给 Location');
+      cur = new URL(loc, cur).toString();
+      redirects.push(cur);
+      continue;
+    }
+    const buf = Buffer.from(await resp.arrayBuffer()).subarray(0, FETCH_MAX);
+    const ct = resp.headers.get('content-type') || '';
+    const cs = (/charset=([\w-]+)/i.exec(ct) || [])[1] ||
+      (/charset=["']?([\w-]+)/i.exec(buf.subarray(0, 4096).toString('latin1')) || [])[1] || 'utf-8';
+    let text;
+    try { text = new TextDecoder(cs).decode(buf); } catch (e) { text = new TextDecoder('utf-8').decode(buf); }
+    return { status: resp.status, finalUrl: cur, contentType: ct, text, redirects };
+  }
+  throw new Error('重定向太多');
+}
+
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
 function originAllowed(origin) {
@@ -420,8 +498,9 @@ const server = http.createServer(async (req, res) => {
       reply(req, res, 403, { error: { message: '本服务只提供 index.html、/health 与 /v1/chat/completions', type: 'forbidden' } });
       return;
     }
-    if (req.method !== 'POST' || String(req.url || '').split('?')[0] !== '/v1/chat/completions') {
-      reply(req, res, 403, { error: { message: '只接受 POST /v1/chat/completions', type: 'forbidden' } });
+    const route = String(req.url || '').split('?')[0];
+    if (req.method !== 'POST' || (route !== '/v1/chat/completions' && route !== '/v1/fetch')) {
+      reply(req, res, 403, { error: { message: '只接受 POST /v1/chat/completions 与 /v1/fetch', type: 'forbidden' } });
       return;
     }
     /* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，而这里一直小写全等比较，
@@ -443,6 +522,14 @@ const server = http.createServer(async (req, res) => {
       body = JSON.parse(raw.toString('utf8'));
     } catch (e) {
       reply(req, res, 400, { error: { message: 'JSON 解析失败：' + e.message, type: 'bad_request' } });
+      return;
+    }
+    if (route === '/v1/fetch') {
+      try {
+        reply(req, res, 200, await fetchPublic(body.url));
+      } catch (e) {
+        reply(req, res, 502, { error: { message: '抓取失败：' + e.message, type: 'fetch_failed' } });
+      }
       return;
     }
     if (body.stream) {
