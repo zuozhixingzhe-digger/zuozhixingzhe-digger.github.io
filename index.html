@@ -1288,6 +1288,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
  *  注意：这里必须是模块级变量——每个 shell 的 `state` 是闭包里的，模块级代码读不到。 */
 let HT_VERSION = '0.0.1.0';
 
+/* ANSI 只属于终端（21-shared 的 inspect 会用它上色；主线程没有它）。 */
 const ANSI = {
   reset:'\x1b[0m', bold:'\x1b[1m', dim:'\x1b[2m', italic:'\x1b[3m', underline:'\x1b[4m',
   red:'\x1b[31m', green:'\x1b[32m', yellow:'\x1b[33m', blue:'\x1b[34m',
@@ -1303,72 +1304,75 @@ function post(msg, transfer) { self.postMessage(msg, transfer || []); }
 function out(s) { if (s !== null && s !== undefined && s !== '') post({ t:'out', data:String(s) }); }
 function writeErr(s) { out(ANSI.red + s + ANSI.reset); }
 
+/** 单个码点的终端显示宽度：CJK / 全角算 2，组合字符算 0。 */
+function charWidth(cp) {
+  if (cp === 0x200b || (cp >= 0x0300 && cp <= 0x036f) || cp === 0xfeff) return 0;
+  if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
+      (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
+      (cp >= 0xfe10 && cp <= 0xfe19) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
+      (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) ||
+      (cp >= 0x1f300 && cp <= 0x1f64f) || (cp >= 0x1f900 && cp <= 0x1f9ff) ||
+      (cp >= 0x20000 && cp <= 0x3fffd)) return 2;
+  return 1;
+}
+
 /** 终端显示宽度：CJK / 全角算 2，组合字符算 0。够用即可。 */
 function strWidth(s) {
   let w = 0;
-  for (const ch of String(s)) {
-    const cp = ch.codePointAt(0);
-    if (cp === 0x200b || (cp >= 0x0300 && cp <= 0x036f) || cp === 0xfeff) continue;
-    if ((cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0xa4cf) ||
-        (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) ||
-        (cp >= 0xfe10 && cp <= 0xfe19) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
-        (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) ||
-        (cp >= 0x1f300 && cp <= 0x1f64f) || (cp >= 0x1f900 && cp <= 0x1f9ff) ||
-        (cp >= 0x20000 && cp <= 0x3fffd)) w += 2;
-    else w += 1;
-  }
+  for (const ch of String(s)) w += charWidth(ch.codePointAt(0));
   return w;
+}
+
+/** 剥掉 ANSI 转义，只留可见字符（算提示符宽度用）。 */
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()][A-Za-z0-9]/g, '');
+}
+
+/**
+ * 把「提示符 + 输入」按显示宽度折成若干行，并算出光标所在的行/列。
+ *
+ * 为什么必须自己折：终端的自动折行是隐式的，一旦内容超过一列宽，
+ * `\r` 只回到**最后一行**行首、`\x1b[nD` 也跨不过行边界。中文每字 2 列，
+ * 80 列终端打 39 个字就折行，之后所有相对移动全部错位——这就是
+ * 「打多了 / 打中文 / 光标乱移就全乱」的根因。
+ *
+ * 显式折行之后，行号、列号都是我们自己算的，跨多少行都不会错。
+ * 宽度不够放一个宽字符时整字移到下一行（行尾留 1 列空），与 xterm 一致。
+ */
+function layoutInput(prompt, buf, cur, cols) {
+  const lines = [];
+  let line = '', w = 0;
+  const flush = () => { lines.push(line); line = ''; w = 0; };
+  const put = (ch, cw) => {
+    if (w + cw > cols && line) flush();
+    line += ch; w += cw;
+  };
+  let i = 0, curRow = 0, curCol = 0, found = false;
+  /* 提示符里有 ANSI 颜色，`\x1b[36m` 这 5 个 byte 不占屏幕，绝不能算宽度。
+   * 以前直接逐字符遍历原文，光标列数凭空多出 9 列，于是「打完字光标跑到右边」。 */
+  const plain = stripAnsi(prompt);
+  for (const ch of plain) put(ch, charWidth(ch.codePointAt(0)));
+  /* 第一行里属于提示符的可见字符数：渲染时把这一段换成带颜色的原文 */
+  const prefixChars = lines.length ? lines[0].length : line.length;
+  while (i < buf.length) {
+    if (i === cur && !found) { curRow = lines.length; curCol = w; found = true; }
+    const cp = buf.codePointAt(i);
+    const ch = String.fromCodePoint(cp);
+    put(ch, charWidth(cp));
+    i += ch.length;
+  }
+  if (!found) { curRow = lines.length; curCol = w; found = true; }
+  flush();
+  if (prefixChars) lines[0] = prompt + lines[0].slice(prefixChars);
+  return { lines, curRow, curCol };
 }
 
 function fmtBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
   return (n / 1048576).toFixed(2) + ' MB';
-}
-
-function inspect(v, depth, seen) {
-  depth = depth || 0; seen = seen || new Set();
-  const t = typeof v;
-  if (v === null) return 'null';
-  if (v === undefined) return 'undefined';
-  if (t === 'string') return depth === 0 ? v : JSON.stringify(v);
-  if (t === 'number' || t === 'boolean' || t === 'bigint') return String(v);
-  if (t === 'symbol') return v.toString();
-  if (t === 'function') {
-    const src = Function.prototype.toString.call(v).replace(/\s+/g, ' ').trim();
-    return ANSI.cyan + (src.length > 90 ? src.slice(0, 87) + '…' : src) + ANSI.reset;
-  }
-  if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
-  if (v instanceof Promise) return 'Promise { <pending> }';
-  /* ESM 命名空间对象：`await require('lodash-es@4')` 会回显几百行导出，
-   * 把整个终端刷掉。这里只报「是哪个包、有几个导出」，要看细节自己去点。 */
-  if (v && v[Symbol.toStringTag] === 'Module') {
-    const ks = Object.keys(v);
-    return ANSI.gray + 'Module(' + ks.length + ' exports) { ' + ks.slice(0, 8).join(', ')
-      + (ks.length > 8 ? ', …' : '') + ' }' + ANSI.reset;
-  }
-  if (seen.has(v)) return ANSI.gray + '[Circular]' + ANSI.reset;
-  if (depth > 4) return ANSI.gray + '…' + ANSI.reset;
-  seen.add(v);
-  try {
-    if (Array.isArray(v)) {
-      const items = v.slice(0, 60).map(x => inspect(x, depth + 1, seen));
-      return '[ ' + items.join(', ') + (v.length > 60 ? ', … ' + (v.length - 60) + ' more' : '') + ' ]';
-    }
-    if (v instanceof Map) return 'Map(' + v.size + ') { ' + [...v].slice(0, 30).map(([k, x]) => inspect(k, depth + 1, seen) + ' => ' + inspect(x, depth + 1, seen)).join(', ') + ' }';
-    if (v instanceof Set) return 'Set(' + v.size + ') { ' + [...v].slice(0, 30).map(x => inspect(x, depth + 1, seen)).join(', ') + ' }';
-    if (v instanceof Date) return v.toISOString();
-    if (v instanceof ArrayBuffer) return 'ArrayBuffer(' + v.byteLength + ')';
-    if (ArrayBuffer.isView(v)) return v.constructor.name + '(' + v.length + ') [' + Array.from(v.slice(0, 20)).join(', ') + ']';
-    if (typeof v === 'object' && v.constructor && v.constructor.name && v.constructor.name !== 'Object') {
-      const keys = Object.keys(v);
-      return v.constructor.name + ' { ' + keys.slice(0, 30).map(k => k + ': ' + inspect(v[k], depth + 1, seen)).join(', ') + (keys.length > 30 ? ', …' : '') + ' }';
-    }
-    const keys = Object.keys(v);
-    if (!keys.length) return '{}';
-    return '{ ' + keys.slice(0, 50).map(k => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)) + ': ' + inspect(v[k], depth + 1, seen)).join(', ') + (keys.length > 50 ? ', …' : '') + ' }';
-  } catch (e) { return ANSI.gray + '[uninspectable]' + ANSI.reset; }
-  finally { seen.delete(v); }
 }
 
 function fmtArgs(args) {
@@ -1405,25 +1409,118 @@ class LineEditor {
     this.promptStr = '';
     this.paste = null;
     this.interrupted = false;
+    /* 上次绘制占用了几行、光标停在块内第几行——重绘时靠这两个数回到起点。
+     * 不记的话，只能假设「输入永远一行」，中文一折行就画歪。 */
+    this._rows = 0;
+    this._curRow = 0;
+    this._pending = '';
+  }
+  /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
+  get cols() {
+    let c = 80;
+    try { c = (this.o.cols && this.o.cols()) || 80; } catch (e) {}
+    return Math.max(8, c | 0);
+  }
+  get rows() {
+    let r = 24;
+    try { r = (this.o.rows && this.o.rows()) || 24; } catch (e) {}
+    return Math.max(4, r | 0);
   }
   promptText() { return typeof this.o.prompt === 'function' ? this.o.prompt() : (this.o.prompt || '> '); }
   start() {
     this.promptStr = this.promptText();
-    out(this.promptStr);
+    this.buf = ''; this.cur = 0;
+    this._rows = 0;
+    this._curRow = 0;
+    this.redraw();
+  }
+  /** 提交完成后重开一行提示符。统一走 redraw，才不会出现两个提示符叠在一起。 */
+  reopen() {
+    if (this.closed || this.raw) return;
+    this.promptStr = this.promptText();
+    this.buf = ''; this.cur = 0;
+    this._rows = 0; this._curRow = 0;
+    this.redraw();
+    const pend = this._pending;
+    this._pending = '';
+    if (pend) this.insertText(pend);
+  }
+  /* 等待期间攒下来的输入：只留可打印字符。
+   * 方向键、Esc 序列在「没有输入行」的时候没有意义，丢掉比乱用安全。 */
+  _stash(data) {
+    let s = '';
+    for (let i = 0; i < data.length; i++) {
+      const c = data.codePointAt(i);
+      if (c === 0x1b) {
+        const m = data.slice(i).match(/^\x1b\[[0-9;?]*[ -\/]*[@-~]/);
+        i += (m ? m[0].length : 1) - 1;
+        continue;
+      }
+      if (c === 0x7f || c === 0x08) { s = s.slice(0, -1); continue; }
+      if (c >= 0x20) s += String.fromCodePoint(c);
+    }
+    if (s) this._pending += s;
   }
   setBusy(b) { this.busy = b; }
+
+  /** 只擦掉上次画的那一块，不重画。粘贴、Ctrl+C、发生外部输出之前调用。 */
+  erase() {
+    if (this._rows <= 0) { this._rows = 0; this._curRow = 0; return; }
+    if (this._curRow > 0) out('\x1b[' + this._curRow + 'A');
+    out('\r');
+    for (let k = 0; k < this._rows; k++) {
+      out('\x1b[2K');
+      if (k < this._rows - 1) out('\x1b[1B\r');
+    }
+    if (this._rows > 1) out('\x1b[' + (this._rows - 1) + 'A');
+    out('\r');
+    this._rows = 0; this._curRow = 0;
+  }
+
+  /**
+   * 全量重绘。**所有会改变 buf 或 cur 的操作都走这里**，不再用 `\x1b[nD`
+   * 这种相对位移——它在折行后完全不成立。
+   *
+   * 步骤：上移回块首 → 逐行擦掉旧内容 → 显式按行写新内容 → 定位光标。
+   */
   redraw() {
-    if (this.closed) return;
+    if (this.closed || this.raw) return;
     const p = this.promptStr || this.promptText();
-    out('\r\x1b[2K' + p + this.buf);
-    const tail = strWidth(this.buf.slice(this.cur));
-    if (tail > 0) out('\x1b[' + tail + 'D');
+    const cols = this.cols;
+    let L = layoutInput(p, this.buf, this.cur, cols);
+
+    /* 输入长到超过一屏时只画尾部：终端没法把已经滚上去的行再擦掉，
+     * 硬画只会把历史输出盖烂。这一屏以外的内容仍然在 buf 里，按键照常生效。 */
+    const maxRows = Math.max(1, this.rows - 1);
+    let skip = 0;
+    if (L.lines.length > maxRows) {
+      skip = L.lines.length - maxRows;
+      L = { lines: L.lines.slice(skip), curRow: L.curRow - skip, curCol: L.curCol };
+      if (L.curRow < 0) { L.curRow = 0; L.curCol = 0; }
+    }
+
+    this.erase();
+
+    /* 整块一次 out：一条 postMessage 画完，避免中间帧闪烁；
+     * 每按键发十来条消息的话，长文本输入会明显卡顿。 */
+    let buf = L.lines.join('\r\n');
+    const back = L.lines.length - 1 - L.curRow;
+    if (back > 0) buf += '\x1b[' + back + 'A';
+    buf += '\r';
+    if (L.curCol > 0) buf += '\x1b[' + L.curCol + 'C';
+    out(buf);
+
+    this._rows = L.lines.length;
+    this._curRow = L.curRow;
   }
   insert(text) {
     text = text.replace(/\r\n?/g, '\n');
     if (text.includes('\n')) {
       const merged = (this.buf + text).replace(/\n+$/, '');
       this.buf = ''; this.cur = 0;
+      /* 先把自己画的那一块擦掉，否则「[粘贴 N 行]」会插在输入中间，
+       * 上面几行输入就永远留在屏幕上了。 */
+      this.erase();
       out(ANSI.gray + '[粘贴 ' + merged.split('\n').length + ' 行]' + ANSI.reset);
       this.enqueueText(merged);
       return;
@@ -1434,8 +1531,9 @@ class LineEditor {
     if (!text) return;
     this.buf = this.buf.slice(0, this.cur) + text + this.buf.slice(this.cur);
     this.cur += text.length;
-    if (this.cur === this.buf.length) out(text);
-    else this.redraw();
+    /* 不再有「在行尾就直接 out(text)」的快速路径：那条路依赖终端的自动折行，
+     * 一旦折行，`_rows` 就与实际屏幕不符，下一次按键必然画歪。 */
+    this.redraw();
   }
   backspace() {
     if (this.cur <= 0) return;
@@ -1454,17 +1552,29 @@ class LineEditor {
     this.buf = this.buf.slice(0, this.cur) + this.buf.slice(this.cur + n);
     this.redraw();
   }
+  /* 左右移动按**码点**走一步，不是按 UTF-16 码元：emoji 是代理对，
+   * 按码元移一半会卡在字符中间，后续 slice 就把它劈开了。 */
   move(d) {
-    const next = Math.max(0, Math.min(this.buf.length, this.cur + d));
+    let next = this.cur;
+    if (d > 0) {
+      if (next >= this.buf.length) return;
+      const cp = this.buf.codePointAt(next);
+      next += cp > 0xffff ? 2 : 1;
+    } else {
+      if (next <= 0) return;
+      next -= 1;
+      const prev = this.buf.charCodeAt(next);
+      if (prev >= 0xdc00 && prev <= 0xdfff && next > 0) next -= 1;
+    }
     if (next === this.cur) return;
-    const a = this.buf.slice(Math.min(this.cur, next), Math.max(this.cur, next));
-    const w = strWidth(a);
-    if (w > 0) out('\x1b[' + w + (d > 0 ? 'C' : 'D'));
     this.cur = next;
+    this.redraw();
   }
-  home() { if (this.cur) { out('\x1b[' + strWidth(this.buf.slice(0, this.cur)) + 'D'); this.cur = 0; } }
-  end() { if (this.cur < this.buf.length) { out('\x1b[' + strWidth(this.buf.slice(this.cur)) + 'C'); this.cur = this.buf.length; } }
+  home() { if (this.cur) { this.cur = 0; this.redraw(); } }
+  end() { if (this.cur < this.buf.length) { this.cur = this.buf.length; this.redraw(); } }
   clearLine() { this.buf = ''; this.cur = 0; this.redraw(); }
+  /* 外部输出（智能体流式回答、命令结果）要插进来之前，把输入块挪开 */
+  beforeExternalOutput() { this.erase(); }
   killToEnd() { this.buf = this.buf.slice(0, this.cur); this.redraw(); }
   delWord() {
     let i = this.cur;
@@ -1488,6 +1598,7 @@ class LineEditor {
   async submit() {
     const line = this.buf;
     this.buf = ''; this.cur = 0; this.draft = '';
+    this._rows = 0; this._curRow = 0;
     out('\r\n');
     if (line.trim()) {
       if (this.history[this.history.length - 1] !== line) {
@@ -1512,11 +1623,12 @@ class LineEditor {
       /* 全屏应用（vim/nano）接管期间**绝对不能**补提示符：
        * 它们把画面画在自己算好的坐标上，这里再 out 一个 ".home $ " 会正好盖在
        * 正文第一行上（nano 的标题栏和第二行内容就是这么糊掉的）。 */
-      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
+      if (!this.closed && !this.raw) this.reopen();
     }
   }
   async submitText(text) {
     if (this.closed) return;
+    this._rows = 0; this._curRow = 0;
     out('\r\n');
     this.busy = true;
     try { await this.o.onSubmit(text); }
@@ -1526,7 +1638,7 @@ class LineEditor {
       out('\r\n');
     } finally {
       this.busy = false;
-      if (!this.closed && !this.raw) { this.promptStr = this.promptText(); out(this.promptStr); }
+      if (!this.closed && !this.raw) this.reopen();
     }
   }
   enqueueSubmit() {
@@ -1540,7 +1652,9 @@ class LineEditor {
   /* 原始模式：把按键原样交给外部（vim/nano 这类全屏 TUI 用），不走行编辑。 */
   setRaw(fn) {
     this.raw = fn || null;
-    if (!fn) { this.redraw(); }
+    /* 全屏应用（vim/nano）期间屏幕由它接管，我们记的 _rows 已经无意义；
+     * 回来时若还拿旧值上移擦除，会把人家刚画完的画面抹掉一块。 */
+    if (!fn) { this._rows = 0; this._curRow = 0; this.redraw(); }
   }
   feed(data) {
     if (this.closed) return;
@@ -1554,6 +1668,10 @@ class LineEditor {
       return;
     }
     if (this.busy) {
+      /* 等模型回答时打的字以前是**直接扔掉**的：用户以为输进去了，
+       * 结果提示符回来后句子少了半截，或者干脆全没了。
+       * 现在攒起来，提示符回来时一次性补进输入行。 */
+      this._stash(data);
       if (data.includes('\x03')) {
         this.interrupted = true;
         out('^C\r\n');
@@ -1607,7 +1725,15 @@ class LineEditor {
       }
       if (ch === '\r' || ch === '\n') { i += 1; this.enqueueSubmit(); continue; }
       if (ch === '\x7f' || ch === '\b') { this.backspace(); i += 1; continue; }
-      if (ch === '\x03') { i += 1; out('^C\r\n'); this.clearLine(); this.promptStr = this.promptText(); out(this.promptStr); continue; }
+      if (ch === '\x03') {
+        i += 1;
+        /* 先把输入块擦掉再打 ^C：否则 ^C 落在输入中间，后面那半截还留在屏幕上。 */
+        this.erase();
+        this.buf = ''; this.cur = 0;
+        out('^C\r\n');
+        this.reopen();
+        continue;
+      }
       if (ch === '\x04') {
         i += 1;
         if (!this.buf) {
@@ -1619,7 +1745,15 @@ class LineEditor {
         } else this.delete();
         continue;
       }
-      if (ch === '\x0c') { i += 1; out('\x1b[2J\x1b[H'); this.promptStr = this.promptText(); this.redraw(); continue; }
+      if (ch === '\x0c') {
+        i += 1;
+        /* 清屏后旧块已经不存在了，_rows 必须归零，否则下一次重绘会往上抹空气。 */
+        this._rows = 0; this._curRow = 0;
+        out('\x1b[2J\x1b[H');
+        this.promptStr = this.promptText();
+        this.redraw();
+        continue;
+      }
       if (ch === '\x15') { i += 1; this.clearLine(); continue; }
       if (ch === '\x17') { i += 1; this.delWord(); continue; }
       if (ch === '\x01') { i += 1; this.home(); continue; }
@@ -2156,20 +2290,6 @@ function makeShell(ctx) {
   }
 
   /* ---- 执行器 ---- */
-  function hoist(code) {
-    return code.split('\n').map(line => {
-      let m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/);
-      if (m && !/[,]/.test(m[4].replace(/[,({\[]/g, ''))) {
-        return m[1] + 'globalThis.' + m[3] + ' = ' + m[4] + ';';
-      }
-      let f = line.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
-      if (f) return m2(f, line);
-      return line;
-    }).join('\n');
-  }
-  function m2(f, line) {
-    return f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + line.slice(f[0].length);
-  }
 
   async function execute(raw) {
     let code = raw;
@@ -2185,24 +2305,10 @@ function makeShell(ctx) {
      * `document.querySelector('#x').innerHTML` 这种同步读能拿到值。
      * 不改变语义，只是把「读」提前做掉。 */
     try { await prefetchDom(code); } catch (e) {}
-    const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(code);
     try {
-      // 声明优先走语句模式（并提升到全局，保证 REPL 里后续还能用）；
-      // 其余先按表达式求值，失败再当语句块——这就是控制台“回显最后一个值”的语义。
-      let done = false;
-      if (!isDecl) {
-        try {
-          const f = new AsyncFunction('return (' + code + '\n)');
-          value = await f.call(globalThis);
-          done = true;
-        } catch (e) {
-          if (!(e instanceof SyntaxError)) throw e;
-        }
-      }
-      if (!done) {
-        const f = new AsyncFunction('"use strict";\n' + hoist(code));
-        value = await f.call(globalThis);
-      }
+      /* 求值只有一条路：HTScript.run（和智能体的 js 工具同一份）。
+       * 交互层这里只管「续行、DOM 预取、裸命令自动调用、打印」。 */
+      value = await HTScript.run(code);
       // shell 习惯：裸命令名（help / ls / pwd ...）自动调用
       const bare = code.trim();
       if (typeof value === 'function' && /^[A-Za-z_$][\w$]*$/.test(bare) && AUTO_CALL.has(bare)) {
@@ -2247,7 +2353,8 @@ function makeShell(ctx) {
       const prev = self.__shell && self.__shell.editor;
       const ed = new LineEditor({
         prompt, onSubmit: async (line) => { finish(line); },
-        onEOF: () => finish(null), history: state.history, onHistory: saveHistory
+        onEOF: () => finish(null), history: state.history, onHistory: saveHistory,
+        cols: () => state.cols, rows: () => state.rows
       });
       const finish = (v) => {
         ed.closed = true;
@@ -3136,6 +3243,9 @@ async function bootShell(init) {
       if (api.__state.mode === 'hsl') return api.__state.cwd + ' $ ';
       return api.__state.cwd + '> ';
     },
+    /* 折行要用真实的列数/行数，不能写死 80×24 */
+    cols: () => api.__state.cols,
+    rows: () => api.__state.rows,
     history,
     onHistory: saveHistory,
     onTab: (before) => api.__complete(before),
@@ -3150,8 +3260,8 @@ async function bootShell(init) {
     onCtrlD: () => {
       if (api.__state.mode !== 'agent') return false;
       agentTui.close();
-      editor.promptStr = editor.promptText();
-      out(editor.promptStr);
+      out('\r\n');
+      editor.reopen();
       return true;
     },
     onSubmit: async (line) => {
@@ -3196,26 +3306,11 @@ async function bootShell(init) {
    */
   const AGENT_FRAMES = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
 
-  /* 终端是定宽等宽字体，这里按显示宽度折行：中日韩算 2 列。
-   * Worker 里没有 DOM 量宽度的办法，用码点近似——和 LineEditor 一致。 */
-  function agentWidth(s) {
-    let w = 0;
-    for (const ch of String(s)) {
-      const cp = ch.codePointAt(0);
-      w += (cp >= 0x1100 && (
-        cp <= 0x115f || cp === 0x2329 || cp === 0x232a ||
-        (cp >= 0x2e80 && cp <= 0xa4cf && cp !== 0x303f) ||
-        (cp >= 0xac00 && cp <= 0xd7a3) ||
-        (cp >= 0xf900 && cp <= 0xfaff) ||
-        (cp >= 0xfe30 && cp <= 0xfe6f) ||
-        (cp >= 0xff00 && cp <= 0xff60) ||
-        (cp >= 0xffe0 && cp <= 0xffe6) ||
-        (cp >= 0x1f300 && cp <= 0x1f64f) ||
-        (cp >= 0x1f900 && cp <= 0x1f9ff) ||
-        (cp >= 0x20000 && cp <= 0x3fffd))) ? 2 : 1;
-    }
-    return w;
-  }
+  /* 折行宽度统一走 charWidth：以前这里另写了一份「哪些区段算 2 列」，
+   * 和行编辑器那份的边界值不一样（少了 0x2329/0x232a），同一段文字在
+   * 「打字时」和「回答时」折在不同位置。一套规则就够了。 */
+  function agentWidth(s) { return strWidth(s); }
+
   function agentWrap(text, indent, width) {
     const pad = ' '.repeat(indent || 0);
     const max = Math.max(20, (width || 80) - (indent || 0));
@@ -3464,7 +3559,8 @@ async function bootShell(init) {
     /* 模式切换只改 state.mode + 重画提示符。真实的「第几层」在 COMPAT 的栈里，
      * 这里不存第二份状态——两份状态一定会不同步。 */
     setMode: (m) => { api.__state.mode = m; },
-    kick: () => { editor.promptStr = editor.promptText(); },
+    /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复 */
+    kick: () => { editor._rows = 0; editor._curRow = 0; editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
   });
@@ -3562,6 +3658,8 @@ builtins.input = _ht_input
     prompt: () => more ? ps2 : ps1,
     history,
     onHistory: saveHistory,
+    cols: () => Number(init.cols) || 80,
+    rows: () => Number(init.rows) || 24,
     onSubmit: async (line) => {
       if (!ready) return;
       if (!more && /^\s*(exit|quit)\s*\(\s*\)\s*$/.test(line)) {
@@ -3624,7 +3722,13 @@ self.onmessage = async (ev) => {
     /* TUI（vim/nano）正在前台时不能重绘提示符，否则会把全屏画面擦掉；
      * 但全屏应用自己需要重画（否则终端一改尺寸，画面就被拉歪）。 */
     if (ed && ed.raw) { if (ed._onResize) { try { ed._onResize(); } catch (e) {} } }
-    else if (ed) { ed.promptStr = ed.promptText(); ed.redraw(); }
+    else if (ed) {
+      /* 尺寸一变，xterm 会把内容 reflow，旧块的坐标全失效。
+       * 不能拿旧 _rows 去上移擦除——那样只会擦错行。 */
+      ed._rows = 0; ed._curRow = 0;
+      ed.promptStr = ed.promptText();
+      ed.redraw();
+    }
     return;
   }
   if (m.t === 'terminate') {
@@ -3641,6 +3745,167 @@ self.onmessage = async (ev) => {
     }
   }
 };
+
+
+/* ============================================================================
+ * HTerMinaL · 共享求值器
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * 这一份被**两处**使用，而且必须是同一份：
+ *   1) Worker 里的 JSHeL（用户敲的每一行）；
+ *   2) 主线程里的智能体 `js` 工具（模型写的每一段）。
+ *
+ * 为什么单独抽出来：过去这两处各写各的。终端那边会 hoist 声明、会回显最后
+ * 一条表达式的值；`js` 工具那边只是 `new AsyncFunction(code)()`，于是
+ * `const a=1; a+1` 在终端里是 2、在工具里是 undefined，DOM 节点变成 `{}`。
+ * 智能体因此得出「这个页面的 js 工具返回值不稳定」——它说得对，是我们不一致。
+ *
+ * 原则（README 里也写了）：**JSHeL 是桥，不是皇帝**。
+ *   - JS 怎么写就怎么执行，不偷偷改语义（不把 `ls -la` 猜成 shell 命令）；
+ *   - 同样的代码在两处得到同样的值；
+ *   - 交互式与非交互式只差「要不要回显、要不要保留声明」，不差求值规则。
+ * ==========================================================================*/
+
+/* 颜色是可选的：worker 里有 ANSI，主线程没有（也不需要）。 */
+const HSV_ANSI = (typeof ANSI !== 'undefined') ? ANSI : null;
+
+function hsvPaint(code, s, plain) {
+  if (plain || !HSV_ANSI) return String(s);
+  return code + s + HSV_ANSI.reset;
+}
+
+/* Node 的 util.inspect 精简版：终端要好看，模型要能读。
+ * plain = true 时不带颜色，直接给智能体。 */
+function inspect(v, depth, seen, plain) {
+  depth = depth || 0; seen = seen || new Set();
+  const t = typeof v;
+  if (v === null) return 'null';
+  if (v === undefined) return 'undefined';
+  if (t === 'string') return depth === 0 ? v : JSON.stringify(v);
+  if (t === 'number' || t === 'boolean' || t === 'bigint') return String(v);
+  if (t === 'symbol') return v.toString();
+  if (t === 'function') {
+    const src = Function.prototype.toString.call(v).replace(/\s+/g, ' ').trim();
+    return hsvPaint(HSV_ANSI && HSV_ANSI.cyan, src.length > 90 ? src.slice(0, 87) + '…' : src, plain);
+  }
+  if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
+
+  /* DOM 节点：直接 JSON 化是 `{}`，智能体会以为「没拿到」。给一个能认的签名。 */
+  if (v && typeof v === 'object' && typeof v.nodeType === 'number' && v.nodeName) {
+    const tag = String(v.nodeName).toLowerCase();
+    if (v.nodeType === 3) return '#text ' + JSON.stringify(String(v.textContent || '').slice(0, 60));
+    if (v.nodeType === 8) return '<!--' + String(v.textContent || '').slice(0, 60) + '-->';
+    if (v.nodeType === 9) return '#document';
+    const id = v.id ? '#' + v.id : '';
+    const cls = (typeof v.className === 'string' && v.className.trim())
+      ? '.' + v.className.trim().split(/\s+/).join('.') : '';
+    const extra = [];
+    if (tag === 'input' && v.type) extra.push('type=' + v.type);
+    if (tag === 'a' && v.getAttribute) { const h = v.getAttribute('href'); if (h) extra.push('href=' + h); }
+    return '<' + tag + id + cls + (extra.length ? ' ' + extra.join(' ') : '') + '>'
+      + (plain ? '' : '');
+  }
+
+  if (v instanceof Promise) return 'Promise { <pending> }';
+  if (v && v[Symbol.toStringTag] === 'Module') {
+    const ks = Object.keys(v);
+    return hsvPaint(HSV_ANSI && HSV_ANSI.gray, 'Module(' + ks.length + ' exports) { ' + ks.slice(0, 8).join(', ')
+      + (ks.length > 8 ? ', …' : '') + ' }', plain);
+  }
+  if (seen.has(v)) return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '[Circular]', plain);
+  if (depth > 4) return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '…', plain);
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      const items = v.slice(0, 60).map(x => inspect(x, depth + 1, seen, plain));
+      return '[ ' + items.join(', ') + (v.length > 60 ? ', … ' + (v.length - 60) + ' more' : '') + ' ]';
+    }
+    if (v instanceof Map) return 'Map(' + v.size + ') { ' + [...v].slice(0, 30).map(([k, x]) => inspect(k, depth + 1, seen, plain) + ' => ' + inspect(x, depth + 1, seen, plain)).join(', ') + ' }';
+    if (v instanceof Set) return 'Set(' + v.size + ') { ' + [...v].slice(0, 30).map(x => inspect(x, depth + 1, seen, plain)).join(', ') + ' }';
+    if (v instanceof Date) return v.toISOString();
+    if (v instanceof ArrayBuffer) return 'ArrayBuffer(' + v.byteLength + ')';
+    if (ArrayBuffer.isView(v)) return v.constructor.name + '(' + v.length + ') [' + Array.from(v.slice(0, 20)).join(', ') + ']';
+    if (typeof v === 'object' && v.constructor && v.constructor.name && v.constructor.name !== 'Object') {
+      const keys = Object.keys(v);
+      return v.constructor.name + ' { ' + keys.slice(0, 30).map(k => k + ': ' + inspect(v[k], depth + 1, seen, plain)).join(', ') + (keys.length > 30 ? ', …' : '') + ' }';
+    }
+    const keys = Object.keys(v);
+    if (!keys.length) return '{}';
+    return '{ ' + keys.slice(0, 50).map(k => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)) + ': ' + inspect(v[k], depth + 1, seen, plain)).join(', ') + (keys.length > 50 ? ', …' : '') + ' }';
+  } catch (e) { return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '[uninspectable]', plain); }
+  finally { seen.delete(v); }
+}
+
+/* ---------------------------------------------------------------- 求值器 */
+const HTScript = (() => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+  /* REPL 里声明的变量要能被下一行用到。`new AsyncFunction` 每次都是新函数作用域，
+   * 所以把「整行就是一条声明」的 const/let/var/function 提升到 globalThis。
+   * 只处理单行、单声明的简单情形；复杂解构不碰——宁可它不持久，也不改写语义。 */
+  function hoist(code) {
+    return code.split('\n').map(line => {
+      let m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/);
+      if (m && !/[,]/.test(m[4].replace(/[,({\[]/g, ''))) {
+        return m[1] + 'globalThis.' + m[3] + ' = ' + m[4] + ';';
+      }
+      let f = line.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
+      if (f) return f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + line.slice(f[0].length);
+      return line;
+    }).join('\n');
+  }
+
+  /* 把最后一条「表达式语句」改成 return。
+   *
+   * 这是控制台语义的关键：`const a = 1; a + 1` 应该回显 2，而不是 undefined。
+   * 做法是拿最后一行去试着编译成表达式——编译得过，说明它是表达式，包一层 return；
+   * 编译不过（`}`、`if (...) {` 这类）就原样执行，别自作聪明。
+   * 从后往前试若干切点，避开字符串里的分号。 */
+  function tailReturn(code) {
+    const src = String(code).replace(/\s+$/, '');
+    const cuts = [];
+    for (let i = src.length - 1; i >= 0 && cuts.length < 24; i--) {
+      if (src[i] === ';' || src[i] === '\n') cuts.push(i);
+    }
+    for (const cut of cuts) {
+      const tail = src.slice(cut + 1).trim().replace(/;$/, '');
+      if (!tail) continue;
+      const head = src.slice(0, cut + 1);
+      try {
+        new AsyncFunction('return (' + tail + ')');
+        new AsyncFunction(head + '\nreturn (' + tail + ');');
+        return head + '\nreturn (' + tail + ');';
+      } catch (e) { /* 这个切点不行，往前再试 */ }
+    }
+    return null;
+  }
+
+  /* 唯一的求值入口。返回「最后一个值」，语义与浏览器控制台一致：
+   *   - 先当表达式求值（支持顶层 await）；
+   *   - 语法不成立再当语句块执行，并把最后一条表达式作为结果；
+   *   - 抛错就抛给调用方，不吞。 */
+  async function run(code) {
+    const src = String(code == null ? '' : code);
+    if (!src.trim()) return undefined;
+
+    const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(src);
+    if (!isDecl) {
+      try {
+        return await new AsyncFunction('return (' + src + '\n)')();
+      } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+      }
+    }
+
+    const hoisted = hoist(src);
+    const withTail = tailReturn(hoisted);
+    return await new AsyncFunction(withTail || ('"use strict";\n' + hoisted))();
+  }
+
+  function describe(v) { return inspect(v, 0, null, true); }
+
+  return { run, describe, hoist, tailReturn };
+})();
 
 
 /* ============================================================================
@@ -5213,13 +5478,173 @@ const COMPAT = (function () {
 
 <script>
 /* ============================================================================
+ * HTerMinaL · 共享求值器
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * 这一份被**两处**使用，而且必须是同一份：
+ *   1) Worker 里的 JSHeL（用户敲的每一行）；
+ *   2) 主线程里的智能体 `js` 工具（模型写的每一段）。
+ *
+ * 为什么单独抽出来：过去这两处各写各的。终端那边会 hoist 声明、会回显最后
+ * 一条表达式的值；`js` 工具那边只是 `new AsyncFunction(code)()`，于是
+ * `const a=1; a+1` 在终端里是 2、在工具里是 undefined，DOM 节点变成 `{}`。
+ * 智能体因此得出「这个页面的 js 工具返回值不稳定」——它说得对，是我们不一致。
+ *
+ * 原则（README 里也写了）：**JSHeL 是桥，不是皇帝**。
+ *   - JS 怎么写就怎么执行，不偷偷改语义（不把 `ls -la` 猜成 shell 命令）；
+ *   - 同样的代码在两处得到同样的值；
+ *   - 交互式与非交互式只差「要不要回显、要不要保留声明」，不差求值规则。
+ * ==========================================================================*/
+
+/* 颜色是可选的：worker 里有 ANSI，主线程没有（也不需要）。 */
+const HSV_ANSI = (typeof ANSI !== 'undefined') ? ANSI : null;
+
+function hsvPaint(code, s, plain) {
+  if (plain || !HSV_ANSI) return String(s);
+  return code + s + HSV_ANSI.reset;
+}
+
+/* Node 的 util.inspect 精简版：终端要好看，模型要能读。
+ * plain = true 时不带颜色，直接给智能体。 */
+function inspect(v, depth, seen, plain) {
+  depth = depth || 0; seen = seen || new Set();
+  const t = typeof v;
+  if (v === null) return 'null';
+  if (v === undefined) return 'undefined';
+  if (t === 'string') return depth === 0 ? v : JSON.stringify(v);
+  if (t === 'number' || t === 'boolean' || t === 'bigint') return String(v);
+  if (t === 'symbol') return v.toString();
+  if (t === 'function') {
+    const src = Function.prototype.toString.call(v).replace(/\s+/g, ' ').trim();
+    return hsvPaint(HSV_ANSI && HSV_ANSI.cyan, src.length > 90 ? src.slice(0, 87) + '…' : src, plain);
+  }
+  if (v instanceof Error) return (v.stack || (v.name + ': ' + v.message));
+
+  /* DOM 节点：直接 JSON 化是 `{}`，智能体会以为「没拿到」。给一个能认的签名。 */
+  if (v && typeof v === 'object' && typeof v.nodeType === 'number' && v.nodeName) {
+    const tag = String(v.nodeName).toLowerCase();
+    if (v.nodeType === 3) return '#text ' + JSON.stringify(String(v.textContent || '').slice(0, 60));
+    if (v.nodeType === 8) return '<!--' + String(v.textContent || '').slice(0, 60) + '-->';
+    if (v.nodeType === 9) return '#document';
+    const id = v.id ? '#' + v.id : '';
+    const cls = (typeof v.className === 'string' && v.className.trim())
+      ? '.' + v.className.trim().split(/\s+/).join('.') : '';
+    const extra = [];
+    if (tag === 'input' && v.type) extra.push('type=' + v.type);
+    if (tag === 'a' && v.getAttribute) { const h = v.getAttribute('href'); if (h) extra.push('href=' + h); }
+    return '<' + tag + id + cls + (extra.length ? ' ' + extra.join(' ') : '') + '>'
+      + (plain ? '' : '');
+  }
+
+  if (v instanceof Promise) return 'Promise { <pending> }';
+  if (v && v[Symbol.toStringTag] === 'Module') {
+    const ks = Object.keys(v);
+    return hsvPaint(HSV_ANSI && HSV_ANSI.gray, 'Module(' + ks.length + ' exports) { ' + ks.slice(0, 8).join(', ')
+      + (ks.length > 8 ? ', …' : '') + ' }', plain);
+  }
+  if (seen.has(v)) return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '[Circular]', plain);
+  if (depth > 4) return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '…', plain);
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      const items = v.slice(0, 60).map(x => inspect(x, depth + 1, seen, plain));
+      return '[ ' + items.join(', ') + (v.length > 60 ? ', … ' + (v.length - 60) + ' more' : '') + ' ]';
+    }
+    if (v instanceof Map) return 'Map(' + v.size + ') { ' + [...v].slice(0, 30).map(([k, x]) => inspect(k, depth + 1, seen, plain) + ' => ' + inspect(x, depth + 1, seen, plain)).join(', ') + ' }';
+    if (v instanceof Set) return 'Set(' + v.size + ') { ' + [...v].slice(0, 30).map(x => inspect(x, depth + 1, seen, plain)).join(', ') + ' }';
+    if (v instanceof Date) return v.toISOString();
+    if (v instanceof ArrayBuffer) return 'ArrayBuffer(' + v.byteLength + ')';
+    if (ArrayBuffer.isView(v)) return v.constructor.name + '(' + v.length + ') [' + Array.from(v.slice(0, 20)).join(', ') + ']';
+    if (typeof v === 'object' && v.constructor && v.constructor.name && v.constructor.name !== 'Object') {
+      const keys = Object.keys(v);
+      return v.constructor.name + ' { ' + keys.slice(0, 30).map(k => k + ': ' + inspect(v[k], depth + 1, seen, plain)).join(', ') + (keys.length > 30 ? ', …' : '') + ' }';
+    }
+    const keys = Object.keys(v);
+    if (!keys.length) return '{}';
+    return '{ ' + keys.slice(0, 50).map(k => (/^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k)) + ': ' + inspect(v[k], depth + 1, seen, plain)).join(', ') + (keys.length > 50 ? ', …' : '') + ' }';
+  } catch (e) { return hsvPaint(HSV_ANSI && HSV_ANSI.gray, '[uninspectable]', plain); }
+  finally { seen.delete(v); }
+}
+
+/* ---------------------------------------------------------------- 求值器 */
+const HTScript = (() => {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
+  /* REPL 里声明的变量要能被下一行用到。`new AsyncFunction` 每次都是新函数作用域，
+   * 所以把「整行就是一条声明」的 const/let/var/function 提升到 globalThis。
+   * 只处理单行、单声明的简单情形；复杂解构不碰——宁可它不持久，也不改写语义。 */
+  function hoist(code) {
+    return code.split('\n').map(line => {
+      let m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/);
+      if (m && !/[,]/.test(m[4].replace(/[,({\[]/g, ''))) {
+        return m[1] + 'globalThis.' + m[3] + ' = ' + m[4] + ';';
+      }
+      let f = line.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
+      if (f) return f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + line.slice(f[0].length);
+      return line;
+    }).join('\n');
+  }
+
+  /* 把最后一条「表达式语句」改成 return。
+   *
+   * 这是控制台语义的关键：`const a = 1; a + 1` 应该回显 2，而不是 undefined。
+   * 做法是拿最后一行去试着编译成表达式——编译得过，说明它是表达式，包一层 return；
+   * 编译不过（`}`、`if (...) {` 这类）就原样执行，别自作聪明。
+   * 从后往前试若干切点，避开字符串里的分号。 */
+  function tailReturn(code) {
+    const src = String(code).replace(/\s+$/, '');
+    const cuts = [];
+    for (let i = src.length - 1; i >= 0 && cuts.length < 24; i--) {
+      if (src[i] === ';' || src[i] === '\n') cuts.push(i);
+    }
+    for (const cut of cuts) {
+      const tail = src.slice(cut + 1).trim().replace(/;$/, '');
+      if (!tail) continue;
+      const head = src.slice(0, cut + 1);
+      try {
+        new AsyncFunction('return (' + tail + ')');
+        new AsyncFunction(head + '\nreturn (' + tail + ');');
+        return head + '\nreturn (' + tail + ');';
+      } catch (e) { /* 这个切点不行，往前再试 */ }
+    }
+    return null;
+  }
+
+  /* 唯一的求值入口。返回「最后一个值」，语义与浏览器控制台一致：
+   *   - 先当表达式求值（支持顶层 await）；
+   *   - 语法不成立再当语句块执行，并把最后一条表达式作为结果；
+   *   - 抛错就抛给调用方，不吞。 */
+  async function run(code) {
+    const src = String(code == null ? '' : code);
+    if (!src.trim()) return undefined;
+
+    const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(src);
+    if (!isDecl) {
+      try {
+        return await new AsyncFunction('return (' + src + '\n)')();
+      } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+      }
+    }
+
+    const hoisted = hoist(src);
+    const withTail = tailReturn(hoisted);
+    return await new AsyncFunction(withTail || ('"use strict";\n' + hoisted))();
+  }
+
+  function describe(v) { return inspect(v, 0, null, true); }
+
+  return { run, describe, hoist, tailReturn };
+})();
+
+/* ============================================================================
  * HTerMinaL · core
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。设置、IndexedDB 文件系统、虚拟目录、UI 原子件。
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.9';
+const HT_VERSION = '0.0.1.10';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -13069,16 +13494,12 @@ class AgentApp {
     if (name === 'js') {
       const code = String(args.code || '');
       if (!code.trim()) return '空代码';
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-      let v;
-      try {
-        // 控制台语义：先按表达式求值，语法不成立再按语句执行
-        v = await new AsyncFunction('return (' + code + '\n)')().catch(e => { throw e; });
-      } catch (e) {
-        if (!(e instanceof SyntaxError)) throw e;
-        v = await new AsyncFunction('"use strict";\n' + code)();
-      }
-      return jsonSafe(v);
+      /* 与 JSHeL 共用同一个求值器（build/21-shared.js）：
+       * 同样的代码必须得到同样的值——包括 `const a=1; a+1` 回显 2、
+       * DOM 节点显示成 `<div#toast>` 而不是 `{}`。
+       * 这里不复制一份「差不多」的实现，就是为了不再出现两套语义。 */
+      const v = await HTScript.run(code);
+      return HTScript.describe(v);
     }
     if (name === 'read_file') {
       const r = await FS.read(args.path);

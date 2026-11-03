@@ -14,6 +14,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,7 +30,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.9"
+const version = "0.0.1.10"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -629,9 +631,20 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "找不到 index.html（和本脚本放同一目录）", "type": "not_found"}})
 				return
 			}
+			/* 单文件应用七百多 KB；no-store 让每次刷新重下整包。
+			 * 改协商缓存：没变回 304，变了才重发正文。 */
+			sum := sha256.Sum256(raw)
+			etag := "\"" + hex.EncodeToString(sum[:])[:20] + "\""
 			securityHeaders(w)
+			if strings.Contains(r.Header.Get("If-None-Match"), etag) {
+				w.Header().Set("ETag", etag)
+				w.Header().Set("Cache-Control", "no-cache")
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", etag)
 			w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
 			w.WriteHeader(http.StatusOK)
 			w.Write(raw)

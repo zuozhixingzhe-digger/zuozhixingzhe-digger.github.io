@@ -17,6 +17,7 @@
 #   HT_TIMEOUT=120               上游超时秒数
 #   HT_DEFAULT_PROVIDER=openai   openai | anthropic | responses | custom
 
+import hashlib
 import json
 import os
 import sys
@@ -36,7 +37,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.1.9"
+VERSION = "0.0.1.10"
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -438,11 +439,26 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.reply(404, {"error": {"message": "找不到 index.html（把它和本脚本放在同一目录）", "type": "not_found"}})
             return
+        # index.html 是把全部代码内联进去的单文件，七百多 KB。
+        # 以前发 no-store，每刷新一次就重下整包；改成协商缓存——
+        # 内容没变走 304（只回一个头），改了才重发。no-cache 不是「不缓存」，
+        # 是「每次用之前问我一句」，正好适合这种一改就要立刻生效的单页。
+        etag = '"' + hashlib.sha256(raw).hexdigest()[:20] + '"'
+        inm = self.headers.get("If-None-Match", "")
+        if inm and etag in [x.strip() for x in inm.split(",")]:
+            self.send_response(304)
+            self.security_headers()
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            return
         self.send_response(200)
         self.security_headers()
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", etag)
+        self.send_header("Last-Modified", self.date_time_string(int(os.path.getmtime(path))))
         self.end_headers()
         self.wfile.write(raw)
 

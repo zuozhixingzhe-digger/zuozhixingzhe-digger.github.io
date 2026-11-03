@@ -1160,16 +1160,12 @@ class AgentApp {
     if (name === 'js') {
       const code = String(args.code || '');
       if (!code.trim()) return '空代码';
-      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-      let v;
-      try {
-        // 控制台语义：先按表达式求值，语法不成立再按语句执行
-        v = await new AsyncFunction('return (' + code + '\n)')().catch(e => { throw e; });
-      } catch (e) {
-        if (!(e instanceof SyntaxError)) throw e;
-        v = await new AsyncFunction('"use strict";\n' + code)();
-      }
-      return jsonSafe(v);
+      /* 与 JSHeL 共用同一个求值器（build/21-shared.js）：
+       * 同样的代码必须得到同样的值——包括 `const a=1; a+1` 回显 2、
+       * DOM 节点显示成 `<div#toast>` 而不是 `{}`。
+       * 这里不复制一份「差不多」的实现，就是为了不再出现两套语义。 */
+      const v = await HTScript.run(code);
+      return HTScript.describe(v);
     }
     if (name === 'read_file') {
       const r = await FS.read(args.path);

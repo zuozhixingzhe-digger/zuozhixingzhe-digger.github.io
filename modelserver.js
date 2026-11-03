@@ -28,7 +28,7 @@ const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
 const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
-const VERSION = '0.0.1.9';
+const VERSION = '0.0.1.10';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {
@@ -381,11 +381,20 @@ const server = http.createServer(async (req, res) => {
           reply(req, res, 404, { error: { message: '找不到 index.html（和本脚本放同一目录）', type: 'not_found' } });
           return;
         }
+        /* 单文件应用七百多 KB，no-store 会让每次刷新都重下整包。
+         * 改成协商缓存：内容没变回 304（只有头），改了才重发正文。 */
+        const etag = '"' + require('crypto').createHash('sha256').update(raw).digest('hex').slice(0, 20) + '"';
         securityHeaders(res);
+        if (String(req.headers['if-none-match'] || '').split(',').map(x => x.trim()).includes(etag)) {
+          res.writeHead(304, { 'ETag': etag, 'Cache-Control': 'no-cache' });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Content-Length': raw.length,
-          'Cache-Control': 'no-store'
+          'Cache-Control': 'no-cache',
+          'ETag': etag
         });
         res.end(raw);
         return;

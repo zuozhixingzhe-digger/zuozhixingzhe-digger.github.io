@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.9**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.10**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -237,6 +237,37 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 
 ## 5. JSHeL 速查
 
+### 5.0 一条铁律：JSHeL 是桥，不是皇帝
+
+> **JSHeL 必须极力还原真实 JavaScript 的功能。绝不允许任何不兼容的动作——包括行为、返回值、
+> 异常类型、求值顺序。所有地方的 JSHeL 必须是同一套（给人敲的、给智能体 `js` 工具调的），
+> 除了「交互式 / 非交互式」这一个区别之外，不允许有任何区别对待。**
+> **它是一段通向 JS 的桥，不是一个自以为是的皇帝。**
+
+这条不是口号，是**开发约束**。改任何一行求值代码之前，先过这五条：
+
+| # | 规则 | 反例（禁止） |
+| --- | --- | --- |
+| 1 | **不改语义**。代码怎么写就怎么执行 | 把 `ls -la` 偷偷当 shell 跑掉；把 `print('x')` 改成终端输出 |
+| 2 | **不改返回值**。返回什么就是什么 | `const a=1; a+1` 在终端回显 `2`、在工具里回显 `undefined` |
+| 3 | **所有入口同一份实现** | 终端一份 `AsyncFunction`、`js` 工具另一份，两个版本慢慢漂移 |
+| 4 | **异常原样抛**，不要包装成「工具执行失败」 | 把 `TypeError` 说成「参数错误」，让模型以为是它传错了 |
+| 5 | **不替用户猜**。猜不出来就报错并说明，不要换个方式「帮」他执行 | 命令表里恰好有同名函数就改成 shell 语义 |
+
+具体落到代码上：
+
+- 求值只有一个入口 `HTScript.run()`（`build/21-shared.js`），Worker 的 JSHeL 与主线程的
+  `js` 工具**拼进同一份文件**。`build.sh` 负责这件事，任何一边单独改都会立刻在另一处露馅。
+- 值的呈现也只有一份 `inspect()`：终端上色、给智能体的是 `plain` 版，
+  **但结构完全一样**（DOM 节点是 `<div#toast>`，不是 `{}`；`Map` 是 `Map(1) { "a" => 1 }`）。
+- 允许的差异只有交互层：**要不要回显、有没有历史、`const` 声明是否提升到全局、
+  可不可以 Ctrl+C 打断**。这些是 REPL 的事，不是 JS 的事。
+- 反例都记在踩坑里（见 [§7](#7-设计取舍与踩坑记录)）：`hoist` 只提升单行简单声明，
+  复杂的宁可它不持久，也不改写语义。
+
+<p align="right"><sub>↑ 这一节是 0.0.1.10 加的。之前的案发现场：智能体用 <code>js</code> 工具读一个 DOM
+节点，拿到的是 <code>{}</code>，于是它得出「这个页面的 js 工具返回值不稳定」——它说得对，是我们不一致。</sub></p>
+
 JSHeL = **JS HTML shell**。它不是一个语法，就是一个 REPL：**你敲的每一行都是 JavaScript**，
 只不过一批常用操作被预置成了同名函数，所以看起来像 shell。
 
@@ -371,11 +402,11 @@ whoami xargs yes
 #### `fastfetch` / `neofetch`
 
 ```text
-██╗  ██╗████████╗    HTerMinaL 0.0.1.9
+██╗  ██╗████████╗    HTerMinaL 0.0.1.10
 ██║  ██║╚══██╔══╝    ──────────────────────────
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
-██║  ██║   ██║       Kernel     JSHeL 0.0.1.9
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.10
 ╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
 ```
 
@@ -439,6 +470,34 @@ agent> :q
 | `:clear` | 清屏（不删历史） |
 | `:q` / `exit` / `Ctrl+D` | 退出，回到进来之前那一层 |
 | `:help` | 上面这张表 |
+
+### 行编辑：中文、折行、光标
+
+TUI 的输入行是自己画的。这门活儿最容易在「打中文」上翻车，因为一个汉字占 **2 列**：
+80 列的终端打到第 39 个字就折行，折行之后 `\r` 只回到**最后一行**行首、`\x1b[nD` 也跨不过
+行边界——所有相对位移全部失效，屏幕上立刻变成一锅粥。
+
+所以现在的规则是：**不做相对位移，只做全量重绘**。
+
+```js
+layoutInput(prompt, buf, cur, cols)   // 按显示宽度折成 N 行，算出光标在第几行第几列
+erase()                               // 上移回块首，逐行 \x1b[2K
+redraw()                              // erase + 显式分行写 + \x1b[nA/\x1b[nC 定位
+```
+
+几个必须踩住的点：
+
+| 坑 | 现象 | 做法 |
+| --- | --- | --- |
+| 提示符里的 ANSI 被算进宽度 | 光标跑到文字右边一截 | 用 `stripAnsi()` 后再量宽度，画的时候用原文 |
+| 首次绘制没有锚点 | `agent> agent> abc` 两个提示符叠一起 | `start()` / `reopen()` 都走 `redraw()`，`_rows` 一起维护 |
+| 粘贴多行时输入块还在屏幕上 | `[粘贴 3 行]` 插在句子中间，上半截残留 | 先 `erase()` 再打印 |
+| 输入超过一屏 | 上移 N 行停在天花板，逐行擦掉历史 | 只画尾部 `rows-1` 行，光标跟着裁剪后的行号走 |
+| 等待回答时打的字 | 提示符回来发现少了半句 | 攒进 `_pending`，`reopen()` 时一次性补进去 |
+
+宽度只有一份规则 `charWidth(cp)`：折行、算光标列、回答正文折行全用它。
+以前正文折行另写过一份「哪些区段算 2 列」，边界值差了两个码点，
+同一段文字在「你打字时」和「它回答时」折在不同位置——看着像玄学，其实是两套尺子。
 
 **三种模式并列**，看提示符就知道自己在哪一层，不存在「猜这一行是什么」：
 
@@ -1040,8 +1099,19 @@ python3 modelserver.py
 | 其它 | 任意 | **一律 403**，不列目录、不代理静态文件、不返回错误页 HTML |
 
 「只放行这四条」是刻意的：这个服务能读你的密钥，任何多余的静态文件路由都是攻击面。
-`index.html` 用 `Cache-Control: no-store`，免得改了前端还得手动强刷；
 文件路径按 `scriptDir()`（可执行文件/脚本所在目录）拼，不依赖 `cwd`——从别的目录启动也能找到。
+
+**`index.html` 用协商缓存**（`Cache-Control: no-cache` + `ETag`）。它是把全部代码内联进去的
+单文件，七百多 KB，早先发的是 `no-store` —— 抓包结果很清楚：
+
+| 加载 | `no-store` 时传输 | 协商缓存后 |
+| --- | --- | --- |
+| 第一次 | 773 KB | 773 KB |
+| 刷新 | **712 KB**（整包重下） | **0.4 KB**（304，只有响应头） |
+
+`no-cache` 不是「不缓存」，是「每次用之前问我一句」：内容没变就 304，改了一个字节 ETag 就变，
+立刻拿到新正文。既不用手动强刷，也不用重下整包。CDN 上的 xterm / marked / pyodide 本来就带
+`max-age=31536000`，浏览器会自己复用，这两项加起来才是首屏的真正开销。
 
 请求头：`X-HTerm-Client: hterminal`（必带，否则 403）、`X-HTerm-Provider: openai|anthropic|responses`。
 上游格式由它自己双向转换，包括 `tool_calls` ↔ Anthropic `tool_use` / Responses `function_call`。
@@ -1793,6 +1863,33 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 教训：SVG 默认 `width/height` 是 `auto`，在没有 viewBox 约束的 flex/grid 里会按 `100%` 解析，
 凡是「图标 + 文字」的块，图标尺寸一定要写死。
 
+**46. 两套「差不多」的求值器，就是两套语义**
+终端里的 JSHeL 用 `new AsyncFunction` + 自己 hoist 声明 + 回显最后一条表达式；
+智能体的 `js` 工具是另一份 `new AsyncFunction(code)()`，没有 hoist、没有尾表达式。
+于是同一行 `const a=1; a+1` 在终端回显 `2`、在工具里回显 `undefined`；同一个 DOM 节点
+在终端显示 `<div#toast>`、在工具里是 `{}`。智能体的结论是「这个页面的 js 工具返回值不稳定」——
+从它的角度看确实不稳定。**修法**：求值器抽成 `build/21-shared.js`，`build.sh` 把它同时拼进
+Worker 和主线程，两边调的是同一个 `HTScript.run()`。教训：**「先复制一份、以后再统一」等于永远不统一**，
+两份实现只要有一处细节不同，用户就会在最不方便的时刻撞上它。
+
+**47. 折行之后，`\r` 和 `\x1b[nD` 都只对当前行生效**
+TUI 输入行原来用相对位移重画（`\r\x1b[2K` + 提示符 + 内容 + `\x1b[nD` 回退）。这套在单行下完美，
+一折行就全错：`\r` 只回到最后一行行首，`\x1b[nD` 跨不过行边界，于是屏幕上的输入和 `buf` 里的内容
+完全对不上。中文每字 2 列，80 列终端 39 个字就折行——所以「打中文特别容易乱」不是错觉。
+**修法**：`layoutInput()` 自己按显示宽度折行，记下 `_rows`/`_curRow`，重绘时先上移回块首、
+逐行擦、显式分行写、再定位。教训：**只要涉及会折行的文本，相对位移就一律不能用**。
+
+**48. 提示符不是「打印一个字符串」，是「维护一块可重绘的区域」**
+`start()` 打印提示符时没有记 `_rows`，下一次 `redraw()` 以为屏幕是空的，直接从光标处往后写——
+于是变成 `agent> agent> abc`。**修法**：所有「重开一行」的路径收敛到一个 `reopen()`，
+它清空 `buf`、把 `_rows` 归零、走同一条 `redraw()`。教训：**屏幕上任何「自己画的东西」都要有
+对应的状态**（占几行、光标在第几行），谁画谁负责记住，不能靠「大概是一行吧」。
+
+**49. 单文件 728 KB 用 `no-store`，等于每次刷新重下一遍**
+抓包：首屏 773 KB，刷新还是 712 KB（整包重下），而 CDN 上的 xterm 反而一个字节都没花。
+**修法**：`Cache-Control: no-cache` + 内容 `ETag`，没变回 304。刷新传输从 712 KB 降到 0.4 KB。
+教训：`no-store` 是「我不想让浏览器缓存」，不是「我改了要立刻生效」——后者的正确做法是协商缓存。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1850,6 +1947,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
 | 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
 | 0.0.1.8 | 2026-11-03 | **系统提示词分层：环境写死，人格交给用户**：①把原来的单块 `AGENT_SYSTEM` 拆成两段——`AGENT_ENV`（文件系统形状、目录约定、Worker/主页面关系、沙箱边界，全部由程序生成）与 `AGENT_PERSONA_DEFAULT`（角色、语气、做事习惯）。环境是事实不是口味，用户改它只会得到一段与真实环境不符的说明；人格则本来就该由用户定。②人格落到 **`.config.persona`**，第一次打开智能体时写入默认值；之后以文件为准，升级换环境说明不会覆盖用户改过的人格，人格改坏了删文件就回默认。③文件里 `#` 开头的整行是注释，`stripPersonaComments()` 在拼 prompt 时剥掉——配置文件能自己解释自己，但解释不能当指令发出去；人格被清空/只剩注释时等价于「只要环境说明」。④`loadAgentPersona()` 带 1.2 秒 TTL 缓存：一轮 run 的多次模型调用共用一份，`callModel()` 每次请求前刷新，**改完下一条消息就生效，不用重启**；`persona set/edit/reset` 走 RPC 后会主动清缓存。⑤新增 CLI **`persona`**：无参看全文、`edit` 开编辑器、`set` / `append` 改、`reset` 回默认、`path` 打印路径，`… \| persona set -` 从管道读长文本。⑥**刻意不进设置面板**：设置页管功能开关，人格是一段持续影响行为的文本，混进去只会把设置页变成难维护的文本编辑器。⑦工具层对 `.config.persona` 只读（`write_file`/`delete_file` 明确报错）——挡的是「智能体顺手改自己的人设」和「一次网页注入长期改掉它」；`js` 绕得过去，所以是软边界。⑧文档 §12 新增「系统提示词：环境写死，人格可改」。 |
 | 0.0.1.7 | 2026-11-03 | **看图修图（截图的下半场）**：①**新增 `build/58-image.js`**（`ImageApp`）——Canvas 2D 看图与修图：适应 / 1:1 / ±缩放（Ctrl+滚轮围绕指针缩放）、拖拽平移、裁剪（拖框松手即裁，按取整后的边相减，避免半像素偏一格）、左转/右转 90°、水平/垂直翻转、按宽度等比缩放；五种标注（矩形 / 箭头 / 画笔 / 文字 / 打码）共用同一套 `_shape`，预览与落笔不会「看到一种、得到另一种」；每条线先画 2px 半透明暗边再上色，红色标注落在红色按钮上也看得见；Alt+点击取色（写回颜色选择器）、Ctrl+V 粘贴剪贴板图片、Ctrl+Z / Ctrl+Shift+Z 撤销重做；导出 PNG/JPEG/WebP（JPEG 先铺白底，否则透明区变黑），存 `.home` 用原名 + `-edit`，第二次保存覆盖自己的副本，不碰原图。②**撤销用快照、不用操作日志**——每种工具写逆运算容易漏，快照更短；按像素数限步（<1.5MP 16 步、<4MP 8 步、更大 4 步），内存上限写死。③**和截图接起来**——截图窗口加「编辑」按钮（拍完才可用，按当前格式生成文件名），点开即在同一张图上改。④**文件管理器**——图片双击进看图、选中出缩略图（不再只写「[二进制] 12 KB」）；显示名用 `spotExportName` 还原，存储名与路径不变。⑤**拖拽**——外部文件拖到看图窗口 = 落 `.home` 并立刻打开；从文件管理器拖图过来直接打开。⑥**修**——`contentToDataUrl` 只认 Blob/ArrayBuffer，`FS.write` 存进去的 `Uint8Array` 会被 `String()` 拼成 `137,80,78,…`，导致「自己存的 PNG 自己打不开」；现在认 `ArrayBuffer.isView`。⑦文档 §7 / §15 / §3，版本 4 个文件。⑧空状态图标改内联 SVG 后忘了写尺寸，被撑成 190px 把文字全顶出可视区——补 `.ie-ico svg{width:52px;height:52px}`。 |
@@ -1875,6 +1973,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |
 | 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
 | 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
 | 2026-11-03 15:05 | 0.0.1.7：看图修图（截图搭档）+ 文件管理器缩略图 + 修 `Uint8Array` 解码 | `build/58-image.js`（新增：ImageApp / `imgCanvas` / `imgCopy` / `normRect`）、`build/00-head.html`（`.ie*` 全套 + `.fm-imgcap`）、`build/10-body.html`（启动器加「看图修图」）、`build/30-core.js`（`APP_DEFS` 加 `image`、`contentToDataUrl` 认 typed array、`HT_VERSION`）、`build/40-term.js`（`_render` 分支 + `TYPE_TITLES/TYPE_SIZE`）、`build/50-apps.js`（FilesApp 图片预览 + 双击进看图 + 文件名还原显示）、`build/55-tools.js`（ShotApp「编辑」按钮与方法）、`build/70-boot.js`（`_dropTarget` 加看图落点、导入后 `loadPaths`）、`build/25-compat.js`（`tools` 清单加 `image`）、`build.sh`（拼入 58）、`modelserver.{py,js,go}`（版本）、`README.md` | Playwright（无头 Chromium）：空状态可见；载入 640×400 → meta `640×400`、缩放 100%；裁剪拖 25%→75% → `320×200`，Ctrl+Z → `640×400`；矩形标注像素 `[240,73,86]`（红 + 抗锯齿）；打码/两行文字无异常；右转 `640×400→400×640`，再左转还原；缩放填 320 → `320×200`；存 `.home` 得 `test-edit.png`；外部文件 drop → `.home.drop.png` 且窗口变 `48×32`；内部拖拽 `.home` 里的 400×300 → 窗口变 `400×300`；截图 `2880×1692` → 「编辑」开出第二个看图窗口；文件管理器出现缩略图、双击打开 `320×200`；缩放按钮 `100%→156%→100%`、重做成功；无 pageerror | 本轮 |
@@ -1954,5 +2053,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.9 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.10 · 桌面就是终端 · 一切皆文件</sub>
 </p>
