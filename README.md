@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.13**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.14**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -519,6 +519,9 @@ redraw()                              // erase + 显式分行写 + \x1b[nA/\x1b[
 以前正文折行另写过一份「哪些区段算 2 列」，边界值差了两个码点，
 同一段文字在「你打字时」和「它回答时」折在不同位置——看着像玄学，其实是两套尺子。
 emoji 更明显：ZWJ / 变体选择符被多算成 1 列，光标会一路往右跑（见踩坑 52）。
+同样重要的是**渲染器必须逐格画**：DOM 渲染器把整行同属性字符合成一个 `<span>`，
+浏览器会在 span 内做 ZWJ 连字，把 `👨‍👩‍👧‍👦` 画成 2 格宽的家庭图标——宽度算对了，
+画的时候又变窄了，光标一样偏。所以终端固定加载 canvas 渲染器（见踩坑 53）。
 
 **三种模式并列**，看提示符就知道自己在哪一层，不存在「猜这一行是什么」：
 
@@ -1964,6 +1967,18 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 教训：**只要两处代码都在回答「这个字符占几格」，它们就一定会给出两个答案**——
 和 §5.0 的求值器一样，把其中一处删掉，让另一处去问渲染层。
 
+**53. 宽度算对了，画的时候又变窄了：ZWJ 连字是渲染层偷偷改的宽度**
+上一版把「谁算宽度」统一到了 xterm（踩坑 52），光标还是偏——因为 xterm 5.5 默认用
+**DOM 渲染器**：它把一行里属性相同的字符塞进同一个 `<span>`，浏览器对 span 里的
+`👨‍👩‍👧‍👦` 做 ZWJ 连字，画成一个家庭图标、只占 2 格；而 buffer 仍按「每个 emoji 2 格」
+推进 8 格。于是「哈哈」跟着连字图标挤到第 9 格，光标却停在 19 格——中间 6 格空白。
+**修法**：加载 `@xterm/addon-canvas`，canvas 渲染器逐格绘制，不跨格连字，
+视觉宽度与 cell 严格一致；拿不到 addon 就留在 DOM 渲染器（功能不坏，只是 emoji 那行会再偏）。
+代价是家庭 emoji 显示成 4 个并排的人像——这本来就是 xterm 的语义（它不认 ZWJ cluster），
+换来的是位置永远对。
+教训：**「谁算宽度」统一之后，还要问「谁按这个宽度画」**。算和画不在同一层时，
+你修完第一层会以为好了，其实第二层还在改数值。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -2021,6 +2036,7 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.14 | 2026-11-03 | **emoji 后面还是偏：这次是渲染层在改宽度**：①**现象**——`.home> 👨‍👩‍👧‍👦哈哈`，家庭图标后面紧贴「哈哈」，光标却在右边 6 格空地上，后面输入的字也全部左移。②**根因**——xterm 5.5 默认 **DOM 渲染器**，把一行里同属性的字符塞进同一个 `<span>`；浏览器对 span 内的 ZWJ 序列做连字，`👨‍👩‍👧‍👦` 画成一个家庭图标、只占 2 格，而 buffer 仍按「每个 emoji 2 格」推进 8 格。上一版统一了「谁算宽度」，没管「谁按这个宽度画」。③**修法**——加载 `@xterm/addon-canvas`（CDN 双源、可失败），逐格绘制，视觉宽度与 cell 严格一致；拿不到 addon 就留在 DOM 渲染器，功能不受影响。④**副作用与取舍**——家庭 emoji 显示成 4 个并排的人像（xterm 本来就不认 ZWJ cluster），换位置永远对。⑤**顺带**——canvas 的 cell 宽是整数 8px（DOM 是 8.426px 并靠 `letter-spacing` 补），`_cursorPlace` 的列×格宽更干净。⑥文档 §5.2 补「渲染器必须逐格画」、踩坑 53、第三方许可表加 addon-canvas。 |
 | 0.0.1.13 | 2026-11-03 | **光标在 emoji 后面跑偏**：①**现象**——中文正常，一打 emoji 光标就停在文字右边很远的空地上，折行点也比实际更早。②**根因**——Worker 的 `charWidth` 是手写的「哪些区段算 2 列」，渲染层用的是 xterm 的 Unicode 11 表；两份宽度算法在 ZWJ 序列上分家：`🧑‍🦲` 的 ZWJ 被算 1 列（实际 0，偏 1）、`👨‍👩‍👧‍👦` 三个 ZWJ 各算 1 列（偏 3）、`1️⃣` 的 U+20E3 算 1 列（偏 1）、`🏳️‍🌈` 的 U+1F3F3 算 2 列（xterm 算 1，偏 1）。③**修法**——主线程新增 `termWidthTable(term)`：用 `term._core.unicodeService.wcwidth()` 遍历 0–0x10FFFF，导出「宽 2」114 段、「宽 0」333 段（6 KB，约 16 ms），随 `init` 消息的 `wc` 字段发给 Worker；`charWidth` 有表就二分查表，没表才退回启发式（兜底补了 ZWJ / VS16 / U+20E3）。④**效果**——15 组 emoji 的 `cursorX - 文本结束列` 全部为 0；47 列窄窗里折两行，Home/End/退格位置正确。⑤文档 §5.2 宽度段落改写、踩坑 52。 |\n| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |\n| 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
 | 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
 | 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
@@ -2048,6 +2064,7 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 19:52 | 0.0.1.14：修「emoji 连字后光标偏右」（换 canvas 渲染器） | `build/40-term.js`（`CANVAS_JS` 双 CDN；`loadXterm` 去掉「齐了就 return」改为逐个补装；`_mount` 在 `open` 之后 `loadAddon(CanvasAddon)`，失败只 warn）、`licenses/README.md`（登记 addon-canvas 0.7.0，共用 `LICENSE.xterm.js.txt`）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2、踩坑 53、日志） | Playwright（无头 Chromium）：`👀` `🧑‍🦲` `👨‍👩‍👧‍👦` `🇨🇳` `👍🏽` `❤️` `1️⃣` 等 7 组，`cursorX − textEnd` 全 0；`.home> 👨‍👩‍👧‍👦哈哈` 光标 `left=152px`（19×8）与文本末尾齐平，像素扫描确认「哈哈」紧随 emoji、中间无空隙；47 列窄窗折两行、Home/End/退格正常；3000 行输出无卡顿；缩放 1200→820 后 `cols=96`、`cellW=8`；两个 jshel 窗口各自有 canvas、子窗口 `👨‍👩‍👧‍👦ab` 光标 `cx=17 left=136`；HarTMLes 窗口正常；`shot()` 截图 79 KB、终端文字与 emoji 均在图中；路由屏蔽 addon-canvas 后回退 DOM 渲染器、页面无报错；无 pageerror | 本轮 |
 | 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSL 切层/agent 退出回归无重复；无 pageerror | 本轮 |\n| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |\n| 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
 | 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |
 | 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
@@ -2129,5 +2146,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.13 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.14 · 桌面就是终端 · 一切皆文件</sub>
 </p>

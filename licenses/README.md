@@ -12,11 +12,12 @@ hterminal 本体采用 `Apache-2.0 OR MIT` 双许可（见上级目录的 `LICEN
 | [xterm.js](https://github.com/xtermjs/xterm.js) | 5.5.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 终端渲染引擎 |
 | [@xterm/addon-fit](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-fit) | 0.10.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 让终端自适应容器尺寸 |
 | [@xterm/addon-unicode11](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-unicode11) | 0.8.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 东亚宽字符/emoji 的列宽计算 |
+| [@xterm/addon-canvas](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-canvas) | 0.7.0 | MIT | `LICENSE.xterm.js.txt` | CDN（jsdelivr / unpkg） | 逐格绘制，避免 DOM 渲染器把 ZWJ emoji 连字后与单元格错位 |
 | [marked](https://github.com/markedjs/marked) | 12.0.2 | MIT | `LICENSE.marked.txt` | CDN（jsdelivr / unpkg） | 把智能体回复的 Markdown 转成 HTML |
 | [html2canvas](https://github.com/niklasvh/html2canvas) | 1.4.1 | MIT | `LICENSE.html2canvas.txt` | CDN（jsdelivr / unpkg） | 智能体 `screenshot` 工具 |
 | [Pyodide](https://pyodide.org/) | 0.26.4 | MPL-2.0 | `LICENSE.pyodide.txt` | CDN（jsdelivr / unpkg） | 在浏览器里跑 CPython 3.12 (WASM) |
 
-`@xterm/addon-fit`、`@xterm/addon-unicode11` 与 `xterm.js` 同属一个仓库、同一份 MIT 许可，
+`@xterm/addon-fit`、`@xterm/addon-unicode11`、`@xterm/addon-canvas` 与 `xterm.js` 同属一个仓库、同一份 MIT 许可，
 因此共用 `LICENSE.xterm.js.txt`。
 
 `LICENSE.marked.txt` 除了 marked 自己的 MIT 文本，还包含上游随附的 **Markdown（John Gruber）BSD 声明**，

@@ -5741,7 +5741,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.13';
+const HT_VERSION = '0.0.1.14';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -7270,6 +7270,16 @@ const UNI11_JS = [
   'https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js',
   'https://unpkg.com/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js'
 ];
+/* Canvas 渲染器。xterm 5.5 默认是 DOM 渲染器：它把一行里属性相同的字符塞进
+ * 同一个 <span>，浏览器于是会对 span 内的 ZWJ 序列做连字——`👨‍👩‍👧‍👦` 塌成一个
+ * 家庭图标、只占 2 格，而 buffer 仍按「每个 emoji 2 格」推进 8 格。
+ * 两者一差，光标就停在文字右边好几格的空地上，后面的字也全部左移。
+ * canvas 渲染器逐格绘制，不跨格连字，视觉宽度与 cell 严格一致。
+ * 非必需：拿不到就留在 DOM 渲染器，功能不受影响（只是 emoji 会再偏回去）。 */
+const CANVAS_JS = [
+  'https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.js',
+  'https://unpkg.com/@xterm/addon-canvas@0.7.0/lib/addon-canvas.js'
+];
 /* 加载顺序：DepCache（IndexedDB）→ CDN。
  * 为什么不用 CDN.js：它是 <script src>，每次新标签都要走一次浏览器 HTTP 缓存，
  * 而 HTTP 缓存会被「清除数据」清掉、部分 CDN 还返回 no-store。
@@ -7290,8 +7300,8 @@ async function loadOne(list, check, label, onLog, required) {
 }
 
 async function loadXterm(onLog) {
-  if (window.Terminal && window.FitAddon && window.Unicode11Addon) return true;
-
+  /* 注意这里不能写成「全都齐了就直接 return」：canvas 渲染器是后加的，
+   * 老页面（DepCache 里只有 xterm/fit/unicode11）也要补装，所以逐个判断。 */
   if (!window.Terminal) {
     onLog && onLog('准备 xterm.css');
     let cssOk = false;
@@ -7304,6 +7314,8 @@ async function loadXterm(onLog) {
   await loadOne(FIT_JS, () => !!window.FitAddon, 'addon-fit', onLog, true);
   /* Unicode11 是锦上添花：拿不到就退化成默认宽度表，不阻塞启动 */
   await loadOne(UNI11_JS, () => !!window.Unicode11Addon, 'addon-unicode11', onLog, false);
+  /* canvas 渲染器同样是可选项：拿不到就留在 DOM 渲染器 */
+  await loadOne(CANVAS_JS, () => !!window.CanvasAddon, 'addon-canvas', onLog, false);
   return true;
 }
 
@@ -7680,6 +7692,16 @@ class TerminalSession {
       return true;
     });
     this.term.open(this.container);
+    /* 换 canvas 渲染器。必须在 open 之后加载：addon 要拿 term.element 的尺寸。
+     * DOM 渲染器把整行同属性字符合成一个 <span>，浏览器对 span 里的 ZWJ 序列
+     * 做连字（`👨‍👩‍👧‍👦` 塌成一个家庭图标），而 buffer 仍按 8 格推进——
+     * 光标于是停在文字右边 6 格的空地上。canvas 逐格画，视觉与 cell 严格对齐。
+     * 失败不致命：留在 DOM 渲染器，只是 emoji 那一行会再错位。 */
+    if (window.CanvasAddon) {
+      try {
+        this.term.loadAddon(new window.CanvasAddon.CanvasAddon());
+      } catch (e) { console.warn('canvas 渲染器不可用，继续用 DOM 渲染', e); }
+    }
     this._initCursor();
     // Unicode 11 宽度表：CJK/emoji 占 1 格还是 2 格，必须与渲染一致，否则会错位。
     if (window.Unicode11Addon) {
