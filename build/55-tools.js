@@ -543,6 +543,7 @@ class ShotApp {
     this.el.innerHTML = `<div class="tl">
       <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">截图</b>
         <span style="flex:1 1 auto"></span>
+        <button class="tl-btn sm" data-a="edit" disabled title="在图看窗口里裁剪 / 标注 / 打码">编辑</button>
         <button class="tl-btn sm" data-a="shot">截取</button>
       </div>
       <div class="tl-body">
@@ -585,6 +586,7 @@ class ShotApp {
       const b = e.target.closest('[data-a]');
       if (!b) return;
       if (b.dataset.a === 'shot') this.shoot();
+      else if (b.dataset.a === 'edit') this.edit();
       else if (b.dataset.a === 'save') this.save();
       else if (b.dataset.a === 'down') this.download();
       else if (b.dataset.a === 'copy') this.copyImg();
@@ -626,7 +628,7 @@ class ShotApp {
       stage.appendChild(img);
       $('[data-f="meta"]', this.el).textContent =
         img.naturalWidth + '×' + img.naturalHeight + ' · ' + ToolKit.bytes(this.url.length * 0.75 | 0);
-      ['save', 'down', 'copy'].forEach(a => { $('[data-a="' + a + '"]', this.el).disabled = false; });
+      ['save', 'down', 'copy', 'edit'].forEach(a => { $('[data-a="' + a + '"]', this.el).disabled = false; });
     } catch (e) {
       toast('截图失败：' + (e && e.message || e), true);
     } finally {
@@ -662,6 +664,15 @@ class ShotApp {
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       toast('已复制图片');
     } catch (e) { toast('这个浏览器不让写图片剪贴板，请用「下载」', true); }
+  }
+  /* 拍完直接送去修：截图窗口不自己做编辑，免得两套撤销栈 */
+  edit() {
+    if (!this.url) return;
+    const ext = (this.url.match(/^data:image\/(\w+)/) || [])[1] || 'png';
+    WindowManager.open({
+      type:'image', dataUrl:this.url, title:'看图 · 截图',
+      name:this._name(ext === 'jpeg' ? 'jpg' : ext)
+    });
   }
 }
 

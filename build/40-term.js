@@ -785,10 +785,10 @@ const WindowManager = {
 
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'智能体', editor:'编辑器', about:'关于', html:'窗口',
-      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', urlhash:'链接即状态',
+      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', image:'看图修图', urlhash:'链接即状态',
       recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
-      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], urlhash:[700, 620],
+      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], image:[940, 660], urlhash:[700, 620],
       recorder:[460, 400], geo:[460, 400], view3d:[460, 400], audio:[460, 400] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     const { w:vw, h:vh } = deskBox();
@@ -935,6 +935,7 @@ const WindowManager = {
         case 'color': win.content = new ColorApp(win.body, opts); break;
         case 'markdown': win.content = new MdApp(win.body, opts); break;
         case 'shot': win.content = new ShotApp(win.body, opts); break;
+        case 'image': win.content = new ImageApp(win.body, opts); break;
         case 'urlhash': win.content = new UrlHashApp(win.body, opts); break;
         case 'recorder':
         case 'geo':

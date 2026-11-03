@@ -676,7 +676,7 @@ class FilesApp {
     if (!rows.length) { this.listEl.innerHTML = '<div class="fm-empty">空目录</div>'; return; }
     this.listEl.innerHTML = rows.map(r => `<div class="fm-row" data-p="${esc(r.path)}">
       <span class="ico" style="font-family:var(--mono);color:${r.kind === 'dir' ? 'var(--accent)' : r.kind === 'func' ? 'var(--amber)' : 'var(--fg-mute)'}">${r.kind === 'dir' ? '▸' : r.kind === 'func' ? 'λ' : r.kind === 'app' ? 'a' : r.kind === 'device' ? 'v' : r.kind === 'package' ? 'p' : r.kind === 'grant' ? '!' : r.kind === 'proc' ? '&' : '·'}</span>
-      <span class="nm" style="${r.kind === 'dir' ? 'color:var(--accent)' : r.kind === 'func' ? 'color:var(--amber)' : ''}">${esc(r.name)}${r.kind === 'dir' ? '.' : ''}</span>
+      <span class="nm" style="${r.kind === 'dir' ? 'color:var(--accent)' : r.kind === 'func' ? 'color:var(--amber)' : ''}" title="${esc(r.name)}">${esc(spotExportName(r.name))}${r.kind === 'dir' ? '.' : ''}</span>
       <span class="kd">${esc(r.kind)}</span>
       <span class="sz">${r.kind === 'dir' ? '' : fmtBytes(r.size)}</span>
     </div>`).join('');
@@ -716,6 +716,23 @@ class FilesApp {
         return;
       }
       const r = await FS.read(p);
+      const mime = (r.meta && r.meta.mime) || '';
+      /* 图片给缩略图，不给「[二进制] 12 KB」——看图工具好歹要从这里进得去 */
+      if (/^image\//i.test(mime)) {
+        const url = await contentToDataUrl(r.content, mime);
+        this.prevEl.textContent = '';
+        const img = new Image();
+        img.alt = spotExportName(baseName(p));
+        img.style.cssText = 'display:block;margin:0 auto;max-width:100%;max-height:calc(100% - 22px);border-radius:6px';
+        img.src = url;
+        const cap = document.createElement('div');
+        cap.className = 'fm-imgcap';
+        cap.textContent = spotExportName(baseName(p)) + ' · ' + fmtBytes(r.size);
+        img.onload = () => { cap.textContent = spotExportName(baseName(p)) + ' · ' + img.naturalWidth + '×' + img.naturalHeight + ' · ' + fmtBytes(r.size); };
+        this.prevEl.appendChild(img);
+        this.prevEl.appendChild(cap);
+        return;
+      }
       let c = r.content;
       if (c instanceof ArrayBuffer || c instanceof Blob) { this.prevEl.textContent = '[二进制] ' + fmtBytes(c.size || c.byteLength || 0); return; }
       c = String(c == null ? '' : c);
@@ -728,6 +745,12 @@ class FilesApp {
     if (st.kind === 'dir') { this.path = p; await this.load(); return; }
     if (st.kind === 'app') { WindowManager.open({ app:st.meta.app || st.name }); return; }
     if (st.kind === 'func') { WindowManager.open({ type:'editor', path:p, title:st.name }); return; }
+    const nm = spotExportName(baseName(p));
+    const mime = (st.meta && st.meta.mime) || '';
+    if (/^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(nm)) {
+      WindowManager.open({ type:'image', path:p, title:'看图 · ' + nm });
+      return;
+    }
     WindowManager.open({ type:'editor', path:p, title:st.name });
   }
   async newEntry(dir) {

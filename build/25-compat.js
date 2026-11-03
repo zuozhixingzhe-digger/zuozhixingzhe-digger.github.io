@@ -744,9 +744,9 @@ const COMPAT = (function () {
   }, '列出挂载点（挂载本身未实现）');
 
   def('tools', async () => {
-    const names = ['calc', 'data', 'color', 'markdown', 'shot', 'urlhash', 'recorder', 'geo', 'view3d', 'audio'];
+    const names = ['calc', 'data', 'color', 'markdown', 'shot', 'image', 'urlhash', 'recorder', 'geo', 'view3d', 'audio'];
     return { out: names.map(n => n.padEnd(10) + ({ calc:'科学计算器', data:'数据转换', color:'调色盘', markdown:'Markdown 渲染',
-      shot:'网页内截屏', urlhash:'链接即状态', recorder:'录音机（维护中）', geo:'定位（维护中）',
+      shot:'网页内截屏', image:'看图 / 修图', urlhash:'链接即状态', recorder:'录音机（维护中）', geo:'定位（维护中）',
       view3d:'3D 视图（维护中）', audio:'音频播放（维护中）' })[n]).join('\n') + '\n' };
   }, '列出工具');
 

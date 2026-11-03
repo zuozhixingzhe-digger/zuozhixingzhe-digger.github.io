@@ -36,7 +36,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.1.6"
+VERSION = "0.0.1.7"
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 

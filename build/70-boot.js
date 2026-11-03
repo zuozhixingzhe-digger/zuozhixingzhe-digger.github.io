@@ -778,6 +778,10 @@ function _dropTarget(el) {
   if (ag) return { label:'.queryfile（并附加到对话）', dir:'.queryfile' };
   const fm = el && el.closest && el.closest('.fm');
   if (fm && fm.__app && fm.__app.path) return { label:fm.__app.path, dir:fm.__app.path };
+  /* 拖到看图窗口上：文件照样落进 .home，但顺手在图里打开——
+   * 「先存下来再去找」是没必要的两步 */
+  const iw = el && el.closest && el.closest('[data-img-app]');
+  if (iw && iw.__imgApp) return { label:'.home（并在这里打开）', dir:'.home', imgApp:iw.__imgApp };
   /* 拖到终端上：落到它当前目录，并把路径粘到命令行——比丢进 .home 有用得多 */
   const term = _termAt(el);
   if (term && term.cwd) return { label:term.cwd + '（并粘贴路径）', dir:term.cwd, term };
@@ -868,6 +872,7 @@ function initDropImport() {
         toast('已导入 ' + paths.length + ' 个文件到 ' + t.dir);
         /* 落在终端上：紧接着把路径粘进命令行，省得用户再去文件管理器里找 */
         if (t.term && paths.length) t.term.insert(paths.join(' '));
+        if (t.imgApp && paths.length) await t.imgApp.loadPaths(paths);
       } catch (err) { toast('导入失败：' + (err && err.message || err), true); }
       return;
     }

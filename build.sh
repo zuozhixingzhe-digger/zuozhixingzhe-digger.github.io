@@ -20,7 +20,7 @@ for f in ['build/00-head.html', 'build/10-body.html']:
 worker = open('build/20-worker.js').read() + '\n\n' + open('build/25-compat.js').read()
 parts.append('\n<script id="worker-src" type="text/js-worker">\n' + worker + '\n</script>\n')
 main = []
-for f in ['build/30-core.js', 'build/40-term.js', 'build/50-apps.js', 'build/55-tools.js', 'build/56-data.js', 'build/57-color.js', 'build/60-agent.js', 'build/65-tui.js', 'build/70-boot.js']:
+for f in ['build/30-core.js', 'build/40-term.js', 'build/50-apps.js', 'build/55-tools.js', 'build/56-data.js', 'build/57-color.js', 'build/58-image.js', 'build/60-agent.js', 'build/65-tui.js', 'build/70-boot.js']:
     main.append(open(f).read().rstrip('\n'))
 parts.append('\n<script>\n' + '\n\n'.join(main) + '\n</script>\n</body>\n</html>\n')
 open('index.html', 'w').write('\n'.join(parts))

@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.6';
+const HT_VERSION = '0.0.1.7';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -336,6 +336,7 @@ const APP_DEFS = [
   { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
   { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
   { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
+  { name:'image', title:'看图修图', desc:'查看图片、裁剪标注打码（截图搭档）', type:'image', icon:'▩' },
   { name:'urlhash', title:'链接即状态', desc:'把文本/JS 压进 URL 片段', type:'urlhash', icon:'⌗' },
   { name:'recorder', title:'录音机', desc:'维护中，暂不可用', type:'recorder', icon:'◎' },
   { name:'geo', title:'定位', desc:'维护中，暂不可用', type:'geo', icon:'⌖' },
@@ -1368,11 +1369,16 @@ async function dropIntoDir(items, dir, opts) {
   return r;
 }
 
-/* 任意内容 → dataURL（附件里放图片用）。File / Blob / ArrayBuffer / 字符串都吃。 */
+/* 任意内容 → dataURL（附件里放图片用）。File / Blob / ArrayBuffer / 类型化数组 / 字符串都吃。 */
 async function contentToDataUrl(content, mime) {
-  const blob = content instanceof Blob ? content
-    : content instanceof ArrayBuffer ? new Blob([content], { type:mime || 'application/octet-stream' })
-    : new Blob([String(content == null ? '' : content)], { type:mime || 'text/plain' });
+  /* Uint8Array 也要认：FS.write 存二进制时就是它，只判断 Blob/ArrayBuffer
+   * 会把 PNG 的字节拼成 "137,80,78,…" 当文本读，浏览器自然解码失败。 */
+  const typed = ArrayBuffer.isView(content)
+    ? content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength)
+    : content;
+  const blob = typed instanceof Blob ? typed
+    : typed instanceof ArrayBuffer ? new Blob([typed], { type:mime || 'application/octet-stream' })
+    : new Blob([String(typed == null ? '' : typed)], { type:mime || 'text/plain' });
   return await new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(String(fr.result));

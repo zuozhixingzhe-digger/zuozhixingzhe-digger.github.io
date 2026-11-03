@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.1**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.7**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -81,7 +81,7 @@ readme     welcome
 | 文件系统 | 点分隔路径、命名像标识符、**一切皆文件**（函数、设备、进程、权限都是文件） |
 | 内核 | 每个终端窗口一个 Web Worker，真多线程 |
 | 智能体 | 单会话 harness，能直接在当前沙箱执行 JS，不问许可 |
-| 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 链接即状态（见[§15](#15-沙箱里的工具)） |
+| 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 看图修图 / 链接即状态（见[§15](#15-沙箱里的工具)） |
 
 它**不需要后端**。后端（`modelserver.*`）只用于替你保管 API 密钥，可选。
 
@@ -132,7 +132,7 @@ readme     welcome
 - **右**：`▦` 应用启动器 / `⛶` 全屏 / **`≥` 更多**（原来的 `☰` 换成 `≥`，单字符更利落）。
 
 `▦` 里分三段：基础应用（终端/浏览器/文件/编辑器/Python/智能体）、**工具**
-（计算器/数据转换/调色盘/Markdown/截图/链接即状态，见[§15](#15-沙箱里的工具)）、
+（计算器/数据转换/调色盘/Markdown/截图/看图修图/链接即状态，见[§15](#15-沙箱里的工具)）、
 以及四个置灰的「维护中」（录音机/定位/3D/音频）。置灰不是禁用：点进去会看到
 「计划怎么做」和「为什么先不做」，比一个点了没反应的按钮诚实。
 
@@ -371,11 +371,11 @@ whoami xargs yes
 #### `fastfetch` / `neofetch`
 
 ```text
-██╗  ██╗████████╗    HTerMinaL 0.0.1.1
+██╗  ██╗████████╗    HTerMinaL 0.0.1.7
 ██║  ██║╚══██╔══╝    ──────────────────────────
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
-██║  ██║   ██║       Kernel     JSHeL 0.0.1.1
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.7
 ╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
 ```
 
@@ -716,6 +716,7 @@ readme           →  readme             （全字母数字、不以数字开头
 | 智能体输入框 | `.queryfile` 并挂到对话 |
 | 文件管理器 | 它当前目录 |
 | 终端 | 它当前目录，并**把路径粘到命令行** |
+| 看图窗口 | `.home`，并**立刻在这张图里打开** |
 | 其它地方 | `.home` |
 
 **在窗口之间拖**（同文档内部，走 `DragBus` + `application/x-ht-spot`）：
@@ -726,6 +727,7 @@ readme           →  readme             （全字母数字、不以数字开头
 | 文件管理器 → 智能体 | 读出来当附件（图片走 dataURL，文本内联，>256 KB 提示用 `read_file`） |
 | 文件管理器 → 终端 | 把路径粘进命令行（不执行） |
 | 文件管理器 → 浏览器 | 在浏览器里打开：html/text 直接渲染，图片按图片显示，其它交给编辑器 |
+| 文件管理器 → 看图 | 直接打开这张图；图片以外的文件会明确报「解不了码」 |
 | 浏览器标签 → 文件管理器 | 把当前网页存成 `.html`（跨域只能存跳转页） |
 | 浏览器标签 → 智能体 | 网页正文当附件 |
 | 浏览器标签 → 终端 | 粘贴地址 |
@@ -845,6 +847,8 @@ threads.list() / threads.kill(pid)
 
 // —— 窗口 ——
 openWindow({type, ...}) / closeWindow(id) / listWindows()
+openWindow({type:'image', path:'.home.shot-20261103-142000-edit.png'})  // 看图 / 修图
+openWindow({type:'image', dataUrl})   // 不落盘直接给像素（截图窗口的「编辑」走这条）
 
 // —— 网络 / 系统 ——
 fetchText(url) / openURL(url) / requestPermission(name) / notify(msg)
@@ -1080,7 +1084,7 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 入口有三个，都是同一个东西：
 
 ```text
-顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 链接即状态
+顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 看图修图 / 链接即状态
 终端里        → tool calc        （不带参数敲 tools 看清单）
 文件系统      → .app.calc 也能 open
 ```
@@ -1091,7 +1095,8 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 | **数据转换** `data` | 完整 | 编码互转（文本/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体）、时间戳与时区、哈希（SHA-1/256/384/512 + MD5）、随机数 |
 | **调色盘** `color` | 完整 | 色相环 + RGB/HSL/HSV/CMYK/YUV/Lab 六种表示联动、EyeDropper、从页面截图取色、WCAG 对比度、历史色 |
 | **Markdown** `markdown` | 完整 | 分栏实时预览、白名单清洗（`<script>`/`on*`/`javascript:` 一律删）、导出 HTML、下载 `.md` |
-| **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载 |
+| **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载；拍完点「编辑」直接送进看图窗口 |
+| **看图修图** `image` | 完整 | 缩放/适应/拖拽平移、裁剪、旋转 90°、水平/垂直翻转、按宽度缩放；矩形 / 箭头 / 画笔 / 文字 / 打码五种标注（带暗色描边，落在同色底上也看得见）；Alt+点击取色、Ctrl+V 粘贴剪贴板图片、Ctrl+Z 撤销（按像素数自动限步）、导出 PNG/JPEG/WebP |
 | **链接即状态** `urlhash` | 完整 | 把文本或 JS 压进 URL 的 `#` 片段，复制链接即可还原；带 `run=1` 时**先弹确认框**再执行 |
 | **录音机** `recorder` | 壳 | 维护中，暂不可用 |
 | **定位** `geo` | 壳 | 维护中，暂不可用 |
@@ -1102,6 +1107,18 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 > 「为什么先不做」——录音要处理权限与关窗时的落盘，定位只在 HTTPS/localhost 给，
 > 3D 要么引 three.js 要么自己写矩阵与着色器，音频的解码格式受浏览器限制。
 > 与其给一个半残的按钮，不如把边界说清楚。
+
+**看图修图是截图的下半场**，两个窗口是接起来的：
+
+```text
+截图窗口「截取」→ 右上角「编辑」→ 看图窗口（同一张图，不落盘也能改）
+看图窗口「存到 .home」→ 原文件名 + `-edit`（如 shot-20261103-142000-edit.png）
+文件管理器双击图片 → 直接进看图窗口；把图拖进看图窗口 → 先落 .home，再打开
+```
+
+编辑全在 Canvas 2D 上做，导出就是所见：裁剪/旋转/翻转/缩放改的是像素，不是 CSS 滤镜；
+五种标注（矩形、箭头、画笔、文字、打码）都带一道半透明暗边，落在同色背景上也不会消失。
+撤销按像素数自动限步（小图 16 步、4K 截图 4 步）——快照式撤销吃内存，这条线必须画出来。
 
 ### 15.1 CLI：同一套算法的另一个入口
 
@@ -1213,6 +1230,7 @@ build/
                              （编码/时间戳/哈希/随机）、UrlHash + UrlHashApp
   57-color.js              ← ColorMath（RGB/HSL/HSV/CMYK/YUV/Lab 互转）、ColorApp
                              （色相环 canvas、六表示联动、取色、对比度）
+  58-image.js              ← ImageApp（Canvas 2D：看图、裁剪、旋转翻转缩放、五种标注、撤销、导出）
   60-agent.js              ← 智能体：prompt、工具定义、循环、JSONL 会话、Markdown 渲染
   65-tui.js                ← 终端内智能体宿主（AgentTuiHost）+ DOM RPC + 截图
   70-boot.js               ← RPC 分发、AppMenu、Drawer、window API、快捷键、启动流程、DepCache
@@ -1702,6 +1720,22 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 一分钟内不再重试。顺带把渲染加上序号（`_seq`），只让最后一次落地，
 否则「先发起的慢渲染」会盖掉「后发起的新内容」——这类竞态在异步预览里几乎必然出现。
 
+**44. `Uint8Array` 不是 `ArrayBuffer`，`String()` 会把它变成「137,80,78,…」**
+截图存 `.home` 时写进去的是 `Uint8Array`，`contentToDataUrl()` 只判断了 `Blob` 与
+`ArrayBuffer`，其余一律走 `new Blob([String(content)])`——于是 PNG 的 8 个魔数字节
+变成了 `"137,80,78,71,13,10,26,10"` 这串文本，`Image` 当然解不出来。症状很有迷惑性：
+文件大小对、扩展名对、文件管理器里的缩略图也在（DOM 存的是原字节），只有「双击打开」报
+「不是浏览器能解码的图片」。**修法**：先 `ArrayBuffer.isView(content)`，按
+`byteOffset / byteLength` 切出真正的缓冲区。教训：JS 里「二进制」至少有四种常见形态
+（`ArrayBuffer` / TypedArray / `Blob` / base64 字符串），每个吞二进制的地方都要把四种列一遍。
+
+**45. `<svg>` 放进 `font-size` 控大小的容器里，会按父容器宽度铺满**
+空状态原来是一个字符图标（`▩`，靠 `font-size:40px` 定大小），换成内联 SVG 后忘了给尺寸，
+结果 SVG 撑到 190×190，把下面的标题、说明、按钮全顶出可视区——**而布局本身没有任何报错**，
+只有截图才看得出来。**修法**：`.ie-ico{line-height:0}` + `.ie-ico svg{width:52px;height:52px}`。
+教训：SVG 默认 `width/height` 是 `auto`，在没有 viewBox 约束的 flex/grid 里会按 `100%` 解析，
+凡是「图标 + 文字」的块，图标尺寸一定要写死。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1759,6 +1793,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.7 | 2026-11-03 | **看图修图（截图的下半场）**：①**新增 `build/58-image.js`**（`ImageApp`）——Canvas 2D 看图与修图：适应 / 1:1 / ±缩放（Ctrl+滚轮围绕指针缩放）、拖拽平移、裁剪（拖框松手即裁，按取整后的边相减，避免半像素偏一格）、左转/右转 90°、水平/垂直翻转、按宽度等比缩放；五种标注（矩形 / 箭头 / 画笔 / 文字 / 打码）共用同一套 `_shape`，预览与落笔不会「看到一种、得到另一种」；每条线先画 2px 半透明暗边再上色，红色标注落在红色按钮上也看得见；Alt+点击取色（写回颜色选择器）、Ctrl+V 粘贴剪贴板图片、Ctrl+Z / Ctrl+Shift+Z 撤销重做；导出 PNG/JPEG/WebP（JPEG 先铺白底，否则透明区变黑），存 `.home` 用原名 + `-edit`，第二次保存覆盖自己的副本，不碰原图。②**撤销用快照、不用操作日志**——每种工具写逆运算容易漏，快照更短；按像素数限步（<1.5MP 16 步、<4MP 8 步、更大 4 步），内存上限写死。③**和截图接起来**——截图窗口加「编辑」按钮（拍完才可用，按当前格式生成文件名），点开即在同一张图上改。④**文件管理器**——图片双击进看图、选中出缩略图（不再只写「[二进制] 12 KB」）；显示名用 `spotExportName` 还原，存储名与路径不变。⑤**拖拽**——外部文件拖到看图窗口 = 落 `.home` 并立刻打开；从文件管理器拖图过来直接打开。⑥**修**——`contentToDataUrl` 只认 Blob/ArrayBuffer，`FS.write` 存进去的 `Uint8Array` 会被 `String()` 拼成 `137,80,78,…`，导致「自己存的 PNG 自己打不开」；现在认 `ArrayBuffer.isView`。⑦文档 §7 / §15 / §3，版本 4 个文件。⑧空状态图标改内联 SVG 后忘了写尺寸，被撑成 190px 把文字全顶出可视区——补 `.ie-ico svg{width:52px;height:52px}`。 |
 | 0.0.1.6 | 2026-11-03 | **沙箱工具集 + 真实页面实测 + 理念章节**：①**十个工具**（`build/55-tools.js`、`56-data.js`、`57-color.js`，共约 1900 行，全部自研）——**计算器**（递归下降解析 `expr/term/unary/power/postfix/primary`，不用 `eval`；`2^3^2` 右结合、`5!`、`log(2,8)`、`sin(30)` 走 DEG/RAD、记忆 M+/M−、40 条历史、键盘直输）；**数据**（编码互转：文本/UTF-16/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体；时间戳 + `Intl` 多时区 + 相对时间；哈希 SHA-1/256/384/512 + 自写 MD5 + 期望值比对 + 文件哈希；随机：字符串/hex/bytes/int/uuid/分组密码，`crypto.getRandomValues` + 拒绝采样 + 熵估算）；**调色盘**（色相环 canvas 逐像素按当前亮度重绘、六种表示双向联动 HEX/RGB/HSL/HSV/CMYK/YUV/Lab、`EyeDropper`、从整页截图逐像素取色、WCAG 对比度、历史色存 localStorage）；**Markdown**（`marked` 懒加载 + 失败退内置迷你渲染器、`sanitizeHtml` 白名单清洗 `<script>`/`on*`/`javascript:`、渲染序号防旧盖新、导出 HTML/下载 .md）；**截图**（桌面/指定窗口/整文档、1–3×、PNG/JPEG/WebP、存 `.home` 或下载、复制图片）；**链接即状态**（文本/JS → `deflate-raw` + base64url 压进 `#`，`run=1` 打开时先弹确认框展示代码再执行）；**四个壳子**（录音机/定位/3D/音频：写明「计划怎么做」与「为什么先不做」）。②**CLI**（`25-compat.js`）——`b64/b32/hex/bin/dec/url/hash/rand/uuid/ts/mount/tools/tool`，与窗口共用主线程 `util.codec` / `util.hash`（Base32、MD5 只写一份）；`hash` 对不存在的文件回退成「把参数当文本」，不报「没有那个文件」。③**`sptm`（mount）占位**——第七个 syscall，注册进 FS/RPC/worker API，调用明确抛「还没做」，`mount` 命令可列五个内建挂载点；不假装成功的原因写在 §7。④**窗口/启动器**——`APP_DEFS` 加 10 项、`WindowManager._render` 加分支、`TYPE_TITLES/TYPE_SIZE` 补齐、启动器加「工具」分组（维护中的置灰带标签）并支持滚动。⑤**真实页面实测**——把 2048、WinBox、98.css、three.js、Chart.js、p5.js、lodash 下到**仓库之外**的临时目录跑起来（见 §8.1 致谢），2048 能玩、WinBox 能在窗口里再开窗口、Chart.js 曲线在动、p5.js 流场在跑、lodash 在 Worker 里 `eval` 后 `_.camelCase` 正常。⑥**自举**——把 `index.html` 用静态服务跑起来、塞进自己的小浏览器，内层 `2+3` → 5、`hsl('uname -a')` → `HTerMinaL 0.0.1.6`、`hsl('ls')` → `readme welcome`。⑦**README**——新增 §15 工具、§16 设计理念（原文照录）、§8.1 致谢开源、§7 `sptm` 说明、§11 API、开发日志/操作记录/踩坑。⑧**修**——计算器 `.calc-pad` 忘了 `grid-template-columns`（按钮排成 4 列、顺序全乱）；`ensureMarked()` 没缓存 Promise，输入时每个字都重新拉一次 CDN；`MdApp.render()` 无序号，慢的旧渲染会盖掉新内容。 |
 | 0.0.1.5 | 2026-11-03 | **窗口间拖拽 + 小浏览器一键存网页**：①**`DragBus` 拖拽信道**——同一文档里所有窗口共用一份 `{items}`，`dragenter/dragover` 阶段就能读（`dataTransfer` 的内容要等 `drop` 才允许读），所以「拖到哪个窗口先亮」才做得到；`dataTransfer` 里同时写 `application/x-ht-spot`（JSON）与 `text/plain`，管跨进程与变量丢失时的兜底。②**文件管理器 ↔ 文件管理器**——每行 `dragstart` 发布 `{kind:'spot', path, name}`，落点调 `dropIntoDir()` 复制（目录整棵递归）；**按住 Shift = 移动**；同目录拖出 `name-2`；拖进自己内部直接跳过。③**多窗口**——文件管理器工具栏加 `⧉`：同目录再开一个窗口，两个窗口并排互相拖；窗口本来就是一个 `FilesApp` 实例一个 `path`，互不共享状态。④**文件 → 智能体**——`addItems()` 从 spotfs 读内容：图片转 dataURL、文本内联（≤256 KB）、二进制提示用 `read_file`，仍受「一次最多 6 个附件」约束。⑤**文件 → 终端**——`TerminalSession.insert()` 用括号粘贴（`\x1b[200~…\x1b[201~`）把路径插进命令行**不执行**；从系统拖文件到终端则先导入它当前 `cwd` 再粘路径。⑥**文件 → 浏览器**——`BrowserApp.openPath()`：html/text 直接渲染、图片按图片显示、其它交给编辑器窗口。⑦**浏览器标签 → 文件管理器 / 智能体 / 终端**——标签 `draggable`，携带 `{kind:'page', name, url, html}`（跨域时 `html:null`）：落到文件管理器存 `<标题>.html`（跨域存跳转页），落到智能体当附件，落到终端粘地址。⑧**小浏览器一键保存**——`br-bar` 新增「保存」（写进 spotfs 的 `.home`，撞名自动 `-2`）与「下载」（落本机磁盘），`pageHtml()` 用 `contentDocument.documentElement.outerHTML`，跨域读不到时存跳转页并如实提示；标题已带 `.html` 不会变成 `.html.html`。⑨**iframe 吃事件的解法**——拖拽期间给 `body` 挂 `drag-internal`，`.br-shield` 盖住 iframe，`drop` 才能回到父文档；`dragend` 之外补 `blur` / `visibilitychange` 清场，避免遮板卡住把小浏览器挡死。⑩**落点提示**——所有落点统一 `data-drop` + `::after` 小标签（「复制到 .bin」「粘贴路径」「在浏览器里打开」「附加到对话」），不用靠猜。⑪**实测**——两个 FM 窗口各 3/4 行、A→B 复制后两边都在、Shift 后源消失、目录 `.home.sub` 整棵复制到 `.bin`、同目录得到 `.home.one-2`；拖到桌面终端与终端窗口都出现 `.home> .home.alpha`（未执行）；拖到浏览器 `srcdoc` 含文件内容；标签→FM 生成 `.bin.-xxpage-2dhtml-2ehtml`、标签→智能体附件 `测试页.html` 且正文含 `HELLO`；保存生成 `.home.-xxpage-2dhtml-2ehtml`；遮板 `display:block` 且 drop 后 `body.drag-internal` 归位；无 pageerror。 |
 | 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSL 进来就回 HSL）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
@@ -1781,6 +1816,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 15:05 | 0.0.1.7：看图修图（截图搭档）+ 文件管理器缩略图 + 修 `Uint8Array` 解码 | `build/58-image.js`（新增：ImageApp / `imgCanvas` / `imgCopy` / `normRect`）、`build/00-head.html`（`.ie*` 全套 + `.fm-imgcap`）、`build/10-body.html`（启动器加「看图修图」）、`build/30-core.js`（`APP_DEFS` 加 `image`、`contentToDataUrl` 认 typed array、`HT_VERSION`）、`build/40-term.js`（`_render` 分支 + `TYPE_TITLES/TYPE_SIZE`）、`build/50-apps.js`（FilesApp 图片预览 + 双击进看图 + 文件名还原显示）、`build/55-tools.js`（ShotApp「编辑」按钮与方法）、`build/70-boot.js`（`_dropTarget` 加看图落点、导入后 `loadPaths`）、`build/25-compat.js`（`tools` 清单加 `image`）、`build.sh`（拼入 58）、`modelserver.{py,js,go}`（版本）、`README.md` | Playwright（无头 Chromium）：空状态可见；载入 640×400 → meta `640×400`、缩放 100%；裁剪拖 25%→75% → `320×200`，Ctrl+Z → `640×400`；矩形标注像素 `[240,73,86]`（红 + 抗锯齿）；打码/两行文字无异常；右转 `640×400→400×640`，再左转还原；缩放填 320 → `320×200`；存 `.home` 得 `test-edit.png`；外部文件 drop → `.home.drop.png` 且窗口变 `48×32`；内部拖拽 `.home` 里的 400×300 → 窗口变 `400×300`；截图 `2880×1692` → 「编辑」开出第二个看图窗口；文件管理器出现缩略图、双击打开 `320×200`；缩放按钮 `100%→156%→100%`、重做成功；无 pageerror | 本轮 |
 | 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSL(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
 | 2026-11-03 10:20 | 0.0.1.5：窗口间拖拽（文件↔文件/智能体/终端/浏览器）+ 小浏览器一键存网页 + 文件管理器多开 | `build/30-core.js`（`DRAG_MIME`/`DragBus`/`hasInternalDrag`/`uniquePathIn`/`isSameOrInside`/`dropIntoDir`/`htmlFileName`/`contentToDataUrl`）、`build/50-apps.js`（FilesApp `⧉` + `_bindDrop` 双通道 + dragstart 发布 item；BrowserApp 保存/下载按钮、`pageHtml`/`_pageName`/`saveToFs`/`downloadPage`/`openPath`/`_bindDrop`、标签 `draggable`、`.br-shield`）、`build/60-agent.js`（`addItems` + drop 分支）、`build/40-term.js`（`container.__term` + `insert()` 括号粘贴）、`build/70-boot.js`（`initDropImport` 双通道、`_termAt`、落点高亮、拖到终端先导入再粘路径、`dragend`/`blur`/`visibilitychange` 清场）、`build/00-head.html`（`.drop::after` 标签、`#term`/`.fm` 定位、`.br-shield`、`.txt` 按钮、`[draggable]` 光标）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.5）、`README.md`（第 7 章拖拽整节重写、第 11 章补 `dropIntoDir`/`DragBus`、日志、踩坑第 41 条） | 无头 Chromium：两个 FM 窗口 A→B 复制 / Shift 移动 / 目录整棵复制 / 同目录 `-2`；FM→桌面终端与终端窗口均显示 `.home> .home.alpha` 且未执行；FM→浏览器 `srcdoc` 含文件内容；标签→FM 存 html、标签→智能体附件含正文；保存生成 `.home.*-2ehtml`、标题带 `.html` 不重复；遮板拖拽中 `display:block`、结束后 `body.drag-internal` 归位；无 pageerror | `main` |
 | 2026-11-02 20:55 | 0.0.1.4：修「TUI 智能体进去就自己退出来」——`open()` 只打横幅不切模式 | `build/20-worker.js`（`AGENT_PROMPT`；`prompt()` 三路；`onSubmit` 新增 `mode==='agent'` 分支；`LineEditor` 新增 `onInterrupt` / `onCtrlD` 钩子并接进 `feed()`；`agentTui` 重写：`open/_run/line/send/queue/_drain/stop/close/helpOut` + `agentWidth/agentWrap` 折行 + `_startSpin/_stopSpin` 帧动画 + `_back` 记忆来路）、`build/30-core.js`（版本 0.0.1.4）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.2 重写、§11 注明、开发日志、操作记录、踩坑第 40 条） | 无头 Chromium：`agentTui.open()` 后提示符变 `agent> ` 且停住；`:help` / `:q` 正常；未配置后端时错误留在 TUI 内不退出；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；mock 慢模型下 `Ctrl+C` 0.7s 中断并回提示符（`■ 已请求停止当前轮`）；窗口版 `agentOpen()` 仍存活；无 pageerror | `main` |
@@ -1857,5 +1893,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.1 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.7 · 桌面就是终端 · 一切皆文件</sub>
 </p>
