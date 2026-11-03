@@ -16,10 +16,22 @@
 #   HT_MODEL=gpt-4o-mini         请求未带 model 时的兜底
 #   HT_TIMEOUT=120               上游超时秒数
 #   HT_DEFAULT_PROVIDER=openai   openai | anthropic | responses | custom
+#   HT_RPM=60                    模型请求每分钟上限（0 = 关闭限流）
+#   HT_BURST=20                  允许的瞬时突发次数
+#   HT_FETCH_RPM=120             抓网页每分钟上限（0 = 关闭）
+#
+# 命令行（优先级高于环境变量）：
+#   --rpm 60  --burst 20  --fetch-rpm 120
+#   --no-chat                    关闭模型请求
+#   --no-fetch                   关闭网页抓取
+#   --help
+# 两个功能不能同时关闭：全关就没有可提供的服务，启动即退出（endpoint 也不监听）。
 
+import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -32,7 +44,18 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOST = "127.0.0.1"
-PORT = int(os.environ.get("HT_PORT", "8787"))
+
+
+def env_int(name, default):
+    """环境变量读整数。写错了就用默认值——启动时因为一个拼错的 HT_RPM 崩掉
+    不值当，但也不能悄悄变成 0（那等于关掉限流）。"""
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+PORT = env_int("HT_PORT", 8787)
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -42,7 +65,19 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.1.16"
+RPM = env_int("HT_RPM", 60)
+BURST = env_int("HT_BURST", 20)
+FETCH_RPM = env_int("HT_FETCH_RPM", 120)
+VERSION = "0.0.1.17"
+# 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
+# (argparse 里的开关名, 路由, 中文名)
+FEATURES = (
+    ("no_chat", "/v1/chat/completions", "模型请求"),
+    ("no_fetch", "/v1/fetch", "网页抓取"),
+)
+# 关闭的接口与「根本不存在的路径」回同一个东西：状态码、头、正文逐字节一致。
+# 绝不能回「该功能已关闭」——那等于告诉对方这里本来有个接口，只是被关了。
+REJECTED = {"error": {"message": "请求不被接受", "type": "forbidden"}}
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -476,6 +511,45 @@ def origin_allowed(origin):
         return False
 
 
+class TokenBucket:
+    """令牌桶限流。进程级单例，按路由分桶（模型 / 抓网页各一个）。
+
+    为什么不用「每分钟最多 N 次」的固定窗口：窗口边界会放过两倍突发——
+    59 秒打满 N 次、下一秒再打满 N 次，两秒内就是 2N 次；而中间大段空闲
+    又不会攒下任何补偿。令牌桶按时间连续补，持续速率被限住，同时留一个
+    受控的瞬时突发。
+
+    burst 不是「给攻击者的余量」，是给正常用法的：智能体一轮任务会连着调
+    好几次模型（模型 → 工具 → 模型 → 工具），一次提问 3~8 个请求很正常。
+    桶太小，正常对话第一轮就撞 429；桶太大，页面脚本 for 循环能刷满。
+
+    失败不扣令牌：被拒的请求不该让下一次等更久。
+    """
+
+    __slots__ = ("rpm", "rate", "burst", "tokens", "last", "lock", "rejected")
+
+    def __init__(self, rpm, burst):
+        self.rpm = max(1, int(rpm))
+        self.rate = self.rpm / 60.0
+        self.burst = float(max(1, int(burst)))
+        self.tokens = self.burst
+        self.last = time.monotonic()
+        self.lock = threading.Lock()
+        self.rejected = 0
+
+    def take(self):
+        """取一个令牌。返回 0 = 放行；否则是建议等待的秒数。"""
+        with self.lock:
+            now = time.monotonic()
+            self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return 0.0
+            self.rejected += 1
+            return (1.0 - self.tokens) / self.rate
+
+
 class Server(ThreadingHTTPServer):
     """带并发上限的本地服务。
 
@@ -495,10 +569,16 @@ class Server(ThreadingHTTPServer):
     # 而 64 太少——自测里 100 个半开连接就能把槽位占满，让正常请求吃 503。
     max_workers = 128
 
-    def __init__(self, *a, **kw):
+    def __init__(self, *a, chat_bucket=None, fetch_bucket=None, routes=None, **kw):
         super().__init__(*a, **kw)
         self._slots = threading.BoundedSemaphore(self.max_workers)
         self.saturated = 0
+        # None = 该通道关闭限流（--rpm 0）
+        self.chat_bucket = chat_bucket
+        self.fetch_bucket = fetch_bucket
+        # 启用的路由白名单。不在里面的路径——无论是被 --no-* 关掉的，
+        # 还是压根不存在——都走同一个 403，探不出区别。
+        self.routes = frozenset(routes or ())
 
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):
@@ -590,6 +670,32 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(403, {"error": {"message": detail, "type": "forbidden"}})
         return False
 
+    def rate_gate(self, bucket, label):
+        """超限回 429。放在鉴权之后、读 body 之前：
+        未授权的请求不该白占额度，被拒的请求也不该让我们去读 8 MB 请求体。"""
+        if bucket is None:
+            return True
+        wait = bucket.take()
+        if wait <= 0:
+            return True
+        retry = max(1, int(math.ceil(wait)))
+        # 被脚本狂刷时，每次一行能把 stderr 变成日志炸弹。只报第一次和每 50 次。
+        if bucket.rejected == 1 or bucket.rejected % 50 == 0:
+            sys.stderr.write("[%s] 429 %s（累计拒绝 %d 次，%d 次/分）\n"
+                             % (time.strftime("%H:%M:%S"), label, bucket.rejected, bucket.rpm))
+        self.reply(429, {
+            "error": {
+                "message": "%s过于频繁（上限 %d 次/分），请 %d 秒后再试" % (label, bucket.rpm, retry),
+                "type": "rate_limit_error",
+                "code": "rate_limited",
+            }
+        }, {
+            "Retry-After": str(retry),
+            "X-RateLimit-Limit": str(bucket.rpm),
+            "X-RateLimit-Remaining": "0",
+        })
+        return False
+
     def local_only(self):
         """四重校验：socket 层 / Host / Origin / Sec-Fetch-Site。"""
         peer = self.client_address[0]
@@ -655,9 +761,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def deny(self):
-        # 只放行页面、健康检查、补全接口。其余一律拒绝——不做文件服务器，
+        # 只放行页面、健康检查、已启用的接口。其余一律拒绝——不做文件服务器，
         # 免得本机任何一个网页都能借这个端口读你的磁盘。
-        self.reply(403, {"error": {"message": "本服务只提供 index.html 与 /health、/v1/chat/completions", "type": "forbidden"}})
+        # 文案里不出现任何路径或能力名：那等于给探测者送情报。
+        self.reply(403, REJECTED)
 
     def do_GET(self):
         if not self.local_only():
@@ -667,17 +774,12 @@ class Handler(BaseHTTPRequestHandler):
             self.serve_index()
             return
         if path == "/health":
+            # 只报「活着」。以前这里列 providers 明细，等于一份能力清单：
+            # 关了哪个功能、有没有配 key，一问便知。前端只用 r.ok，不影响。
             self.reply(200, {
                 "ok": True,
                 "service": "hterminal-modelserver",
                 "version": VERSION,
-                "default_provider": DEFAULT_PROVIDER,
-                "providers": {
-                    "openai": bool(OPENAI_KEY),
-                    "anthropic": bool(ANTHROPIC_KEY),
-                    "responses": bool(OPENAI_KEY),
-                    "custom": bool(OPENAI_KEY),
-                },
             })
             return
         self.deny()
@@ -686,8 +788,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self.local_only():
             return
         route = self.path.split("?")[0]
-        if route not in ("/v1/chat/completions", "/v1/fetch"):
-            self.reply(403, {"error": {"message": "只接受 POST /v1/chat/completions 与 /v1/fetch", "type": "forbidden"}})
+        # 白名单在 Server 上，跟着 --no-chat / --no-fetch 变。被关掉的接口
+        # 和瞎猜的路径走同一条分支，响应完全一样（0.0.1.17）。
+        if route not in self.server.routes:
+            self.reply(403, REJECTED)
             return
         # 大小写不敏感：客户端 0.0.1.2 起产品名统一成 HTerMinaL，头值也改成了
         # "HTerMinaL"，而这里一直拿小写全等比较 —— 结果是自家前端每次都被自己
@@ -704,6 +808,12 @@ class Handler(BaseHTTPRequestHandler):
             # 只收 application/json：挡住 text/plain、form-urlencoded 这类
             # 「不触发预检就能发出去」的简单请求。
             self.reply(415, {"error": {"message": "Content-Type 必须是 application/json", "type": "unsupported_media_type"}})
+            return
+        # 限流在鉴权之后、读 body 之前。两条通道分开算：抓网页是廉价代理，
+        # 模型请求要花钱；用同一个桶，抓 100 条新闻就会把对话额度吃光。
+        is_fetch = route == "/v1/fetch"
+        if not self.rate_gate(self.server.fetch_bucket if is_fetch else self.server.chat_bucket,
+                              "抓网页请求" if is_fetch else "模型请求"):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -759,11 +869,46 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = Server((HOST, PORT), Handler)
+    ap = argparse.ArgumentParser(
+        prog="modelserver.py",
+        description="HTerMinaL modelserver：本地 Chat Completions 转发（默认 127.0.0.1:%d）" % PORT)
+    ap.add_argument("--rpm", type=int, default=RPM, metavar="N",
+                    help="模型请求每分钟上限，0 关闭限流（默认 %(default)s）")
+    ap.add_argument("--burst", type=int, default=BURST, metavar="N",
+                    help="允许的瞬时突发次数（默认 %(default)s）")
+    ap.add_argument("--fetch-rpm", type=int, default=FETCH_RPM, metavar="N", dest="fetch_rpm",
+                    help="抓网页每分钟上限，0 关闭（默认 %(default)s）")
+    ap.add_argument("--no-chat", action="store_true", help="关闭模型请求（/v1/chat/completions）")
+    ap.add_argument("--no-fetch", action="store_true", help="关闭网页抓取（/v1/fetch）")
+    args = ap.parse_args()
+
+    # 功能注册表决定路由白名单。将来加功能只改 FEATURES，这里不用动。
+    enabled = {path for flag, path, _ in FEATURES if not getattr(args, flag, False)}
+    if not enabled:
+        # 全关 = 没有可提供的服务。与其监听一个什么都不干的端口，
+        # 不如直接退出——一个只回 403 的端口本身就是情报。
+        ap.error("所有功能都被关闭了（%s），没有可提供的服务，拒绝启动"
+                 % "、".join(name for _, _, name in FEATURES))
+
+    burst = max(1, args.burst)
+    chat_bucket = TokenBucket(args.rpm, burst) if args.rpm > 0 else None
+    fetch_bucket = TokenBucket(args.fetch_rpm, burst) if args.fetch_rpm > 0 else None
+
+    srv = Server((HOST, PORT), Handler, chat_bucket=chat_bucket, fetch_bucket=fetch_bucket,
+                 routes=enabled)
     print("hterminal modelserver %s" % VERSION)
     print("  listening  http://%s:%d" % (HOST, PORT))
+    print("  features   %s" % " · ".join(sorted(enabled)))
     print("  limits     并发 %d · 排队 %d · 连接超时 %ds"
           % (srv.max_workers, srv.request_queue_size, Handler.timeout))
+    def rate_text(path, bucket, rpm):
+        if path not in enabled:
+            return "closed"
+        return "off" if bucket is None else "%d/min burst %d" % (rpm, burst)
+
+    print("  rate       chat %s · fetch %s"
+          % (rate_text("/v1/chat/completions", chat_bucket, args.rpm),
+             rate_text("/v1/fetch", fetch_bucket, args.fetch_rpm)))
     print("  providers  openai=%s anthropic=%s responses=%s" % (
         "yes" if OPENAI_KEY else "no", "yes" if ANTHROPIC_KEY else "no", "yes" if OPENAI_KEY else "no"))
     print("  密钥只在环境变量；不保存对话；不执行工具；不写文件。")

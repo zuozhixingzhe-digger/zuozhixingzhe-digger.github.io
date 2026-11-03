@@ -8,7 +8,9 @@
  * 不保存对话、不读文件、不执行工具、不写日志文件。密钥只在环境变量里。
  *
  * 环境变量：HT_PORT / OPENAI_API_KEY / OPENAI_BASE_URL /
- *           ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / HT_MODEL / HT_TIMEOUT / HT_DEFAULT_PROVIDER
+ *           ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / HT_MODEL / HT_TIMEOUT / HT_DEFAULT_PROVIDER /
+ *           HT_RPM / HT_BURST / HT_FETCH_RPM
+ * 命令行（优先级高于环境变量）：--rpm 60  --burst 20  --fetch-rpm 120  --help
  * 需要 Node.js 18+（内置 fetch）。
  */
 'use strict';
@@ -18,6 +20,72 @@ const net = require('node:net');
 const dns = require('node:dns').promises;
 const fs = require('node:fs');
 const nodePath = require('node:path');
+
+function intEnv(name, def) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && process.env[name] !== '' ? Math.trunc(n) : def;
+}
+
+function parseArgs(argv) {
+  const o = {
+    rpm: intEnv('HT_RPM', 60),
+    burst: intEnv('HT_BURST', 20),
+    fetchRpm: intEnv('HT_FETCH_RPM', 120),
+    noChat: false,
+    noFetch: false
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') {
+      console.log(`用法：node modelserver.js [选项]
+
+  --rpm N        模型请求每分钟上限，0 关闭限流（默认 ${o.rpm}）
+  --burst N      允许的瞬时突发次数（默认 ${o.burst}）
+  --fetch-rpm N  抓网页每分钟上限，0 关闭（默认 ${o.fetchRpm}）
+  --no-chat      关闭模型请求（/v1/chat/completions）
+  --no-fetch     关闭网页抓取（/v1/fetch）
+
+也可用环境变量 HT_RPM / HT_BURST / HT_FETCH_RPM 设默认值。
+两个功能不能同时关闭：全关等于没有服务，会直接退出。`);
+      process.exit(0);
+    }
+    if (a === '--no-chat') { o.noChat = true; continue; }
+    if (a === '--no-fetch') { o.noFetch = true; continue; }
+    const m = /^--(rpm|burst|fetch-rpm)(?:=(.*))?$/.exec(a);
+    if (!m) {
+      console.error(`未知参数：${a}（--help 看用法）`);
+      process.exit(2);
+    }
+    const v = m[2] !== undefined ? m[2] : argv[++i];
+    const n = Number(v);
+    if (v === undefined || !Number.isFinite(n) || n < 0) {
+      console.error(`--${m[1]} 需要一个非负整数`);
+      process.exit(2);
+    }
+    if (m[1] === 'rpm') o.rpm = Math.trunc(n);
+    else if (m[1] === 'burst') o.burst = Math.trunc(n);
+    else o.fetchRpm = Math.trunc(n);
+  }
+  return o;
+}
+
+const ARGS = parseArgs(process.argv.slice(2));
+const BURST = Math.max(1, ARGS.burst);
+
+/* 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单自动跟着变。 */
+const FEATURES = [
+  { path: '/v1/chat/completions', label: '模型请求', off: ARGS.noChat },
+  { path: '/v1/fetch', label: '网页抓取', off: ARGS.noFetch }
+];
+const ENABLED = new Set(FEATURES.filter(f => !f.off).map(f => f.path));
+if (ENABLED.size === 0) {
+  /* 全关 = 没有可提供的服务。监听一个只回 403 的端口本身就是情报。 */
+  console.error(`所有功能都被关闭了（${FEATURES.map(f => f.label).join('、')}），没有可提供的服务，拒绝启动`);
+  process.exit(2);
+}
+/* 关闭的接口与「根本不存在的路径」回同一个东西：状态码、头、正文一致。
+   绝不能回「该功能已关闭」——那等于承认这里本来有个接口。 */
+const REJECTED = { error: { message: '请求不被接受', type: 'forbidden' } };
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.HT_PORT || 8787);
@@ -33,8 +101,37 @@ const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.16';
+const VERSION = '0.0.1.17';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+
+/* 令牌桶：按时间连续补令牌，不用「每分钟 N 次」的固定窗口——
+ * 固定窗口在边界会放过两倍突发（59 秒 N 次 + 下一秒 N 次）。
+ * burst 是留给正常用法的：智能体一轮任务会连着调 3~8 次模型。 */
+class TokenBucket {
+  constructor(rpm, burst) {
+    this.rpm = Math.max(1, Math.trunc(rpm));
+    this.rate = this.rpm / 60;
+    this.burst = Math.max(1, Math.trunc(burst));
+    this.tokens = this.burst;
+    this.last = Date.now();
+    this.rejected = 0;
+  }
+  /* 返回 0 = 放行；否则是建议等待的秒数。失败不扣令牌。 */
+  take() {
+    const now = Date.now();
+    this.tokens = Math.min(this.burst, this.tokens + ((now - this.last) / 1000) * this.rate);
+    this.last = now;
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return 0;
+    }
+    this.rejected++;
+    return (1 - this.tokens) / this.rate;
+  }
+}
+
+const chatBucket = ARGS.rpm > 0 ? new TokenBucket(ARGS.rpm, BURST) : null;
+const fetchBucket = ARGS.fetchRpm > 0 ? new TokenBucket(ARGS.fetchRpm, BURST) : null;
 
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -393,16 +490,40 @@ function cors(req, res) {
   res.setHeader('Access-Control-Max-Age', '600');
 }
 
-function reply(req, res, status, obj) {
+function reply(req, res, status, obj, extra) {
   const raw = Buffer.from(JSON.stringify(obj), 'utf8');
   cors(req, res);
   securityHeaders(res);
-  res.writeHead(status, {
+  res.writeHead(status, Object.assign({
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': raw.length,
     'Cache-Control': 'no-store'
-  });
+  }, extra || {}));
   res.end(raw);
+}
+
+/* 超限回 429。位置在鉴权之后、读 body 之前：未授权请求不白占额度，
+   被拒的请求也不该让我们去读 8 MB 请求体。 */
+function rateGate(bucket, label, req, res) {
+  if (!bucket) return true;
+  const wait = bucket.take();
+  if (wait <= 0) return true;
+  const retry = Math.max(1, Math.ceil(wait));
+  if (bucket.rejected === 1 || bucket.rejected % 50 === 0) {
+    process.stderr.write(`[${new Date().toTimeString().slice(0, 8)}] 429 ${label}（累计拒绝 ${bucket.rejected} 次，${bucket.rpm} 次/分）\n`);
+  }
+  reply(req, res, 429, {
+    error: {
+      message: `${label}过于频繁（上限 ${bucket.rpm} 次/分），请 ${retry} 秒后再试`,
+      type: 'rate_limit_error',
+      code: 'rate_limited'
+    }
+  }, {
+    'Retry-After': String(retry),
+    'X-RateLimit-Limit': String(bucket.rpm),
+    'X-RateLimit-Remaining': '0'
+  });
+  return false;
 }
 
 function deny(req, res, reason, detail) {
@@ -480,27 +601,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (reqPath === '/health') {
-        reply(req, res, 200, {
-          ok: true,
-          service: 'hterminal-modelserver',
-          version: VERSION,
-          default_provider: DEFAULT_PROVIDER,
-          providers: {
-            openai: !!OPENAI_KEY,
-            anthropic: !!ANTHROPIC_KEY,
-            responses: !!OPENAI_KEY,
-            custom: !!OPENAI_KEY
-          }
-        });
+        /* 只报「活着」。以前列 providers 明细，等于一份能力清单：
+           关了哪个功能、有没有配 key，一问便知。前端只用 r.ok。 */
+        reply(req, res, 200, { ok: true, service: 'hterminal-modelserver', version: VERSION });
         return;
       }
-      /* 其他所有 GET 一律拒绝：不做文件服务器，避免本机网页借端口读磁盘 */
-      reply(req, res, 403, { error: { message: '本服务只提供 index.html、/health 与 /v1/chat/completions', type: 'forbidden' } });
+      /* 其他所有 GET 一律拒绝：不做文件服务器，也不列接口清单 */
+      reply(req, res, 403, REJECTED);
       return;
     }
     const route = String(req.url || '').split('?')[0];
-    if (req.method !== 'POST' || (route !== '/v1/chat/completions' && route !== '/v1/fetch')) {
-      reply(req, res, 403, { error: { message: '只接受 POST /v1/chat/completions 与 /v1/fetch', type: 'forbidden' } });
+    /* 被 --no-chat / --no-fetch 关掉的接口，和瞎猜的路径走同一条分支：
+       状态码、头、正文完全一致，探不出「这里本来有个接口」。 */
+    if (req.method !== 'POST' || !ENABLED.has(route)) {
+      reply(req, res, 403, REJECTED);
       return;
     }
     /* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，而这里一直小写全等比较，
@@ -516,6 +630,10 @@ const server = http.createServer(async (req, res) => {
       reply(req, res, 415, { error: { message: 'Content-Type 必须是 application/json', type: 'unsupported_media_type' } });
       return;
     }
+    /* 两条通道分开算：抓网页是廉价代理，模型请求要花钱；
+       共用一个桶，抓 100 条新闻就会把对话额度吃光。 */
+    const isFetch = route === '/v1/fetch';
+    if (!rateGate(isFetch ? fetchBucket : chatBucket, isFetch ? '抓网页请求' : '模型请求', req, res)) return;
     let body;
     try {
       const raw = await readBody(req);
@@ -567,7 +685,11 @@ server.maxConnections = 256;
 server.listen(PORT, HOST, () => {
   console.log(`hterminal modelserver ${VERSION}`);
   console.log(`  listening  http://${HOST}:${PORT}`);
+  console.log(`  features   ${[...ENABLED].sort().join(' · ')}`);
   console.log('  limits     headers 15s · request 60s · max 256 连接');
+  const rateText = (path, bucket, rpm) =>
+    !ENABLED.has(path) ? 'closed' : (bucket ? `${rpm}/min burst ${BURST}` : 'off');
+  console.log(`  rate       chat ${rateText('/v1/chat/completions', chatBucket, ARGS.rpm)} · fetch ${rateText('/v1/fetch', fetchBucket, ARGS.fetchRpm)}`);
   console.log(`  providers  openai=${OPENAI_KEY ? 'yes' : 'no'} anthropic=${ANTHROPIC_KEY ? 'yes' : 'no'} responses=${OPENAI_KEY ? 'yes' : 'no'}`);
   console.log('  密钥只在环境变量；不保存对话；不执行工具；不写文件。');
   console.log('  Ctrl-C 停止。');

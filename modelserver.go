@@ -17,21 +17,25 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const version = "0.0.1.16"
+const version = "0.0.1.17"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -51,6 +55,74 @@ var (
 	}
 	client = &http.Client{Timeout: timeout}
 )
+
+/*
+限流桶：nil = 该通道关闭（--rpm 0）。main 里 flag.Parse 之后才填，
+
+	那时还没有连接进来，不存在并发写。
+*/
+var (
+	chatBucket  *tokenBucket
+	fetchBucket *tokenBucket
+	/* 启用的路由白名单，main 里按 --no-chat / --no-fetch 填。
+	   不在里面的路径——被关掉的或压根不存在的——都回同一个 403。 */
+	enabledRoutes map[string]bool
+)
+
+/*
+关闭的接口与「根本不存在的路径」回同一个东西：状态码、头、正文一致。
+
+	绝不能回「该功能已关闭」——那等于承认这里本来有个接口。
+*/
+var rejectedBody = map[string]any{"error": map[string]any{"message": "请求不被接受", "type": "forbidden"}}
+
+/*
+令牌桶：按时间连续补令牌，不用「每分钟 N 次」的固定窗口——
+
+	固定窗口在边界会放过两倍突发（59 秒 N 次 + 下一秒 N 次）。
+	burst 留给正常用法：智能体一轮任务会连着调 3~8 次模型。
+*/
+type tokenBucket struct {
+	mu       sync.Mutex
+	rpm      int
+	rate     float64
+	burst    float64
+	tokens   float64
+	last     time.Time
+	rejected int
+}
+
+func newTokenBucket(rpm, burst int) *tokenBucket {
+	if rpm < 1 {
+		rpm = 1
+	}
+	if burst < 1 {
+		burst = 1
+	}
+	return &tokenBucket{
+		rpm: rpm, rate: float64(rpm) / 60, burst: float64(burst),
+		tokens: float64(burst), last: time.Now(),
+	}
+}
+
+/*
+取一个令牌：0 = 放行，否则是建议等待的秒数。失败不扣令牌。
+
+	第二个返回值是累计拒绝次数，只用于日志。
+*/
+func (b *tokenBucket) take() (float64, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	b.tokens = math.Min(b.burst, b.tokens+now.Sub(b.last).Seconds()*b.rate)
+	b.last = now
+	if b.tokens >= 1 {
+		b.tokens--
+		return 0, b.rejected
+	}
+	b.rejected++
+	return (1 - b.tokens) / b.rate, b.rejected
+}
 
 func envStr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -611,6 +683,39 @@ func scriptDir() string {
 	return "."
 }
 
+/*
+超限回 429。位置在鉴权之后、读 body 之前：未授权请求不白占额度，
+
+	被拒的请求也不该让我们去读 8 MB 请求体。
+*/
+func rateGate(w http.ResponseWriter, r *http.Request, b *tokenBucket, label string) bool {
+	if b == nil {
+		return true
+	}
+	wait, rejected := b.take()
+	if wait <= 0 {
+		return true
+	}
+	retry := int(math.Ceil(wait))
+	if retry < 1 {
+		retry = 1
+	}
+	if rejected == 1 || rejected%50 == 0 {
+		log.Printf("429 %s（累计拒绝 %d 次，%d 次/分）", label, rejected, b.rpm)
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(retry))
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(b.rpm))
+	w.Header().Set("X-RateLimit-Remaining", "0")
+	reply(w, r, http.StatusTooManyRequests, map[string]any{
+		"error": map[string]any{
+			"message": fmt.Sprintf("%s过于频繁（上限 %d 次/分），请 %d 秒后再试", label, b.rpm, retry),
+			"type":    "rate_limit_error",
+			"code":    "rate_limited",
+		},
+	})
+	return false
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	if !localOnly(w, r) {
 		return
@@ -653,23 +758,22 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.URL.Path == "/health" {
+			/* 只报「活着」。以前列 providers 明细，等于一份能力清单：
+			   关了哪个功能、有没有配 key，一问便知。前端只用状态码。 */
 			reply(w, r, 200, map[string]any{
 				"ok": true, "service": "hterminal-modelserver", "version": version,
-				"default_provider": defaultProvider,
-				"providers": map[string]any{
-					"openai": openaiKey != "", "anthropic": anthropicKey != "",
-					"responses": openaiKey != "", "custom": openaiKey != "",
-				},
 			})
 			return
 		}
-		/* 其他 GET 一律拒绝：不做文件服务器 */
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "本服务只提供 index.html、/health 与 /v1/chat/completions", "type": "forbidden"}})
+		/* 其他 GET 一律拒绝：不做文件服务器，也不列接口清单 */
+		reply(w, r, 403, rejectedBody)
 		return
 	}
 	route := r.URL.Path
-	if r.Method != http.MethodPost || (route != "/v1/chat/completions" && route != "/v1/fetch") {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "只接受 POST /v1/chat/completions 与 /v1/fetch", "type": "forbidden"}})
+	/* 被 --no-chat / --no-fetch 关掉的接口，和瞎猜的路径走同一条分支：
+	   状态码、头、正文完全一致，探不出「这里本来有个接口」。 */
+	if r.Method != http.MethodPost || !enabledRoutes[route] {
+		reply(w, r, 403, rejectedBody)
 		return
 	}
 	/* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，这里曾小写全等比较，
@@ -684,6 +788,15 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	/* 只收 application/json：text/plain、form-urlencoded 属于「不触发预检的简单请求」 */
 	if ctype := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0])); ctype != "application/json" {
 		reply(w, r, 415, map[string]any{"error": map[string]any{"message": "Content-Type 必须是 application/json", "type": "unsupported_media_type"}})
+		return
+	}
+	/* 两条通道分开算：抓网页是廉价代理，模型请求要花钱；
+	   共用一个桶，抓 100 条新闻就会把对话额度吃光。 */
+	if route == "/v1/fetch" {
+		if !rateGate(w, r, fetchBucket, "抓网页请求") {
+			return
+		}
+	} else if !rateGate(w, r, chatBucket, "模型请求") {
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -886,6 +999,54 @@ func fetchPublic(rawURL string) (map[string]any, error) {
 }
 
 func main() {
+	rpm := flag.Int("rpm", envInt("HT_RPM", 60), "模型请求每分钟上限，0 关闭限流")
+	burst := flag.Int("burst", envInt("HT_BURST", 20), "允许的瞬时突发次数")
+	fetchRpm := flag.Int("fetch-rpm", envInt("HT_FETCH_RPM", 120), "抓网页每分钟上限，0 关闭")
+	noChat := flag.Bool("no-chat", false, "关闭模型请求（/v1/chat/completions）")
+	noFetch := flag.Bool("no-fetch", false, "关闭网页抓取（/v1/fetch）")
+	flag.Parse()
+
+	/* 功能注册表。将来加接口只在这里加一行，全关判定与路由白名单自动跟着变。 */
+	features := []struct {
+		path, label string
+		off         bool
+	}{
+		{"/v1/chat/completions", "模型请求", *noChat},
+		{"/v1/fetch", "网页抓取", *noFetch},
+	}
+	enabledRoutes = map[string]bool{}
+	var enabledPaths, allLabels []string
+	for _, f := range features {
+		allLabels = append(allLabels, f.label)
+		if !f.off {
+			enabledRoutes[f.path] = true
+			enabledPaths = append(enabledPaths, f.path)
+		}
+	}
+	if len(enabledRoutes) == 0 {
+		/* 全关 = 没有可提供的服务。监听一个只回 403 的端口本身就是情报。 */
+		fmt.Fprintf(os.Stderr, "所有功能都被关闭了（%s），没有可提供的服务，拒绝启动\n",
+			strings.Join(allLabels, "、"))
+		os.Exit(2)
+	}
+	sort.Strings(enabledPaths)
+
+	if *rpm > 0 {
+		chatBucket = newTokenBucket(*rpm, *burst)
+	}
+	if *fetchRpm > 0 {
+		fetchBucket = newTokenBucket(*fetchRpm, *burst)
+	}
+	rateText := func(path string, on bool, n int) string {
+		if !enabledRoutes[path] {
+			return "closed"
+		}
+		if !on {
+			return "off"
+		}
+		return fmt.Sprintf("%d/min burst %d", n, *burst)
+	}
+
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	srv := &http.Server{
 		Addr:              addr,
@@ -899,6 +1060,10 @@ func main() {
 	log.SetOutput(os.Stderr)
 	fmt.Printf("hterminal modelserver %s\n", version)
 	fmt.Printf("  listening  http://%s\n", addr)
+	fmt.Printf("  features   %s\n", strings.Join(enabledPaths, " · "))
+	fmt.Printf("  rate       chat %s · fetch %s\n",
+		rateText("/v1/chat/completions", *rpm > 0, *rpm),
+		rateText("/v1/fetch", *fetchRpm > 0, *fetchRpm))
 	fmt.Printf("  providers  openai=%v anthropic=%v responses=%v\n", openaiKey != "", anthropicKey != "", openaiKey != "")
 	fmt.Println("  密钥只在环境变量；不保存对话；不执行工具；不写文件。")
 	fmt.Println("  Ctrl-C 停止。")
