@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.7**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.8**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -371,11 +371,11 @@ whoami xargs yes
 #### `fastfetch` / `neofetch`
 
 ```text
-██╗  ██╗████████╗    HTerMinaL 0.0.1.7
+██╗  ██╗████████╗    HTerMinaL 0.0.1.8
 ██║  ██║╚══██╔══╝    ──────────────────────────
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
-██║  ██║   ██║       Kernel     JSHeL 0.0.1.7
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.8
 ╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
 ```
 
@@ -900,6 +900,38 @@ about() / sleep(ms) / uuid() / storage(IDB)
   「是否卡住、请检查」，再带着追问继续跑，而不是硬停。阈值 `REPEAT_LIMIT = 3`
 
 `js` 工具走控制台语义（先当表达式求值，`SyntaxError` 才当语句块），所以 `1+1` 返回 `2`。
+
+### 系统提示词：环境写死，人格可改
+
+发给模型的 `system` 由两段拼成，边界很清楚：
+
+| 段 | 谁写 | 写什么 | 能改吗 |
+| --- | --- | --- | --- |
+| **环境说明** `AGENT_ENV` | 程序 | 文件系统形状、目录约定、Worker 与主页面的关系、沙箱边界 | 不能。这些是事实，改坏了它会照着一段假说明去撞墙，而且很难查 |
+| **人格** `.config.persona` | 用户 | 人设、语气、做事习惯（先观察再动手、别重复、失败两次换办法……） | 能。改完下一条消息生效，不用重启 |
+
+默认人格写在 `build/60-agent.js` 的 `AGENT_PERSONA_DEFAULT`，第一次打开智能体时落成
+`.config.persona`。文件里以 `#` 开头的整行是注释，拼 prompt 时剥掉——配置文件可以自己
+解释自己，但解释不能当成指令发给模型。人格文件被清空（或只剩注释）时，等价于「只要环境说明」。
+
+改法（不用翻源码）：
+
+```bash
+persona                     # 看当前生效的全文（含注释）
+persona edit                # 用内置编辑器打开 .config.persona
+persona set 你说话先给结论，再补一句理由。
+persona append 不要用 emoji。
+cat 一段长文本 | persona set -   # 从管道写入，适合多行
+persona reset               # 删掉自定义，回到内置默认
+persona path                # 只打印文件路径
+```
+
+它**没有**进设置面板：设置页管的是功能开关，人格是一段会持续影响行为的文本，
+两者混在一起，设置页迟早变成一个很难维护的文本编辑器；而命令行本来就是改配置的地方。
+
+工具层对 `.config.persona` 只读：`write_file` / `delete_file` 会明确报错。
+挡的不是用户，是「智能体顺手改自己的人设」和「一次网页注入把它长期改掉」。
+`js` 工具绕得过去，所以这是软边界，不是安全机制。
 
 ### 三个「省 token 又不砸界面」的工具
 
@@ -1793,6 +1825,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.8 | 2026-11-03 | **系统提示词分层：环境写死，人格交给用户**：①把原来的单块 `AGENT_SYSTEM` 拆成两段——`AGENT_ENV`（文件系统形状、目录约定、Worker/主页面关系、沙箱边界，全部由程序生成）与 `AGENT_PERSONA_DEFAULT`（角色、语气、做事习惯）。环境是事实不是口味，用户改它只会得到一段与真实环境不符的说明；人格则本来就该由用户定。②人格落到 **`.config.persona`**，第一次打开智能体时写入默认值；之后以文件为准，升级换环境说明不会覆盖用户改过的人格，人格改坏了删文件就回默认。③文件里 `#` 开头的整行是注释，`stripPersonaComments()` 在拼 prompt 时剥掉——配置文件能自己解释自己，但解释不能当指令发出去；人格被清空/只剩注释时等价于「只要环境说明」。④`loadAgentPersona()` 带 1.2 秒 TTL 缓存：一轮 run 的多次模型调用共用一份，`callModel()` 每次请求前刷新，**改完下一条消息就生效，不用重启**；`persona set/edit/reset` 走 RPC 后会主动清缓存。⑤新增 CLI **`persona`**：无参看全文、`edit` 开编辑器、`set` / `append` 改、`reset` 回默认、`path` 打印路径，`… \| persona set -` 从管道读长文本。⑥**刻意不进设置面板**：设置页管功能开关，人格是一段持续影响行为的文本，混进去只会把设置页变成难维护的文本编辑器。⑦工具层对 `.config.persona` 只读（`write_file`/`delete_file` 明确报错）——挡的是「智能体顺手改自己的人设」和「一次网页注入长期改掉它」；`js` 绕得过去，所以是软边界。⑧文档 §12 新增「系统提示词：环境写死，人格可改」。 |
 | 0.0.1.7 | 2026-11-03 | **看图修图（截图的下半场）**：①**新增 `build/58-image.js`**（`ImageApp`）——Canvas 2D 看图与修图：适应 / 1:1 / ±缩放（Ctrl+滚轮围绕指针缩放）、拖拽平移、裁剪（拖框松手即裁，按取整后的边相减，避免半像素偏一格）、左转/右转 90°、水平/垂直翻转、按宽度等比缩放；五种标注（矩形 / 箭头 / 画笔 / 文字 / 打码）共用同一套 `_shape`，预览与落笔不会「看到一种、得到另一种」；每条线先画 2px 半透明暗边再上色，红色标注落在红色按钮上也看得见；Alt+点击取色（写回颜色选择器）、Ctrl+V 粘贴剪贴板图片、Ctrl+Z / Ctrl+Shift+Z 撤销重做；导出 PNG/JPEG/WebP（JPEG 先铺白底，否则透明区变黑），存 `.home` 用原名 + `-edit`，第二次保存覆盖自己的副本，不碰原图。②**撤销用快照、不用操作日志**——每种工具写逆运算容易漏，快照更短；按像素数限步（<1.5MP 16 步、<4MP 8 步、更大 4 步），内存上限写死。③**和截图接起来**——截图窗口加「编辑」按钮（拍完才可用，按当前格式生成文件名），点开即在同一张图上改。④**文件管理器**——图片双击进看图、选中出缩略图（不再只写「[二进制] 12 KB」）；显示名用 `spotExportName` 还原，存储名与路径不变。⑤**拖拽**——外部文件拖到看图窗口 = 落 `.home` 并立刻打开；从文件管理器拖图过来直接打开。⑥**修**——`contentToDataUrl` 只认 Blob/ArrayBuffer，`FS.write` 存进去的 `Uint8Array` 会被 `String()` 拼成 `137,80,78,…`，导致「自己存的 PNG 自己打不开」；现在认 `ArrayBuffer.isView`。⑦文档 §7 / §15 / §3，版本 4 个文件。⑧空状态图标改内联 SVG 后忘了写尺寸，被撑成 190px 把文字全顶出可视区——补 `.ie-ico svg{width:52px;height:52px}`。 |
 | 0.0.1.6 | 2026-11-03 | **沙箱工具集 + 真实页面实测 + 理念章节**：①**十个工具**（`build/55-tools.js`、`56-data.js`、`57-color.js`，共约 1900 行，全部自研）——**计算器**（递归下降解析 `expr/term/unary/power/postfix/primary`，不用 `eval`；`2^3^2` 右结合、`5!`、`log(2,8)`、`sin(30)` 走 DEG/RAD、记忆 M+/M−、40 条历史、键盘直输）；**数据**（编码互转：文本/UTF-16/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体；时间戳 + `Intl` 多时区 + 相对时间；哈希 SHA-1/256/384/512 + 自写 MD5 + 期望值比对 + 文件哈希；随机：字符串/hex/bytes/int/uuid/分组密码，`crypto.getRandomValues` + 拒绝采样 + 熵估算）；**调色盘**（色相环 canvas 逐像素按当前亮度重绘、六种表示双向联动 HEX/RGB/HSL/HSV/CMYK/YUV/Lab、`EyeDropper`、从整页截图逐像素取色、WCAG 对比度、历史色存 localStorage）；**Markdown**（`marked` 懒加载 + 失败退内置迷你渲染器、`sanitizeHtml` 白名单清洗 `<script>`/`on*`/`javascript:`、渲染序号防旧盖新、导出 HTML/下载 .md）；**截图**（桌面/指定窗口/整文档、1–3×、PNG/JPEG/WebP、存 `.home` 或下载、复制图片）；**链接即状态**（文本/JS → `deflate-raw` + base64url 压进 `#`，`run=1` 打开时先弹确认框展示代码再执行）；**四个壳子**（录音机/定位/3D/音频：写明「计划怎么做」与「为什么先不做」）。②**CLI**（`25-compat.js`）——`b64/b32/hex/bin/dec/url/hash/rand/uuid/ts/mount/tools/tool`，与窗口共用主线程 `util.codec` / `util.hash`（Base32、MD5 只写一份）；`hash` 对不存在的文件回退成「把参数当文本」，不报「没有那个文件」。③**`sptm`（mount）占位**——第七个 syscall，注册进 FS/RPC/worker API，调用明确抛「还没做」，`mount` 命令可列五个内建挂载点；不假装成功的原因写在 §7。④**窗口/启动器**——`APP_DEFS` 加 10 项、`WindowManager._render` 加分支、`TYPE_TITLES/TYPE_SIZE` 补齐、启动器加「工具」分组（维护中的置灰带标签）并支持滚动。⑤**真实页面实测**——把 2048、WinBox、98.css、three.js、Chart.js、p5.js、lodash 下到**仓库之外**的临时目录跑起来（见 §8.1 致谢），2048 能玩、WinBox 能在窗口里再开窗口、Chart.js 曲线在动、p5.js 流场在跑、lodash 在 Worker 里 `eval` 后 `_.camelCase` 正常。⑥**自举**——把 `index.html` 用静态服务跑起来、塞进自己的小浏览器，内层 `2+3` → 5、`hsl('uname -a')` → `HTerMinaL 0.0.1.6`、`hsl('ls')` → `readme welcome`。⑦**README**——新增 §15 工具、§16 设计理念（原文照录）、§8.1 致谢开源、§7 `sptm` 说明、§11 API、开发日志/操作记录/踩坑。⑧**修**——计算器 `.calc-pad` 忘了 `grid-template-columns`（按钮排成 4 列、顺序全乱）；`ensureMarked()` 没缓存 Promise，输入时每个字都重新拉一次 CDN；`MdApp.render()` 无序号，慢的旧渲染会盖掉新内容。 |
 | 0.0.1.5 | 2026-11-03 | **窗口间拖拽 + 小浏览器一键存网页**：①**`DragBus` 拖拽信道**——同一文档里所有窗口共用一份 `{items}`，`dragenter/dragover` 阶段就能读（`dataTransfer` 的内容要等 `drop` 才允许读），所以「拖到哪个窗口先亮」才做得到；`dataTransfer` 里同时写 `application/x-ht-spot`（JSON）与 `text/plain`，管跨进程与变量丢失时的兜底。②**文件管理器 ↔ 文件管理器**——每行 `dragstart` 发布 `{kind:'spot', path, name}`，落点调 `dropIntoDir()` 复制（目录整棵递归）；**按住 Shift = 移动**；同目录拖出 `name-2`；拖进自己内部直接跳过。③**多窗口**——文件管理器工具栏加 `⧉`：同目录再开一个窗口，两个窗口并排互相拖；窗口本来就是一个 `FilesApp` 实例一个 `path`，互不共享状态。④**文件 → 智能体**——`addItems()` 从 spotfs 读内容：图片转 dataURL、文本内联（≤256 KB）、二进制提示用 `read_file`，仍受「一次最多 6 个附件」约束。⑤**文件 → 终端**——`TerminalSession.insert()` 用括号粘贴（`\x1b[200~…\x1b[201~`）把路径插进命令行**不执行**；从系统拖文件到终端则先导入它当前 `cwd` 再粘路径。⑥**文件 → 浏览器**——`BrowserApp.openPath()`：html/text 直接渲染、图片按图片显示、其它交给编辑器窗口。⑦**浏览器标签 → 文件管理器 / 智能体 / 终端**——标签 `draggable`，携带 `{kind:'page', name, url, html}`（跨域时 `html:null`）：落到文件管理器存 `<标题>.html`（跨域存跳转页），落到智能体当附件，落到终端粘地址。⑧**小浏览器一键保存**——`br-bar` 新增「保存」（写进 spotfs 的 `.home`，撞名自动 `-2`）与「下载」（落本机磁盘），`pageHtml()` 用 `contentDocument.documentElement.outerHTML`，跨域读不到时存跳转页并如实提示；标题已带 `.html` 不会变成 `.html.html`。⑨**iframe 吃事件的解法**——拖拽期间给 `body` 挂 `drag-internal`，`.br-shield` 盖住 iframe，`drop` 才能回到父文档；`dragend` 之外补 `blur` / `visibilitychange` 清场，避免遮板卡住把小浏览器挡死。⑩**落点提示**——所有落点统一 `data-drop` + `::after` 小标签（「复制到 .bin」「粘贴路径」「在浏览器里打开」「附加到对话」），不用靠猜。⑪**实测**——两个 FM 窗口各 3/4 行、A→B 复制后两边都在、Shift 后源消失、目录 `.home.sub` 整棵复制到 `.bin`、同目录得到 `.home.one-2`；拖到桌面终端与终端窗口都出现 `.home> .home.alpha`（未执行）；拖到浏览器 `srcdoc` 含文件内容；标签→FM 生成 `.bin.-xxpage-2dhtml-2ehtml`、标签→智能体附件 `测试页.html` 且正文含 `HELLO`；保存生成 `.home.-xxpage-2dhtml-2ehtml`；遮板 `display:block` 且 drop 后 `body.drag-internal` 归位；无 pageerror。 |
@@ -1816,6 +1849,7 @@ Markdown 预览的 `ensureMarked()` 一开始是「没加载就去拉 CDN」。�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
 | 2026-11-03 15:05 | 0.0.1.7：看图修图（截图搭档）+ 文件管理器缩略图 + 修 `Uint8Array` 解码 | `build/58-image.js`（新增：ImageApp / `imgCanvas` / `imgCopy` / `normRect`）、`build/00-head.html`（`.ie*` 全套 + `.fm-imgcap`）、`build/10-body.html`（启动器加「看图修图」）、`build/30-core.js`（`APP_DEFS` 加 `image`、`contentToDataUrl` 认 typed array、`HT_VERSION`）、`build/40-term.js`（`_render` 分支 + `TYPE_TITLES/TYPE_SIZE`）、`build/50-apps.js`（FilesApp 图片预览 + 双击进看图 + 文件名还原显示）、`build/55-tools.js`（ShotApp「编辑」按钮与方法）、`build/70-boot.js`（`_dropTarget` 加看图落点、导入后 `loadPaths`）、`build/25-compat.js`（`tools` 清单加 `image`）、`build.sh`（拼入 58）、`modelserver.{py,js,go}`（版本）、`README.md` | Playwright（无头 Chromium）：空状态可见；载入 640×400 → meta `640×400`、缩放 100%；裁剪拖 25%→75% → `320×200`，Ctrl+Z → `640×400`；矩形标注像素 `[240,73,86]`（红 + 抗锯齿）；打码/两行文字无异常；右转 `640×400→400×640`，再左转还原；缩放填 320 → `320×200`；存 `.home` 得 `test-edit.png`；外部文件 drop → `.home.drop.png` 且窗口变 `48×32`；内部拖拽 `.home` 里的 400×300 → 窗口变 `400×300`；截图 `2880×1692` → 「编辑」开出第二个看图窗口；文件管理器出现缩略图、双击打开 `320×200`；缩放按钮 `100%→156%→100%`、重做成功；无 pageerror | 本轮 |
 | 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSL(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
 | 2026-11-03 10:20 | 0.0.1.5：窗口间拖拽（文件↔文件/智能体/终端/浏览器）+ 小浏览器一键存网页 + 文件管理器多开 | `build/30-core.js`（`DRAG_MIME`/`DragBus`/`hasInternalDrag`/`uniquePathIn`/`isSameOrInside`/`dropIntoDir`/`htmlFileName`/`contentToDataUrl`）、`build/50-apps.js`（FilesApp `⧉` + `_bindDrop` 双通道 + dragstart 发布 item；BrowserApp 保存/下载按钮、`pageHtml`/`_pageName`/`saveToFs`/`downloadPage`/`openPath`/`_bindDrop`、标签 `draggable`、`.br-shield`）、`build/60-agent.js`（`addItems` + drop 分支）、`build/40-term.js`（`container.__term` + `insert()` 括号粘贴）、`build/70-boot.js`（`initDropImport` 双通道、`_termAt`、落点高亮、拖到终端先导入再粘路径、`dragend`/`blur`/`visibilitychange` 清场）、`build/00-head.html`（`.drop::after` 标签、`#term`/`.fm` 定位、`.br-shield`、`.txt` 按钮、`[draggable]` 光标）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.5）、`README.md`（第 7 章拖拽整节重写、第 11 章补 `dropIntoDir`/`DragBus`、日志、踩坑第 41 条） | 无头 Chromium：两个 FM 窗口 A→B 复制 / Shift 移动 / 目录整棵复制 / 同目录 `-2`；FM→桌面终端与终端窗口均显示 `.home> .home.alpha` 且未执行；FM→浏览器 `srcdoc` 含文件内容；标签→FM 存 html、标签→智能体附件含正文；保存生成 `.home.*-2ehtml`、标题带 `.html` 不重复；遮板拖拽中 `display:block`、结束后 `body.drag-internal` 归位；无 pageerror | `main` |
@@ -1893,5 +1927,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.7 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.8 · 桌面就是终端 · 一切皆文件</sub>
 </p>

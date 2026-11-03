@@ -930,6 +930,39 @@ const COMPAT = (function () {
     return { out: s };
   }, '命令表');
 
+  /* persona：智能体的人格提示词。
+   * 刻意不进设置面板——设置页是「功能开关」，这里改的是「它怎么说话」，
+   * 混在一起会让设置页变成一段很难维护的文本编辑器；而命令行本来就是改配置的地方。 */
+  def('persona', async (a, stdin) => {
+    const sub = String(a[0] || '').toLowerCase();
+    const rest = a.slice(1).join(' ');
+    if (!sub || sub === 'show' || sub === 'cat') {
+      const p = await IO.call('agent.persona', 'get');
+      const head = p.custom ? '' : DIM + '# 还没改过，下面是内置默认。改法：persona edit' + R + '\n';
+      return { out: head + String(p.text).replace(/\n+$/, '') + '\n' };
+    }
+    if (sub === 'path') return { out: '.config.persona\n' };
+    if (sub === 'edit') {
+      await IO.call('agent.persona.edit');
+      return { out: '已打开编辑器 .config.persona。保存后下一条消息生效。\n' };
+    }
+    if (sub === 'reset') {
+      await IO.call('agent.persona', 'reset');
+      return { out: '已恢复内置默认人格。\n' };
+    }
+    if (sub === 'set' || sub === 'append') {
+      const text = rest === '-' ? stdin : rest;
+      if (!String(text || '').trim()) return { code:1, err:'用法: persona ' + sub + ' <文本>（多行加引号；也可以 ... | persona set -）\n' };
+      if (sub === 'set') await IO.call('agent.persona', 'set', String(text));
+      else {
+        const p = await IO.call('agent.persona', 'get');
+        await IO.call('agent.persona', 'set', String(p.text).replace(/\n+$/, '') + '\n\n' + String(text));
+      }
+      return { out: '已保存。下一条消息生效。\n' };
+    }
+    return { code:1, err:'用法: persona [show|edit|set <文本>|append <文本>|reset|path]\n' };
+  }, '查看/修改智能体人格提示词');
+
   /* ---------------------------------------------------------------- 系统信息 */
   /* fastfetch / neofetch：不是移植，是同名精简版。信息全部是真的，
    * 一个字段都不编（拿不到就写 n/a）。 */

@@ -5,7 +5,18 @@
  * 单会话、前端循环、JSONL 持久化；后端只做无状态格式转换与转发。
  * ==========================================================================*/
 
-const AGENT_SYSTEM = `你是 HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
+/* 系统提示词由两段拼成：
+ *
+ *   环境说明（AGENT_ENV）——由程序写死。文件系统长什么样、有哪些 API、沙箱边界在哪，
+ *     这些是事实，不是口味。让用户改，只会得到一段与真实环境不符的说明，
+ *     智能体照着做就会撞墙，而且很难查。
+ *
+ *   人格（.config.persona）——用户可改。人设、语气、做事习惯都属于这一类。
+ *     默认值写在 AGENT_PERSONA_DEFAULT 里，首次打开智能体时落成文件，之后以文件为准。
+ *
+ * 分层的好处不只是「能改」：升级换掉环境说明时，用户改过的人格不会被覆盖；
+ * 反过来用户把人格改坏了，删文件就回到默认。 */
+const AGENT_ENV = `你是 HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
 
 环境事实：
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
@@ -13,7 +24,16 @@ const AGENT_SYSTEM = `你是 HTerMinaL 里的智能体，运行在一个浏览�
 - 常用目录：.home（用户文件）、.bin（可执行函数）、.app（应用）、.dev（设备）、.proc（进程）、.pkg（包）、.config（设置）、.agent（会话）、.sys（只读系统信息）、.temp（临时）、.queryfile（用户提供的文件）。
 - 终端在 Worker 里跑 JS；你通过工具在主页面执行，所以 document / window / localStorage
   都是真的（不是模拟）。也能直接用全局 hterm API：hterm.readFile/writeFile/listDir/openWindow/exec/saveFile。
-- 浏览器是沙箱，不需要额外安全许可；不要询问“是否允许执行”，直接做。
+- 浏览器是沙箱，不需要额外安全许可；不要询问“是否允许执行”，直接做。`;
+
+const AGENT_PERSONA_PATH = '.config.persona';
+
+const AGENT_PERSONA_DEFAULT = `# HTerMinaL 智能体人格提示词（改这个文件即可，下一条消息生效）
+# 以 # 开头的行不会发给模型。删掉本文件、或执行 persona reset，就回到这份默认。
+# 环境说明（文件系统、API、沙箱边界）不在这个文件里：那部分由程序按真实环境生成。
+
+角色：
+- 你是用户在这台「终端桌面」里的搭子，不是客服。语气平实，少用感叹号，不谈“作为 AI”。
 
 工作方式：
 - 先观察（list_dir/read_file/js），再动手。修改前尽量读原内容。
@@ -24,6 +44,59 @@ const AGENT_SYSTEM = `你是 HTerMinaL 里的智能体，运行在一个浏览�
 - 已经做过的事不要重复做，已经说过的话不要重复说。每次回答只给新增信息。
 - 若 harness 提示你“已连续 3 次重复输出并自动追问”，说明你陷入了循环：立即停止重复，换思路、改参数或总结已完成的结果，不要再把同样的动作发出来。
 - 完成后用简短中文说明做了什么、结果如何。不要输出大段无关代码。`;
+
+let _personaCache = null, _personaAt = 0, _personaP = null;
+
+/* 以 # 开头（允许前导空格）的整行是注释，拼提示词时剥掉。
+ * 配置文件要能自己解释自己，但解释不能当成指令发给模型。 */
+function stripPersonaComments(s) {
+  return String(s == null ? '' : s)
+    .split(/\r?\n/)
+    .filter(l => !/^\s*#/.test(l))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function agentSystemPrompt(persona) {
+  const p = stripPersonaComments(persona);
+  return p ? AGENT_ENV + '\n\n' + p : AGENT_ENV;
+}
+
+/* 读人格配置。TTL 1.2 秒：一轮 run 里的多次模型调用共用一份，
+ * 用户刚在终端改完，下一次提问就能用上，不用重启。 */
+async function loadAgentPersona(force) {
+  if (!force && _personaCache && Date.now() - _personaAt < 1200) return _personaCache;
+  if (_personaP) return _personaP;
+  _personaP = (async () => {
+    let text = '', custom = false;
+    try {
+      const r = await FS.read(AGENT_PERSONA_PATH);
+      if (r && typeof r.content === 'string' && r.content.trim()) { text = r.content; custom = true; }
+    } catch (e) { /* 还没有这个文件 → 用默认 */ }
+    if (!text.trim()) text = AGENT_PERSONA_DEFAULT;
+    _personaCache = { text, custom };
+    _personaAt = Date.now();
+    return _personaCache;
+  })();
+  try { return await _personaP; } finally { _personaP = null; }
+}
+
+function invalidateAgentPersona() { _personaCache = null; _personaAt = 0; }
+
+/* 第一次打开智能体时把默认人格落成文件：
+ * 「配置在 .config 里」比「藏在代码里的一个常量」更像一个用户能维护的东西。 */
+async function ensureAgentPersonaFile() {
+  try {
+    const st = await FS.stat(AGENT_PERSONA_PATH);
+    if (st) return false;
+  } catch (e) { /* 不存在 → 下面写 */ }
+  try {
+    await FS.write(AGENT_PERSONA_PATH, AGENT_PERSONA_DEFAULT, { kind:'file', mime:'text/plain' });
+    invalidateAgentPersona();
+    return true;
+  } catch (e) { return false; }
+}
 
 const AGENT_TOOLS = [
   { type:'function', function:{
@@ -406,6 +479,13 @@ async function unpackMsg(m) {
   return Object.assign({}, m, { content: parts });
 }
 
+/* 人格文件不通过工具改：它是用户的配置，不是智能体可以自己调参的地方。
+ * 一次网页注入就能让它长期改掉自己的人设——这比一次写错文件危险得多。
+ * 这只是软边界（js 工具仍能写），挡的是「顺手改」和「被诱导改」。 */
+function isPersonaPath(p) {
+  try { return normPath(String(p || '')) === AGENT_PERSONA_PATH; } catch (e) { return false; }
+}
+
 class AgentApp {
   constructor(container, opts, win) {
     this.el = container;
@@ -419,6 +499,11 @@ class AgentApp {
     this.abort = null;
     this.onTitle = null;
     this._disposed = false;
+    /* 生效中的人格文本（含注释）。callModel 每次请求前刷新，
+     * 拼装时再剥注释——这里存原文是为了让调试时能看到「用户到底写了什么」。 */
+    this._persona = AGENT_PERSONA_DEFAULT;
+    /* 首次打开时把默认人格落盘；失败不影响对话（内存里还有默认） */
+    ensureAgentPersonaFile();
     /* 待发送附件：{ name, mime, size, dataUrl?, text?, isImage } */
     this.attachments = [];
 
@@ -802,7 +887,7 @@ class AgentApp {
    * tool 消息（缺失的填「已取消」）；孤立的 tool 消息（前面没有对应请求）直接丢掉。
    */
   apiMessages() {
-    const out = [{ role:'system', content:AGENT_SYSTEM }];
+    const out = [{ role:'system', content: agentSystemPrompt(this._persona) }];
     const keepReasoning = Settings.get('agentMode') === 'direct' &&
       /deepseek/i.test(String(Settings.get('agentDirectUrl') || ''));
 
@@ -850,6 +935,9 @@ class AgentApp {
   }
 
   async callModel() {
+    /* 每次请求前刷新人格（内部有 1.2 秒缓存，一轮多步不会反复读盘）。
+     * 放在这里而不是 send()：会话中途用户改了人格，下一步就能生效。 */
+    try { const p = await loadAgentPersona(); this._persona = p.text; } catch (e) {}
     const direct = Settings.get('agentMode') === 'direct';
     const model = Settings.get('agentModel') || 'deepseek-flash';
     const ctrl = new AbortController();
@@ -1089,6 +1177,7 @@ class AgentApp {
       return jsonSafe(String(r.content == null ? '' : r.content));
     }
     if (name === 'write_file') {
+      if (isPersonaPath(args.path)) throw new Error('这个人格配置文件只由用户改：请让用户在终端执行 persona edit，或直接编辑 ' + AGENT_PERSONA_PATH);
       const st = await FS.stat(args.path).catch(() => null);
       const meta = Object.assign({}, (st && st.meta) || {}, { mime:'text/plain' });
       if (st) meta.kind = st.kind;
@@ -1100,6 +1189,7 @@ class AgentApp {
       return jsonSafe(rows.map(r => ({ name:r.name, path:r.path, kind:r.kind, size:r.size })));
     }
     if (name === 'delete_file') {
+      if (isPersonaPath(args.path)) throw new Error('这个人格配置文件只由用户改：请让用户在终端执行 persona reset');
       await FS.remove(args.path, true);
       return '已删除 ' + args.path;
     }

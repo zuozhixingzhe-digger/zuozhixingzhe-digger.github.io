@@ -127,6 +127,31 @@ const RPC = {
         return true;
       }
       case 'drawer.open': Drawer.open(); return true;
+      case 'agent.persona': {
+        const action = String(a[0] || 'get');
+        if (action === 'get') {
+          const p = await loadAgentPersona(true);
+          return { text:p.text, custom:p.custom, path:AGENT_PERSONA_PATH };
+        }
+        if (action === 'set') {
+          const text = String(a[1] == null ? '' : a[1]);
+          await FS.write(AGENT_PERSONA_PATH, text, { kind:'file', mime:'text/plain' });
+          invalidateAgentPersona();
+          return true;
+        }
+        if (action === 'reset') {
+          try { await FS.remove(AGENT_PERSONA_PATH); } catch (e) {}
+          await ensureAgentPersonaFile();
+          invalidateAgentPersona();
+          return true;
+        }
+        throw new Error('未知的 persona 操作: ' + action);
+      }
+      case 'agent.persona.edit': {
+        await ensureAgentPersonaFile();
+        const w = WindowManager.open({ type:'editor', path:AGENT_PERSONA_PATH, title:'智能体人格' });
+        return w ? { id:w.id } : null;
+      }
       case 'agent.open': { const w = WindowManager.open({ type:'agent' }); return w ? w.id : null; }
       /* ---- TUI 智能体：worker 里的 agentTui.* 全走这里 ---- */
       case 'agent.turn': return await AgentTuiHost.turn(a[0]);
