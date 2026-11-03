@@ -14,6 +14,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,7 +37,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.17"
+const version = "0.0.1.18"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -66,7 +68,12 @@ var (
 	fetchBucket *tokenBucket
 	/* 启用的路由白名单，main 里按 --no-chat / --no-fetch 填。
 	   不在里面的路径——被关掉的或压根不存在的——都回同一个 403。 */
-	enabledRoutes map[string]bool
+	/* 白名单在启动时构建成切片，之后只读；没有 map 可以被运行期写入。 */
+	enabledRoutes []string
+	/* index.html 的启动快照。请求阶段不碰磁盘：路径上的东西再怎么换，
+	   也影响不到已经跑起来的实例（改文件要重启才生效）。 */
+	indexRaw  []byte
+	indexETag string
 )
 
 /*
@@ -638,6 +645,12 @@ func reply(w http.ResponseWriter, r *http.Request, status int, obj any) {
 	securityHeaders(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	/* 错误响应一律关连接：429/403/415 都发生在读 body 之前，请求体还躺在
+	   socket 里；keep-alive 复用时下一轮会把它当请求行解析，报一个莫名其妙的
+	   400。关掉连接，未读的字节跟着 socket 一起消失。 */
+	if status >= 400 {
+		w.Header().Set("Connection", "close")
+	}
 	w.WriteHeader(status)
 	w.Write(raw)
 }
@@ -669,6 +682,31 @@ func localOnly(w http.ResponseWriter, r *http.Request) bool {
 		return deny(w, r, "fetch-site", "跨站请求被拒绝")
 	}
 	return true
+}
+
+/*
+loadIndex：启动时把 index.html 读成一份快照。
+
+	"先 open 拿到句柄、再 fstat 验它"，而不是"先看路径、再打开"：后者是两步，
+	中间那个名字能被换掉。验的对象必须是即将要读的那个句柄。
+	非普通文件（管道、设备、目录）一律不认。
+*/
+func loadIndex() ([]byte, string, error) {
+	f, err := os.Open(filepath.Join(scriptDir(), "index.html"))
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("index.html 不是普通文件")
+	}
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(raw)
+	return raw, "\"" + hex.EncodeToString(sum[:])[:20] + "\"", nil
 }
 
 /* scriptDir：可执行文件所在目录。go run 时是临时目录，所以优先用可执行文件路径；
@@ -733,15 +771,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		/* 根路径直接返回页面：启动后端就等于启动应用 */
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			raw, err := os.ReadFile(filepath.Join(scriptDir(), "index.html"))
-			if err != nil {
+			raw := indexRaw
+			if raw == nil {
 				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "找不到 index.html（和本脚本放同一目录）", "type": "not_found"}})
 				return
 			}
 			/* 单文件应用七百多 KB；no-store 让每次刷新重下整包。
 			 * 改协商缓存：没变回 304，变了才重发正文。 */
-			sum := sha256.Sum256(raw)
-			etag := "\"" + hex.EncodeToString(sum[:])[:20] + "\""
+			etag := indexETag
 			securityHeaders(w)
 			if strings.Contains(r.Header.Get("If-None-Match"), etag) {
 				w.Header().Set("ETag", etag)
@@ -772,7 +809,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	route := r.URL.Path
 	/* 被 --no-chat / --no-fetch 关掉的接口，和瞎猜的路径走同一条分支：
 	   状态码、头、正文完全一致，探不出「这里本来有个接口」。 */
-	if r.Method != http.MethodPost || !enabledRoutes[route] {
+	if r.Method != http.MethodPost || !slices.Contains(enabledRoutes, route) {
 		reply(w, r, 403, rejectedBody)
 		return
 	}
@@ -864,24 +901,88 @@ func ipPublic(ip net.IP) bool {
 		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
 }
 
-func publicHost(host string) bool {
+/*
+解析一次，返回「全部是公网」的 IP 列表，供调用方钉住。
+
+	任一 A/AAAA 落在私网就整体拒绝——多记录轮询是绕 IP 校验的常见手法。
+*/
+func resolvePublic(host string) ([]string, error) {
 	host = strings.ToLower(strings.Trim(host, "[]"))
 	if host == "" || host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
-		return false
+		return nil, fmt.Errorf("目标不是公网地址：%s", host)
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return ipPublic(ip)
+		if !ipPublic(ip) {
+			return nil, fmt.Errorf("目标不是公网地址：%s", host)
+		}
+		return []string{ip.String()}, nil
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil || len(ips) == 0 {
-		return false
+		return nil, fmt.Errorf("域名解析失败：%s", host)
 	}
+	out := make([]string, 0, len(ips))
+	seen := map[string]bool{}
 	for _, ip := range ips {
 		if !ipPublic(ip) {
-			return false
+			return nil, fmt.Errorf("目标不是公网地址：%s", host)
+		}
+		s := ip.String()
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
 		}
 	}
-	return true
+	return out, nil
+}
+
+/* 对钉死的 IP 发一次 GET，不跟随重定向。
+ *
+ * DialContext 把地址换掉：URL 里还是域名（Host 头、TLS SNI、证书校验都按域名来），
+ * 但 socket 只知道这颗已经校验过的 IP，域名不会被查第二次。
+ * 不钉的话：校验(host) → 1.2.3.4 放行，连接时 Transport 再解析 → 127.0.0.1，
+ * 中间几毫秒换个答案，前面所有校验白做（DNS rebinding）。
+ *
+ * Proxy 显式置 nil：http.DefaultTransport 会走 HTTP_PROXY/HTTPS_PROXY，
+ * 而代理会自己解析域名 —— 钉 IP 等于白钉。 */
+func fetchOnce(cur, ip string) (*http.Response, error) {
+	pinned := ip
+	tr := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				port = "80"
+			}
+			d := &net.Dialer{Timeout: 10 * time.Second}
+			conn, err := d.DialContext(ctx, network, net.JoinHostPort(pinned, port))
+			if err != nil {
+				return nil, err
+			}
+			/* 连上后核对对端：RemoteAddr() 是内核给的事实，不是 DNS 的预测。
+			   解析结果可能被缓存、被代理改写、被下一次查询覆盖；这个不会。
+			   不合格就把连接关掉，绝不交给 Transport。 */
+			host, _, e := net.SplitHostPort(conn.RemoteAddr().String())
+			if e != nil || !ipPublic(net.ParseIP(host)) {
+				conn.Close()
+				return nil, fmt.Errorf("对端不是公网地址（连接后被拒）")
+			}
+			return conn, nil
+		},
+		DisableKeepAlives: true,
+	}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   fetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse /* 自己处理，才能逐跳校验 */
+		},
+	}
+	req, _ := http.NewRequest(http.MethodGet, cur, nil)
+	req.Header.Set("User-Agent", browserUA)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6")
+	return client.Do(req)
 }
 
 /*
@@ -925,13 +1026,8 @@ func fetchPublic(rawURL string) (map[string]any, error) {
 	if cur == "" {
 		return nil, fmt.Errorf("url 为空")
 	}
-	client := &http.Client{
-		Timeout: fetchTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse /* 自己处理，才能逐跳校验 */
-		},
-	}
 	redirects := []string{}
+	prevScheme := ""
 	for hop := 0; hop < 5; hop++ {
 		u, err := url.Parse(cur)
 		if err != nil {
@@ -940,6 +1036,11 @@ func fetchPublic(rawURL string) (map[string]any, error) {
 		if u.Scheme != "http" && u.Scheme != "https" {
 			return nil, fmt.Errorf("只支持 http/https")
 		}
+		/* 重定向只能平级或升级，不能降级：https → http 等于把后面的内容交给明文链路。 */
+		if prevScheme == "https" && u.Scheme == "http" {
+			return nil, fmt.Errorf("拒绝从 HTTPS 降级到 HTTP 的重定向")
+		}
+		prevScheme = u.Scheme
 		if u.User != nil {
 			return nil, fmt.Errorf("URL 不能带账号密码")
 		}
@@ -954,16 +1055,26 @@ func fetchPublic(rawURL string) (map[string]any, error) {
 		if port != "80" && port != "443" {
 			return nil, fmt.Errorf("只允许 80/443 端口")
 		}
-		if !publicHost(u.Hostname()) {
-			return nil, fmt.Errorf("目标不是公网地址：%s", u.Hostname())
-		}
-		req, _ := http.NewRequest(http.MethodGet, cur, nil)
-		req.Header.Set("User-Agent", browserUA)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.6")
-		resp, err := client.Do(req)
+		ips, err := resolvePublic(u.Hostname())
 		if err != nil {
 			return nil, err
+		}
+		var resp *http.Response
+		var lastErr error
+		/* 多 A 记录时按解析顺序试，最多 3 个。全部来自上面那一次解析，
+		   任何一个都校验过，换 IP 重试不会把校验绕过去。 */
+		for i, ip := range ips {
+			if i >= 3 {
+				break
+			}
+			resp, err = fetchOnce(cur, ip)
+			if err == nil {
+				break
+			}
+			lastErr = err
+		}
+		if resp == nil {
+			return nil, fmt.Errorf("抓取失败：%v", lastErr)
 		}
 		if resp.StatusCode == 301 || resp.StatusCode == 302 || resp.StatusCode == 303 || resp.StatusCode == 307 || resp.StatusCode == 308 {
 			loc := resp.Header.Get("Location")
@@ -1004,7 +1115,12 @@ func main() {
 	fetchRpm := flag.Int("fetch-rpm", envInt("HT_FETCH_RPM", 120), "抓网页每分钟上限，0 关闭")
 	noChat := flag.Bool("no-chat", false, "关闭模型请求（/v1/chat/completions）")
 	noFetch := flag.Bool("no-fetch", false, "关闭网页抓取（/v1/fetch）")
+	/* 与 Python 版同名同义。Go 版没有内置平台沙箱（见 README §13.6），
+	   这个开关保留是为了三份后端命令行一致，脚本不用为它们写分支。 */
+	noSandbox := flag.Bool("unsafe-no-self-restrict", false,
+		"跳过平台自沙箱（本实现未内置，保留参数以保持三份后端命令行一致）")
 	flag.Parse()
+	_ = noSandbox
 
 	/* 功能注册表。将来加接口只在这里加一行，全关判定与路由白名单自动跟着变。 */
 	features := []struct {
@@ -1014,12 +1130,11 @@ func main() {
 		{"/v1/chat/completions", "模型请求", *noChat},
 		{"/v1/fetch", "网页抓取", *noFetch},
 	}
-	enabledRoutes = map[string]bool{}
 	var enabledPaths, allLabels []string
 	for _, f := range features {
 		allLabels = append(allLabels, f.label)
 		if !f.off {
-			enabledRoutes[f.path] = true
+			enabledRoutes = append(enabledRoutes, f.path)
 			enabledPaths = append(enabledPaths, f.path)
 		}
 	}
@@ -1031,6 +1146,11 @@ func main() {
 	}
 	sort.Strings(enabledPaths)
 
+	/* 只在启动时读一次。之后请求阶段不碰磁盘。 */
+	if raw, etag, err := loadIndex(); err == nil {
+		indexRaw, indexETag = raw, etag
+	}
+
 	if *rpm > 0 {
 		chatBucket = newTokenBucket(*rpm, *burst)
 	}
@@ -1038,7 +1158,7 @@ func main() {
 		fetchBucket = newTokenBucket(*fetchRpm, *burst)
 	}
 	rateText := func(path string, on bool, n int) string {
-		if !enabledRoutes[path] {
+		if !slices.Contains(enabledRoutes, path) {
 			return "closed"
 		}
 		if !on {
@@ -1061,6 +1181,12 @@ func main() {
 	fmt.Printf("hterminal modelserver %s\n", version)
 	fmt.Printf("  listening  http://%s\n", addr)
 	fmt.Printf("  features   %s\n", strings.Join(enabledPaths, " · "))
+	fmt.Printf("  sandbox    off 本实现未内置平台沙箱（Python 版提供 Landlock/seatbelt）\n")
+	if indexRaw != nil {
+		fmt.Printf("  index.html %d B（启动时快照）\n", len(indexRaw))
+	} else {
+		fmt.Printf("  index.html 缺失（/ 会 404）\n")
+	}
 	fmt.Printf("  rate       chat %s · fetch %s\n",
 		rateText("/v1/chat/completions", *rpm > 0, *rpm),
 		rateText("/v1/fetch", *fetchRpm > 0, *fetchRpm))

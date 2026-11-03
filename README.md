@@ -1175,6 +1175,7 @@ export HT_TIMEOUT=120
 export HT_RPM=60                          # 模型请求每分钟上限，0 关闭限流
 export HT_BURST=20                        # 允许的瞬时突发次数
 export HT_FETCH_RPM=120                   # 抓网页每分钟上限，0 关闭
+export HT_NO_SELF_RESTRICT=1              # 跳过平台自沙箱（等价于 --unsafe-no-self-restrict）
 ```
 
 ```bash
@@ -1182,10 +1183,12 @@ python3 modelserver.py                    # 默认：模型 + 抓网页都开
 python3 modelserver.py --no-fetch         # 只做模型转发
 python3 modelserver.py --rpm 120 --burst 30
 python3 modelserver.py --no-chat --no-fetch   # 报错退出（exit 2），端口不开
+python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起来时用
 
 #   listening  http://127.0.0.1:8787
 #   features   /v1/chat/completions · /v1/fetch
 #   rate       chat 60/min burst 20 · fetch 120/min burst 20
+#   sandbox    ON  landlock abi=3 · 只读白名单 22 项 · 可写仅 /dev/null
 ```
 
 ### 接口
@@ -1334,8 +1337,17 @@ X-RateLimit-Remaining: 0
 
 - 只允许 `http` / `https`，只允许 **80 / 443** 端口（`127.0.0.1:8787`、`169.254.169.254` 这类直接拒）；
 - 域名必须解析到**公网 IP**（`ipaddress.is_global`），loopback / 私有网段 / 链路本地 / 保留地址全部拒绝；
-- **逐跳校验**：手动处理 3xx，每一跳都把新 URL 当新目标重新解析、重新查；最多 4 跳；
+  一次解析出几条 A/AAAA 就查几条，**任一条落在私网就整体拒绝**——多记录轮询是绕 IP 校验的常见手法；
+- **解析一次就钉住 IP**：真正建连用的是校验过的那颗 IP，域名不会被查第二次。不这么做的话，
+  `校验(host) → 1.2.3.4` 与 `连接(host) → 127.0.0.1` 中间那几毫秒，足够让 DNS 换个答案（**DNS rebinding**）。
+  Host 头与 TLS SNI 仍用域名，虚拟主机与证书校验都不受影响；
+- **连上之后验对端**：`getpeername()` / `RemoteAddr()` / `remoteAddress` —— 内核里那条连接的对端地址
+  说不了谎。钉 IP 防「连错」，验对端防「连错了也进不来」，两道独立成立（0.0.1.18）；
+- **逐跳校验**：手动处理 3xx，每一跳都把新 URL 当新目标重新解析、重新钉住；最多 4 跳；
+  **禁止 `https → http` 降级**——降级等于把后面的全部内容交给明文链路；
 - 不发送 cookie、不带 `Authorization`，`credentials: omit`；
+- **显式禁用代理**：Python 走裸 socket、Node 用 `http.request`、Go 把 `Transport.Proxy` 置 `nil`。
+  代理会自己解析域名，钉 IP 就白钉了；
 - 响应上限 3 MB，超时 20 秒（`HT_FETCH_TIMEOUT` 可调）；
 - URL 里带账号密码（`http://user:pass@host`）直接拒。
 
@@ -1358,6 +1370,100 @@ X-RateLimit-Remaining: 0
 
 另外：非流式（拒绝 `stream:true`）、body 上限 8 MB、上游超时 `HT_TIMEOUT`。
 被拒的请求会在 stderr 打一行 `deny origin/host/fetch-site: …`，方便排查。
+
+### 进程自沙箱：把「后端能碰什么」也锁住（0.0.1.18）
+
+前面的校验都在回答**「谁能进来」**；这一层回答**「进来之后它能碰什么」**。
+
+问题是这样的：modelserver 是拿你的账号跑的一个普通进程。一旦它被完全控制
+（依赖里的 0day、某段我们写错的代码、一个被注入的工具），攻击者拿到的是**你这个用户的全部权限**——
+`~/.ssh/id_rsa`、`.env`、浏览器数据、`~/.bashrc`、系统启动项，一个都不少。
+应用层再怎么校验，都拦不住「进程自己想读文件」。
+
+所以启动时给进程自己套一层平台沙箱：
+
+| 平台 | 手段 | 效果 |
+| --- | --- | --- |
+| Linux | **Landlock**（内核 5.13+，LSM 需启用） | 文件系统白名单：读只放系统库 / CA / DNS 配置，写只有 `/dev/null` |
+| macOS | **seatbelt**（`sandbox_init`） | 禁写（读不限——macOS 把读关死会连 Python 的 stdlib 和证书一起关掉） |
+| Windows | 无 | 没有「不需要管理员」的按进程文件 ACL 接口，明确不做，启动横幅写明 |
+
+Linux 侧的白名单只有这些：
+
+```
+读+执行：/usr /lib /lib64 /lib32 /bin /sbin /opt  sys.prefix  sys.base_prefix
+         /etc/ssl /etc/pki /etc/ca-certificates /etc/crypto-policies
+         /proc/self  /sys/devices/system/cpu
+只读文件：/etc/resolv.conf /etc/hosts /etc/nsswitch.conf /etc/gai.conf
+         /etc/localtime /etc/ld.so.cache /dev/urandom /dev/random /dev/zero
+读写：    /dev/null
+```
+
+`/etc/passwd`、`~`、`/tmp`、`/var` 都不在里面。**网络权限完全不声明**——Landlock 只限制我们声明过的
+权限类别，没声明网络就等于不受限，出网照常（这正是它的工作）。
+
+几个关键选择：
+
+- **不用 chroot / setuid**：都要 root，而且 chroot 之后 CA 证书也跟着没了，HTTPS 全废。
+  Landlock 不要任何特权，普通用户跑起来就是受限的。
+- **在「该读的都读完」之后才下沙箱**：`index.html` 在启动时读进内存、`ssl` 在导入时加载证书，
+  之后再收口，运行期不需要再碰这些路径。
+- **拿不到就退化成没有**：内核没编 Landlock、容器 seccomp 挡了 syscall、macOS 版本太新没有
+  `sandbox_init`——一律打印一行 `sandbox off 原因` 继续跑。**不因为安全特性装不上就拒绝服务**，
+  但也不假装它开着。
+- **`--unsafe-no-self-restrict`（或 `HT_NO_SELF_RESTRICT=1`）**：逃生门。裸机、老内核、
+  某些容器里跑不起来时用它跳过。名字里带 `unsafe` 是故意的——跳过之后你只剩应用层校验。
+
+Python 版用 `ctypes` 直接调 `syscall(444/445/446)`，不引任何依赖；Go / Node 版没有内置这一层
+（Go 需要按平台拆文件、Node 需要原生扩展，都会破坏「单文件后端」），启动横幅会写清楚。
+**想要进程级沙箱，用 Python 版。**
+
+启动后会自检并把结果打出来，而不是「我以为它生效了」：
+
+```
+sandbox    ON  landlock abi=3 · 只读白名单 22 项 · 可写仅 /dev/null
+             读 /etc/passwd：已拒
+             写 /tmp：已拒
+```
+
+### 原子化：把「检查」换成「对事实的验证」（0.0.1.18）
+
+这一轮把一类毛病统一处理了一遍：**凡是「先检查、后使用」的地方，中间都有窗口**。
+窗口里状态可以被换掉，检查就白做了。做法不是加更多检查，而是让检查直接作用在**最终那个对象**上。
+
+| 原来（check-then-use） | 现在（check-the-fact） |
+| --- | --- |
+| 解析域名 → 校验 IP → 再让 fetch 解析一次 → 建连 | **连上之后问 socket「你连的是谁」**（`getpeername` / `RemoteAddr` / `remoteAddress`），不是公网就关掉 |
+| 每个请求 `open("index.html")` | 启动时 `O_NOFOLLOW` 打开 + `fstat` 验是普通文件 + 读进内存，之后只发这一份 |
+| 路由白名单是个可变 `Set`/`map` | 启动时构建成 `frozenset` / `Object.freeze` 数组 / 只读切片，运行期加不进任何路由 |
+| 3xx 只看「跳到哪」 | 逐跳重新校验之外，**禁止 `https → http` 降级**（降级＝把后面的内容交给明文链路） |
+
+第一条是重点。钉住 IP 已经堵掉了「第二次解析」，但**钉 IP 依赖「建连时确实用了我们传的 IP」**——
+换个人改一行、加个代理、换个 HTTP 库，这个前提就没了。而 `getpeername()` 返回的是内核里
+那条已建立连接的对端地址，它不会撒谎。所以现在的链路是：
+
+```
+解析一次 → 全部是公网 → 钉住 IP 建连 → 问 socket「对端是谁」→ 不是公网就 close
+```
+
+两道独立成立：钉 IP 让「连错」不发生，验对端让「连错了也进不来」。
+自测方式：本地起一个监听，把它的地址当目标塞进 `_fetch_once`，必须被拒。
+
+### 自测记录：0.0.1.18（沙箱 / 原子化 / 前端真机）
+
+| 项目 | 方法 | 结果 |
+| --- | --- | --- |
+| Landlock 调用序列 | 假 libc 记录每次 `syscall` | 12 项全过：ABI 4 传 16 字节、ABI 3 传 8 字节、`path_beneath` 12 字节 packed、`prctl(38)` 在 `restrict_self` 之前、22 条路径规则、`/dev/null` 带写位、无 Landlock 时退化且说明原因 |
+| 内核不支持时 | 本机（TencentOS 6.6，LSM 未含 landlock） | `EOPNOTSUPP` → 打印「内核未启用 Landlock」继续跑，不影响服务 |
+| 对端校验 | 起一个本机监听，把它的地址当目标塞进 `_connect_verified` / `requestOnce` / `fetchOnce` | 三份后端都返回「对端不是公网地址（连接后被拒）」，连接被关 |
+| 静态快照 | 启动后改磁盘上的 `index.html`，再请求 | 三份后端返回字节不变；重启后才变（`797 520 → 798 097` 即由此验证） |
+| 降级重定向 | 伪造 `https → http` 跳转 | 拒绝 |
+| 前端六轮真机 | 无头 Chromium + DeepSeek 真 key + `http://127.0.0.1:8787/` | 2.9 / 3.8 / 3.9 / 3.7 / 3.3 / 3.2 s，六轮全对；10 次后端调用全 200；工具 `write_file` / `read_file` / `news` 均生效 |
+| 前端 TUI 路径 | `agent("…")` 打进终端 | 修前：模型只收到 system、回一句自我介绍；修后：0.4 s 正确回复 |
+| 限流交互 | `--rpm 5 --burst 1` | 状态码 `200 → 429 → 429 → 429`（修前是 `200 → 429 → 400 → 429`），界面提示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」 |
+
+> 本机内核没有启用 Landlock，所以端到端只验证了「退化路径」。调用序列用假 libc 逐参数钉死，
+> 结构体尺寸对齐内核 ABI 定义；真到支持的内核上跑，走的是同一套调用。
 
 ### 威胁模型：能做什么，做不到什么（0.0.1.17）
 
@@ -1490,6 +1596,16 @@ A：「更多 → 文件系统 → 导出为 JSON」，导入在同一个地方�
 **Q：智能体突然说「模型请求过于频繁（HTTP 429）」？**
 A：撞到限流了。默认 60 次/分、突发 20，正常对话够用，页面脚本刷接口才会撞。
 等 `Retry-After` 写的秒数，或者重启时加 `--rpm 120`；彻底关掉用 `--rpm 0`。
+
+**Q：启动横幅里 `sandbox off` 是什么意思？**
+A：平台沙箱没启用。常见原因：内核没编 Landlock（`landlock_create_ruleset` 返回 `EOPNOTSUPP`）、
+容器 seccomp 挡了 syscall、macOS 太新没有 `sandbox_init`、或者你用了 Go / Node 版（它们没内置这一层）。
+后面括号里会写具体原因。这一层是**纵深防御**，没开不影响前面的四重校验与 SSRF 边界；
+想确认它在支持的内核上真的生效，看启动后那两行自检（读 `/etc/passwd`、写 `/tmp` 都该是「已拒」）。
+
+**Q：为什么 Windows 没有自沙箱？**
+A：Windows 上按进程限制文件访问要用 AppContainer 或受限令牌，两者都需要预建配置或管理员权限，
+与「双击跑起来」冲突。宁可不做，也不做一个「看起来开着、其实什么都没拦」的东西。
 
 **Q：加了 `--no-fetch`，智能体怎么还是抓到了网页？**
 A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorigins` 三级降级，
@@ -2347,6 +2463,32 @@ Go 的 `Header.Get` 取第一个、Node 把两个拼成 `"HTerMinaL, nope"`。
 监听一个只回 403 的端口本身就是情报。教训：**「友好错误信息」和「不泄露」经常是相反的**，
 面向人的解释只能写进 stderr，不能写进响应体。
 
+**65. 「先检查、后使用」中间那个窗口，才是这些漏洞的真正来源**
+最初的写法是：解析域名 → 查是不是公网 → `fetch(url)`。看起来严丝合缝，实际上 `fetch` 会
+**再解析一次**，中间那几毫秒足够让 DNS 换个答案（DNS rebinding）。钉住 IP 之后好了一些，
+但「钉 IP」本身又是个前提——换个 HTTP 库、加个代理、改一行代码，这个前提就没了。
+**修法**：连上之后问 socket「你连的是谁」（`getpeername()` / `RemoteAddr()` / `remoteAddress`），
+不是公网就把连接关掉。同一套思路还用在三处：`index.html` 改成启动时 `O_NOFOLLOW` 打开 +
+`fstat` 验普通文件 + 读进内存（不再每个请求 open 一次路径）；路由白名单构建成不可变集合；
+3xx 里禁止 `https → http` 降级。教训：**检查要作用在最终那个对象上，而不是作用在它的名字上**。
+
+**66. 修完 429，冒出来一个莫名其妙的 400**
+前端连发四条消息、限流设成 5 次/分，状态码序列是 `200 → 429 → 400 → 429`。那个 400 的正文是
+`<html>… Bad request syntax …`——不是我们写的 JSON。原因：**429 是在读 body 之前返回的**，
+请求体还躺在 socket 里；`keep-alive` 复用这条连接时，服务器把那段 JSON 当成下一轮的请求行来解析。
+403 / 415 同样中招（任何「读了头就拒、没读 body」的分支）。
+**修法**：错误响应一律 `Connection: close`，未读的字节跟着 socket 一起消失。三份后端都改。
+教训：**拒绝请求时要么把 body 读完，要么把连接关掉**，不存在第三种安全选项。
+
+**67. 会话恢复和新消息赛跑，用户的第一次提问会凭空消失**
+TUI 里的 `agent("…")` 一调用就发，而 `AgentApp` 构造函数里的 `loadSession()` 是异步的。
+`send()` 先 `push` 用户消息，`await flushSession()` 让出事件循环，`loadSession` 正好在此时完成
+`this.messages = out`——刚 push 的那条被覆盖，模型收到的是一个只有 system 的请求，于是回了一句
+「你好，想做什么」。表现就是：**你说的话没进去，它却在自我介绍**。
+**修法**：构造函数记住 `this._loading`，`send()` 先等它；`loadSession` 收尾时改成
+`out.concat(this.messages)`，把恢复期间进来的新消息接在后面。
+教训：**异步初始化 + 立即使用 = 必踩**，要么 await 初始化，要么合并而不是覆盖。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -2404,6 +2546,7 @@ Go 的 `Header.Get` 取第一个、Node 把两个拼成 `"HTerMinaL, nope"`。
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.18 | 2026-11-04 | **进程自沙箱 + 原子化改造 + 前端真机六轮**：①**平台沙箱**——Linux 用 Landlock（`ctypes` 直调 `syscall 444/445/446`，零依赖）把后端自己的文件权限收成白名单：读只放系统库 / CA / DNS 配置，写只有 `/dev/null`，网络不声明（出网照常）；macOS 用 seatbelt 禁写；Windows 明确不支持。拿不到就打印原因退化成无沙箱，绝不假装开着。`--unsafe-no-self-restrict` / `HT_NO_SELF_RESTRICT=1` 是逃生门。启动后自检「读 /etc/passwd、写 /tmp」并把结果打进横幅。②**原子化**——`/v1/fetch` 建连后校验**真实对端**（`getpeername` / `RemoteAddr` / `remoteAddress`），不再只信「解析结果」；`index.html` 启动时 `O_NOFOLLOW` + `fstat` 读进内存，请求阶段不碰磁盘；路由白名单冻结成不可变集合；3xx 禁止 `https → http` 降级。③**前端两个真 bug**——`loadSession` 覆盖刚 push 的用户消息（TUI 的 `agent("…")` 必踩，表现为「你说的话没进去，它在自我介绍」）；错误响应不关连接导致 `keep-alive` 下把残留 body 当请求行解析，冒出 HTML 400（`200→429→400→429`）。④**真机验证**——DeepSeek 真 key，无头 Chromium 打 `http://127.0.0.1:8787/`，六轮对话（含 `write_file` / `read_file` / `news` / 上下文回忆 / 算术）全部 2.9–3.9 s 通过，10 次后端调用全 200；TUI 路径从「必失败」修到 0.4 s 正确回复；限流下前端正确显示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」。⑤文档：§13 新增「进程自沙箱」「原子化」，踩坑 65–67。 |
 | 0.0.1.17 | 2026-11-03 | **速率限制 + 功能开关 + 威胁模型写进文档**：①**限流**——按路由分两个令牌桶（模型 60 次/分、抓网页 120 次/分，突发 20），超限回 429 + `Retry-After` + `X-RateLimit-*`。不用固定窗口是因为它在边界会放过两倍突发、空闲期又不攒额度。`burst` 按「一轮任务最多几次模型调用」定（实测一轮 8 次 0 个 429），不按最坏情况定——取小了先被挡住的是自己。失败不扣令牌、`OPTIONS` 不限、日志只报第 1 次和每 50 次。②**功能开关**——`--no-chat` / `--no-fetch` 分别关两条路由；关闭的接口与瞎猜的路径走**同一条分支**，状态码、头、正文逐字节一致（回「功能已关闭」等于承认这里有个接口）。`/health` 同步砍掉 `providers` 能力清单，只回 `ok`。两个都关直接 `exit 2`，端口不开——监听一个只回 403 的端口本身就是情报。判定走 `FEATURES` 表，将来加接口只加一行。③参数支持命令行与环境变量（`--rpm` / `--burst` / `--fetch-rpm`，`HT_RPM` / `HT_BURST` / `HT_FETCH_RPM`），三份后端行为一致。④**文档**——§13 新增「速率限制」「功能开关」「威胁模型：能做什么，做不到什么」（信任域四级、攻击对照表、提示词注入链、误操作清单、三条不打算改的取舍），踩坑 63–64。自测：限流 26 项、开关 27 项，全过。 |
 | 0.0.1.16 | 2026-11-03 | **后端的内部渗透测试：84 项，修掉 8 个问题**。范围只有 `127.0.0.1:8787`，不碰任何第三方，畸形请求全用原始 socket 发。①**并发队列只有 5**（`socketserver` 默认）——20 并发触发 SYN 重传、整批慢 1 秒，200 并发 5 个超时（7.05 s / p95 5428 ms）；改 `request_queue_size = 128` 后 0.06 s / 29 ms。②**半开连接无限占线程**——100 个连上不说话 = 100 个常驻线程，永不释放；加连接级 `timeout = 15` + `BoundedSemaphore(128)` + 超限 503，实测 15.0 s 精确断开、占住期间正常请求 9 ms。③**合法 JSON 但非对象会打崩处理**——`[]`/`"x"`/`null` 过 `json.loads` 后 `body.get()` 抛 `AttributeError`，客户端收空响应、stderr 打 traceback；三份后端统一 400。④**provider 不是字符串就崩**（数字 / 数组），加类型校验。⑤**重复 `X-HTerm-Client` 取第一个**——三种运行时取法不同，是头走私的土壤，统一「多于一个就 403」。⑥**`NaN`/`Infinity` 透传上游**——入口 `parse_constant` 拒。⑦**`Server` 头写着版本 + Python 版本**，改成只留服务名。⑧**客户端提前断开时打 traceback**（`BrokenPipeError`）。验证有效且未改：四重校验、`Origin: null`、路径穿越 9 种、SSRF 29 种（含 `nip.io`、十进制 IP、`[::ffff:127.0.0.1]`）、逐跳 302 白盒校验、3 MB 精确截断。文档：§13 自测记录、踩坑 60–62。 | 
 | 0.0.1.15 | 2026-11-03 | **光标该藏就藏 + 智能体真的能抓新闻 + 四个「维护中」做完**：①**光标滚出画布不隐藏**——`_cursorPlace()` 的越界判断本来是对的（`vRow = cursorY + baseY - viewportY`），但重算只挂在 `onCursorMove` / `term.onScroll` 上；`onScroll` 只在**缓冲区滚动**（新输出把内容顶上去）时触发，用户拖滚动条、滚轮回看历史时 `viewportY` 变了它一声不响。实测 `vp 183→120`、光标行 84（共 22 行），`.ht-cursor` 还亮在最后一行。**修法**：监听 `.xterm-viewport` 的 `scroll`（不挑渲染器），隐藏时 `init=false`，滚回来直接落位、不补动画。②**智能体抓新闻必失败**——三个后端的 `X-HTerm-Client` 还在和小写 `hterminal` 全等比较，而客户端从 0.0.1.2 起就发 `HTerMinaL`，于是**自家前端每次模型调用都被自己 403**（`缺少 X-HTerm-Client`）。改成 `trim().toLowerCase()` 比较。③**抓网页有了真正能走的路**——浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头，`r.jina.ai` / `allorigins` 在国内经常连不上，所谓「三级降级」实际没有一级能通。后端新增 `POST /v1/fetch` 代抓（只允许 http/https、80/443、目标必须解析到公网 IP、逐跳校验重定向、3 MB / 20 s 上限）；`fetch_url` 拿到 HTML / RSS / JSON 统一转正文；新增 **`news` 工具**（今日头条热榜 + 新浪滚动新闻，`count` / `source`），并在 `AGENT_ENV` 里写明「要新闻用 news，别猜 URL」。④**四个「维护中」做完了**（新 `build/59-media.js`）——**录音机**（MediaRecorder + AnalyserNode 实时波形、暂停、计时、设备选择、试听、存 `.home`、关窗收音轨）；**定位**（单次 / `watchPosition`、七项数据、复制 / 存 `.home.geo-json` / 开 OSM）；**3D 视图**（自写 WebGL：环面结 / 立方体 / 球 / 二十面体、轨道相机、自转、线框、fps，不引 three.js）；**音频播放**（WebAudio 解码波形、点击定位、进度 / 音量 / 0.5–2× / 循环、拖入即放）。⑤**顺带修的四个真坑**——`Permissions-Policy: ()` 把自家页面的麦克风与定位也关了（改 `(self)`）；3D 画布用 `getBoundingClientRect()` 量到开窗动画的 `scale` 值，被定成 80×80（改 `clientWidth`）；`[hidden]` 打不过 `.au-drop{display:flex}`；录音落盘名 `rec-….webm` 被点号拆成三层路径（走 `spotEscape`）。⑥**README 新增 §0「接活规则」**——被打断时先记住、手上的活继续做、收尾前逐条核对历史任务，没查过不许说做完。⑦文档：§12 抓新闻与 `/v1/fetch`、§13 接口与 SSRF 边界、§15 工具表、踩坑 54–59。 |

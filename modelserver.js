@@ -16,6 +16,7 @@
 'use strict';
 
 const http = require('node:http');
+const https = require('node:https');
 const net = require('node:net');
 const dns = require('node:dns').promises;
 const fs = require('node:fs');
@@ -32,7 +33,8 @@ function parseArgs(argv) {
     burst: intEnv('HT_BURST', 20),
     fetchRpm: intEnv('HT_FETCH_RPM', 120),
     noChat: false,
-    noFetch: false
+    noFetch: false,
+    noSandbox: /^(1|true|yes)$/i.test(String(process.env.HT_NO_SELF_RESTRICT || ''))
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -44,6 +46,8 @@ function parseArgs(argv) {
   --fetch-rpm N  抓网页每分钟上限，0 关闭（默认 ${o.fetchRpm}）
   --no-chat      关闭模型请求（/v1/chat/completions）
   --no-fetch     关闭网页抓取（/v1/fetch）
+  --unsafe-no-self-restrict
+                 跳过平台自沙箱（本实现未内置，保留参数以保持三份后端命令行一致）
 
 也可用环境变量 HT_RPM / HT_BURST / HT_FETCH_RPM 设默认值。
 两个功能不能同时关闭：全关等于没有服务，会直接退出。`);
@@ -51,6 +55,7 @@ function parseArgs(argv) {
     }
     if (a === '--no-chat') { o.noChat = true; continue; }
     if (a === '--no-fetch') { o.noFetch = true; continue; }
+    if (a === '--unsafe-no-self-restrict') { o.noSandbox = true; continue; }
     const m = /^--(rpm|burst|fetch-rpm)(?:=(.*))?$/.exec(a);
     if (!m) {
       console.error(`未知参数：${a}（--help 看用法）`);
@@ -69,7 +74,7 @@ function parseArgs(argv) {
   return o;
 }
 
-const ARGS = parseArgs(process.argv.slice(2));
+const ARGS = Object.freeze(parseArgs(process.argv.slice(2)));
 const BURST = Math.max(1, ARGS.burst);
 
 /* 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单自动跟着变。 */
@@ -77,8 +82,10 @@ const FEATURES = [
   { path: '/v1/chat/completions', label: '模型请求', off: ARGS.noChat },
   { path: '/v1/fetch', label: '网页抓取', off: ARGS.noFetch }
 ];
-const ENABLED = new Set(FEATURES.filter(f => !f.off).map(f => f.path));
-if (ENABLED.size === 0) {
+/* 冻结成数组：运行期没有任何代码能往白名单里 add 一条路由。
+ * （Object.freeze(new Set()) 挡不住 .add()，所以不用 Set。） */
+const ENABLED = Object.freeze(FEATURES.filter(f => !f.off).map(f => f.path));
+if (ENABLED.length === 0) {
   /* 全关 = 没有可提供的服务。监听一个只回 403 的端口本身就是情报。 */
   console.error(`所有功能都被关闭了（${FEATURES.map(f => f.label).join('、')}），没有可提供的服务，拒绝启动`);
   process.exit(2);
@@ -101,7 +108,34 @@ const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.17';
+const VERSION = '0.0.1.18';
+
+/* 启动时把 index.html 读成一份不可变快照。
+ *
+ * 用「先 open 拿到 fd、再 fstat 验它」而不是「先 stat 路径、再读路径」：
+ * 后者是两步，中间那个名字能被换成软链或别的文件；前者只做一次，
+ * 验的对象就是马上要读的那个句柄（O_NOFOLLOW 顺带拒掉软链）。 */
+const INDEX = (() => {
+  let fd;
+  try {
+    fd = fs.openSync(nodePath.join(__dirname, 'index.html'),
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    if (!fs.fstatSync(fd).isFile()) return { raw: null, etag: null };
+    return {
+      raw: fs.readFileSync(fd),
+      etag: null
+    };
+  } catch (e) {
+    return { raw: null, etag: null };
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch (e) { /* ignore */ } }
+  }
+})();
+const INDEX_RAW = INDEX.raw;
+const INDEX_ETAG = INDEX_RAW
+  ? '"' + require('node:crypto').createHash('sha256').update(INDEX_RAW).digest('hex').slice(0, 20) + '"'
+  : null;
+Object.freeze(INDEX);
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 /* 令牌桶：按时间连续补令牌，不用「每分钟 N 次」的固定窗口——
@@ -407,45 +441,139 @@ function ipPublic(ip) {
   try { return !PRIVATE.check(ip, fam === 6 ? 'ipv6' : 'ipv4'); } catch (e) { return false; }
 }
 
-async function publicHost(host) {
+/* 解析一次，返回「全部是公网」的 IP 列表，供调用方钉住。
+   任一 A/AAAA 落在私网就整体拒绝——多记录轮询是绕 IP 校验的常见手法。 */
+async function resolvePublic(host) {
   host = String(host || '').replace(/^\[|\]$/g, '').toLowerCase();
-  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false;
-  if (net.isIP(host)) return ipPublic(host);
-  try {
-    const list = await dns.lookup(host, { all: true });
-    return list.length > 0 && list.every(a => ipPublic(a.address));
-  } catch (e) { return false; }
+  if (!host || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) {
+    throw new Error('目标不是公网地址：' + (host || '?'));
+  }
+  if (net.isIP(host)) {
+    if (!ipPublic(host)) throw new Error('目标不是公网地址：' + host);
+    return [host];
+  }
+  let list;
+  try { list = await dns.lookup(host, { all: true }); }
+  catch (e) { throw new Error('域名解析失败：' + host); }
+  if (!list.length) throw new Error('域名解析失败：' + host);
+  for (const a of list) {
+    if (!ipPublic(a.address)) throw new Error('目标不是公网地址：' + host);
+  }
+  return [...new Set(list.map(a => a.address))];
+}
+
+/* 对钉死的 IP 发一次 GET，不跟随重定向。
+ *
+ * 直接把 hostname 写成 IP 建连，域名再也不会被查第二次；Host 头与 TLS SNI
+ * 仍然用原域名，虚拟主机和证书校验都不受影响。
+ * 不钉的话：校验(host) → 1.2.3.4 放行，连接(host) → 第二次解析 → 127.0.0.1，
+ * 中间几毫秒换个答案，前面所有校验白做（DNS rebinding）。
+ *
+ * 这里不用 `lookup` 选项覆盖解析：Node 22 的 http.Agent 对它的处理与 net.connect
+ * 不一致，实测报 "Invalid IP address: undefined"。直接写 IP 更稳，也更容易看懂。 */
+function requestOnce(urlStr, ip) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlStr);
+    const isHttps = u.protocol === 'https:';
+    const mod = isHttps ? https : http;
+    const port = u.port ? Number(u.port) : (isHttps ? 443 : 80);
+    let done = false;
+    const finish = (status, headers, body) => {
+      if (done) return;
+      done = true;
+      resolve({ status, headers, body });
+    };
+    const req = mod.request({
+      protocol: u.protocol,
+      hostname: ip,
+      port,
+      path: (u.pathname || '/') + (u.search || ''),
+      method: 'GET',
+      /* SNI 与证书域名校验都用原来的域名，不是 IP */
+      servername: isHttps ? u.hostname : undefined,
+      headers: {
+        /* 显式 Host：连的是 IP，但对方看到的主机名必须是域名 */
+        host: u.host,
+        'user-agent': UA,
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.6',
+        connection: 'close'
+      }
+    }, res => {
+      /* 对端核对（以「事实」为准）：这里拿到的是实际承载本次响应的 socket，
+       * remoteAddress 由内核给出，改不了。前面的解析、后面的任何代理都影响不到它。
+       * 不是公网就直接掐——绝不把一个连到内网的响应交给上层。 */
+      const peer = res.socket && res.socket.remoteAddress;
+      if (!peer || !ipPublic(peer)) {
+        res.destroy();
+        reject(new Error('对端不是公网地址（连接后被拒）'));
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      res.on('data', c => {
+        if (size >= FETCH_MAX) return;
+        chunks.push(c);
+        size += c.length;
+        if (size >= FETCH_MAX) { res.destroy(); finish(res.statusCode, res.headers, Buffer.concat(chunks).subarray(0, FETCH_MAX)); }
+      });
+      const end = () => finish(res.statusCode, res.headers, Buffer.concat(chunks).subarray(0, FETCH_MAX));
+      res.on('end', end);
+      res.on('close', end);
+      res.on('error', e => { if (!done) reject(e); });
+    });
+    /* 连上就立刻验，早于发请求：连错机器时连 URL 都不该发出去。 */
+    req.on('socket', s => {
+      let checked = false;
+      const verify = () => {
+        if (checked) return;
+        checked = true;
+        if (!s.remoteAddress || !ipPublic(s.remoteAddress)) {
+          req.destroy(new Error('对端不是公网地址（连接后被拒）'));
+        }
+      };
+      s.once('connect', verify);        /* http：TCP 建立 */
+      s.once('secureConnect', verify);  /* https：握手完成（此时 TCP 早就建立了） */
+    });
+    req.setTimeout(FETCH_TIMEOUT * 1000, () => req.destroy(new Error('抓取超时')));
+    req.on('error', e => { if (!done) reject(e); });
+    req.end();
+  });
 }
 
 async function fetchPublic(rawUrl) {
   let cur = String(rawUrl || '').trim();
   if (!cur) throw new Error('url 为空');
   const redirects = [];
+  let prevScheme = null;
   for (let hop = 0; hop < 5; hop++) {
     const u = new URL(cur);
     if (!['http:', 'https:'].includes(u.protocol)) throw new Error('只支持 http/https');
+    /* 重定向只能平级或升级，不能降级：https → http 等于把后面的内容交给明文链路。 */
+    if (prevScheme === 'https:' && u.protocol === 'http:') throw new Error('拒绝从 HTTPS 降级到 HTTP 的重定向');
+    prevScheme = u.protocol;
     if (u.username || u.password) throw new Error('URL 不能带账号密码');
     const port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
     if (port !== 80 && port !== 443) throw new Error('只允许 80/443 端口');
-    if (!(await publicHost(u.hostname))) throw new Error('目标不是公网地址：' + u.hostname);
-    const resp = await fetch(cur, {
-      redirect: 'manual',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT * 1000),
-      headers: {
-        'user-agent': UA,
-        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5',
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.6'
-      }
-    });
+    const ips = await resolvePublic(u.hostname);
+    let out = null, last = null;
+    /* 多 A 记录时按解析顺序试，最多 3 个。全部来自上面那一次解析，
+       任何一个都校验过，换 IP 重试不会把校验绕过去。 */
+    for (const ip of ips.slice(0, 3)) {
+      try { out = await requestOnce(cur, ip); break; }
+      catch (e) { last = e; }
+    }
+    if (!out) throw new Error('抓取失败：' + ((last && last.message) || last));
+    const resp = { status: out.status, headers: out.headers };
     if ([301, 302, 303, 307, 308].includes(resp.status)) {
-      const loc = resp.headers.get('location');
+      const loc = resp.headers.location;
       if (!loc) throw new Error('HTTP ' + resp.status + ' 但没给 Location');
       cur = new URL(loc, cur).toString();
       redirects.push(cur);
       continue;
     }
-    const buf = Buffer.from(await resp.arrayBuffer()).subarray(0, FETCH_MAX);
-    const ct = resp.headers.get('content-type') || '';
+    const buf = out.body;
+    const ct = resp.headers['content-type'] || '';
     const cs = (/charset=([\w-]+)/i.exec(ct) || [])[1] ||
       (/charset=["']?([\w-]+)/i.exec(buf.subarray(0, 4096).toString('latin1')) || [])[1] || 'utf-8';
     let text;
@@ -494,6 +622,10 @@ function reply(req, res, status, obj, extra) {
   const raw = Buffer.from(JSON.stringify(obj), 'utf8');
   cors(req, res);
   securityHeaders(res);
+  /* 错误响应一律关连接：429/403/415 都发生在读 body 之前，请求体还躺在
+     socket 里；keep-alive 复用时下一轮会把它当请求行解析，报一个莫名其妙的
+     400。关掉连接，未读的字节跟着 socket 一起消失。 */
+  if (status >= 400) res.setHeader('Connection', 'close');
   res.writeHead(status, Object.assign({
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': raw.length,
@@ -576,15 +708,16 @@ const server = http.createServer(async (req, res) => {
       const reqPath = String(req.url || '').split('?')[0];
       /* 根路径直接给页面：启动后端 = 启动应用，不用再开静态服务器 */
       if (reqPath === '/' || reqPath === '/index.html') {
-        let raw;
-        try { raw = fs.readFileSync(nodePath.join(__dirname, 'index.html')); }
-        catch (e) {
+        /* 发启动时读进内存的那一份：请求阶段不碰磁盘，路径上的东西再怎么换
+           也影响不到已启动的实例（改文件要重启才生效）。 */
+        const raw = INDEX_RAW;
+        if (!raw) {
           reply(req, res, 404, { error: { message: '找不到 index.html（和本脚本放同一目录）', type: 'not_found' } });
           return;
         }
         /* 单文件应用七百多 KB，no-store 会让每次刷新都重下整包。
          * 改成协商缓存：内容没变回 304（只有头），改了才重发正文。 */
-        const etag = '"' + require('crypto').createHash('sha256').update(raw).digest('hex').slice(0, 20) + '"';
+        const etag = INDEX_ETAG;
         securityHeaders(res);
         if (String(req.headers['if-none-match'] || '').split(',').map(x => x.trim()).includes(etag)) {
           res.writeHead(304, { 'ETag': etag, 'Cache-Control': 'no-cache' });
@@ -613,7 +746,7 @@ const server = http.createServer(async (req, res) => {
     const route = String(req.url || '').split('?')[0];
     /* 被 --no-chat / --no-fetch 关掉的接口，和瞎猜的路径走同一条分支：
        状态码、头、正文完全一致，探不出「这里本来有个接口」。 */
-    if (req.method !== 'POST' || !ENABLED.has(route)) {
+    if (req.method !== 'POST' || !ENABLED.includes(route)) {
       reply(req, res, 403, REJECTED);
       return;
     }
@@ -686,9 +819,11 @@ server.listen(PORT, HOST, () => {
   console.log(`hterminal modelserver ${VERSION}`);
   console.log(`  listening  http://${HOST}:${PORT}`);
   console.log(`  features   ${[...ENABLED].sort().join(' · ')}`);
+  console.log(`  index.html ${INDEX_RAW ? INDEX_RAW.length + ' B（启动时快照）' : '缺失（/ 会 404）'}`);
+  console.log(`  sandbox    ${ARGS.noSandbox ? '已跳过（--unsafe-no-self-restrict）' : 'off 本实现未内置平台沙箱（Python 版提供 Landlock/seatbelt）'}`);
   console.log('  limits     headers 15s · request 60s · max 256 连接');
   const rateText = (path, bucket, rpm) =>
-    !ENABLED.has(path) ? 'closed' : (bucket ? `${rpm}/min burst ${BURST}` : 'off');
+    !ENABLED.includes(path) ? 'closed' : (bucket ? `${rpm}/min burst ${BURST}` : 'off');
   console.log(`  rate       chat ${rateText('/v1/chat/completions', chatBucket, ARGS.rpm)} · fetch ${rateText('/v1/fetch', fetchBucket, ARGS.fetchRpm)}`);
   console.log(`  providers  openai=${OPENAI_KEY ? 'yes' : 'no'} anthropic=${ANTHROPIC_KEY ? 'yes' : 'no'} responses=${OPENAI_KEY ? 'yes' : 'no'}`);
   console.log('  密钥只在环境变量；不保存对话；不执行工具；不写文件。');

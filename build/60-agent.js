@@ -712,7 +712,9 @@ class AgentApp {
     this._bindAttach();
     this.renderStatus('idle');
     this.updateModelLabel();
-    this.loadSession();
+    /* 记住这个 promise：send() 要等它，否则刚 push 的用户消息会被
+     * 随后完成的 loadSession 覆盖掉（TUI 的 agent("…") 必踩这个坑）。 */
+    this._loading = this.loadSession().catch(() => {});
     /* 后台预取 markdown 渲染器，加载完重画一次（不阻塞首屏） */
     ensureMarked().then(m => { if (m && !this._disposed) this.render(); }).catch(() => {});
   }
@@ -880,7 +882,9 @@ class AgentApp {
         }
       } catch (e) { out = []; }
     }
-    this.messages = out;
+    /* 恢复期间可能已经有新消息进来了（用户手快，或者 TUI 直接调用 send）：
+     * 把恢复出来的放在前面，别把新的冲掉。 */
+    this.messages = out.length ? out.concat(this.messages) : this.messages;
     this.createdAt = at || Date.now();
     /* 空会话的问候语也要存成字段：render() 会被 markdown 加载完再调一次，
      * 直接写 innerHTML 的版本会在那一次被冲成「空会话」（和 restoreNote 同一个坑）。 */
@@ -1067,6 +1071,8 @@ class AgentApp {
 
   async send(text) {
     if (this.running) return;
+    /* 等会话恢复完成再 push：见构造函数里的 _loading。 */
+    if (this._loading) { try { await this._loading; } catch (e) {} }
     const atts = this.attachments.slice();
     const parts = [];
     let plain = String(text || '');

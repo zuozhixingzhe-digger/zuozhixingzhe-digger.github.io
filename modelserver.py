@@ -29,12 +29,15 @@
 
 import argparse
 import hashlib
+import http.client
 import ipaddress
 import json
 import math
 import os
 import re
 import socket
+import ssl
+import stat
 import sys
 import threading
 import time
@@ -68,7 +71,7 @@ MAX_BODY = 8 * 1024 * 1024
 RPM = env_int("HT_RPM", 60)
 BURST = env_int("HT_BURST", 20)
 FETCH_RPM = env_int("HT_FETCH_RPM", 120)
-VERSION = "0.0.1.17"
+VERSION = "0.0.1.18"
 # 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
 # (argparse 里的开关名, 路由, 中文名)
 FEATURES = (
@@ -146,27 +149,102 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_OPENER = urllib.request.build_opener(_NoRedirect)
+# 下面两个连接类只做一件事：**连我们已经校验过的那颗 IP**，而不是把域名交给
+# 系统再解析一次。这就是挡 DNS rebinding 的关键——
+#
+#   校验(host) → 1.2.3.4（公网，放行）
+#   连接(host) → 第二次解析 → 127.0.0.1（进内网）
+#
+# 中间那几毫秒里，攻击者只要让 DNS 换个答案，前面所有校验都白做。
+# 所以 DNS 只查一次，查完把 IP 钉死；Host 头和 TLS SNI 仍然用域名，
+# 虚拟主机与证书校验都不受影响。
+def _peer_is_public(sock):
+    """问 socket「你实际连上的是谁」，而不是问 DNS「它说它是谁」。
+
+    这是整套 SSRF 校验里唯一不可伪造的一步：前面的解析结果可能被缓存、被代理
+    改写、被后来的一次解析覆盖，但 getpeername() 返回的是内核里那条已建立的
+    连接的对端地址，说不了谎。校验的对象从「计划」变成「事实」。
+    """
+    try:
+        peer = sock.getpeername()
+    except OSError:
+        return False
+    try:
+        addr = str(peer[0]).split("%")[0]   # 去掉 IPv6 的 scope id
+        return ipaddress.ip_address(addr).is_global
+    except Exception:
+        return False
 
 
-def _public_host(host):
+def _connect_verified(ip, port, timeout, source_address=None):
+    """建连后立刻验证对端。不通过就把连接关掉——绝不把 socket 交出去。"""
+    sock = socket.create_connection((ip, port), timeout, source_address)
+    if not _peer_is_public(sock):
+        try:
+            sock.close()
+        except Exception:
+            pass
+        raise ValueError("对端不是公网地址（连接后被拒）")
+    return sock
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, ip, port, timeout):
+        super().__init__(host, port, timeout=timeout)
+        self._ip = ip
+
+    def connect(self):
+        # 两道：钉住 IP（不留第二次解析的机会）+ 连上后核对对端（不信任何预测）
+        self.sock = _connect_verified(self._ip, self.port, self.timeout,
+                                      self.source_address)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, host, ip, port, timeout):
+        super().__init__(host, port, timeout=timeout, context=ssl.create_default_context())
+        self._ip = ip
+
+    def connect(self):
+        # TCP 连上先验对端，再握手：证书再合法，也不能掩盖「连错了机器」
+        sock = _connect_verified(self._ip, self.port, self.timeout,
+                                 self.source_address)
+        try:
+            # server_hostname 用域名：SNI 和证书域名校验都按原样来
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        except Exception:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            raise
+
+
+def _resolve_public(host):
+    """解析一次，把「全部是公网」的 IP 列表返回给调用方钉住用。
+
+    任一 A/AAAA 记录落在私网就整体拒绝——多记录轮询是绕 IP 校验的常见手法。
+    """
     host = (host or "").strip().lower().strip("[]")
     if not host or host == "localhost" or host.endswith(".local") or host.endswith(".internal"):
-        return False
+        raise ValueError("目标不是公网地址：%s" % (host or "?"))
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except Exception:
-        return False
-    if not infos:
-        return False
+        raise ValueError("域名解析失败：%s" % host)
+    ips = []
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except Exception:
-            return False
+            raise ValueError("域名解析失败：%s" % host)
         if not ip.is_global:
-            return False
-    return True
+            raise ValueError("目标不是公网地址：%s" % host)
+        s = str(ip)
+        if s not in ips:
+            ips.append(s)
+    if not ips:
+        raise ValueError("域名解析失败：%s" % host)
+    return ips
 
 
 def _charset_of(headers, raw):
@@ -180,15 +258,44 @@ def _charset_of(headers, raw):
     return "utf-8"
 
 
+def _fetch_once(url, ip):
+    """对钉死的 IP 发一次 GET，不跟随重定向。返回 (status, headers, body)。"""
+    parts = urllib.parse.urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    path = parts.path or "/"
+    if parts.query:
+        path += "?" + parts.query
+    cls = _PinnedHTTPSConnection if parts.scheme == "https" else _PinnedHTTPConnection
+    conn = cls(parts.hostname, ip, port, FETCH_TIMEOUT)
+    try:
+        conn.request("GET", path, headers={
+            "User-Agent": UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+            "Connection": "close",
+        })
+        resp = conn.getresponse()
+        raw = resp.read(FETCH_MAX + 1)
+        return resp.status, resp.headers, raw
+    finally:
+        conn.close()
+
+
 def fetch_public(url):
     url = str(url or "").strip()
     if not url:
         raise ValueError("url 为空")
     seen = []
+    prev_scheme = None
     for _ in range(5):
         parts = urllib.parse.urlsplit(url)
         if parts.scheme not in ("http", "https"):
             raise ValueError("只支持 http/https")
+        # 重定向只能平级或升级，不能降级：https → http 等于把接下来的
+        # 全部内容交给明文链路，攻击者只要能控制一次跳转就能做到。
+        if prev_scheme == "https" and parts.scheme == "http":
+            raise ValueError("拒绝从 HTTPS 降级到 HTTP 的重定向")
+        prev_scheme = parts.scheme
         if parts.username or parts.password:
             raise ValueError("URL 不能带账号密码")
         if not parts.hostname:
@@ -196,21 +303,21 @@ def fetch_public(url):
         port = parts.port or (443 if parts.scheme == "https" else 80)
         if port not in (80, 443):
             raise ValueError("只允许 80/443 端口")
-        if not _public_host(parts.hostname):
-            raise ValueError("目标不是公网地址：%s" % parts.hostname)
-        req = urllib.request.Request(url, headers={
-            "User-Agent": UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
-        })
-        try:
-            resp = _OPENER.open(req, timeout=FETCH_TIMEOUT)
-            status = resp.status
-        except urllib.error.HTTPError as e:
-            resp = e
-            status = e.code
+        ips = _resolve_public(parts.hostname)
+        status = headers = raw = None
+        last = None
+        # 多 A 记录时按解析顺序试，最多 3 个。全部来自上面那一次解析，
+        # 任何一个都校验过，换 IP 重试不会把校验绕过去。
+        for ip in ips[:3]:
+            try:
+                status, headers, raw = _fetch_once(url, ip)
+                break
+            except Exception as e:
+                last = e
+        if status is None:
+            raise ValueError("抓取失败：%s" % last)
         if status in (301, 302, 303, 307, 308):
-            loc = resp.headers.get("Location")
+            loc = headers.get("Location")
             if not loc:
                 raise ValueError("HTTP %s 但没给 Location" % status)
             url = urllib.parse.urljoin(url, loc)
@@ -218,10 +325,9 @@ def fetch_public(url):
             if len(seen) > 4:
                 raise ValueError("重定向太多")
             continue
-        raw = resp.read(FETCH_MAX + 1)
         if len(raw) > FETCH_MAX:
             raw = raw[:FETCH_MAX]
-        cs = _charset_of(resp.headers, raw)
+        cs = _charset_of(headers, raw)
         try:
             text = raw.decode(cs, "replace")
         except LookupError:
@@ -229,11 +335,221 @@ def fetch_public(url):
         return {
             "status": status,
             "finalUrl": url,
-            "contentType": resp.headers.get("Content-Type", "") or "",
+            "contentType": headers.get("Content-Type", "") or "",
             "text": text,
             "redirects": seen,
         }
     raise ValueError("重定向太多")
+
+
+# ---------------------------------------------------------------- 自我沙箱
+#
+# 目的：把「后端的权限」从「跑它的那个用户的全部权限」缩到「只能发 HTTP 请求」。
+# 就算这个进程被完全控制（某个 0day、某个依赖、或者我们自己写错的代码），
+# 它也读不到 ~/.ssh/id_rsa、.env、浏览器数据，写不了 ~/.bashrc 和启动项。
+# 这层不替代前面的校验：前面的校验决定「谁能进来」，这层决定「进来后能碰什么」。
+#
+# Linux：Landlock（内核 5.13+，且 LSM 列表里要有 landlock）。
+#   模型是「默认拒绝已声明的权限」：我们声明文件读/写/建/删全管，然后只给
+#   系统库、CA 证书、DNS 配置开只读口子，写入只留 /dev/null。
+#   网络权限不声明 = 不受限，出网照常（这正是它的工作）。
+#   不需要 root、不需要改系统配置，普通用户跑起来就是受限的。
+# macOS：seatbelt（sandbox_init）。策略是「禁写、允许读」——macOS 上把读也
+#   关死会连 Python 自己的 stdlib 和 CA 证书一起关掉，收益远小于风险。
+# Windows：没有等价的、无需管理员的按进程文件 ACL 接口（AppContainer 要建
+#   配置文件与 ACL），这里明确不做，只打印一行提示。
+#
+# 全部失败都不致命：环境不支持就退化成「无沙箱」，并在启动横幅里写清楚。
+# --unsafe-no-self-restrict 直接跳过（裸机/容器/兼容性问题时的逃生门）。
+
+ctypes = None  # 延迟导入：只在真的要下沙箱时才付这个代价
+
+LL_EXECUTE = 1 << 0
+LL_WRITE_FILE = 1 << 1
+LL_READ_FILE = 1 << 2
+LL_READ_DIR = 1 << 3
+LL_REMOVE_DIR = 1 << 4
+LL_REMOVE_FILE = 1 << 5
+LL_MAKE_CHAR = 1 << 6
+LL_MAKE_DIR = 1 << 7
+LL_MAKE_REG = 1 << 8
+LL_MAKE_SOCK = 1 << 9
+LL_MAKE_FIFO = 1 << 10
+LL_MAKE_BLOCK = 1 << 11
+LL_MAKE_SYM = 1 << 12
+LL_REFER = 1 << 13      # ABI 2
+LL_TRUNCATE = 1 << 14   # ABI 3
+
+LL_READ = LL_READ_FILE | LL_READ_DIR | LL_EXECUTE
+SYS_LANDLOCK_CREATE_RULESET = 444
+SYS_LANDLOCK_ADD_RULE = 445
+SYS_LANDLOCK_RESTRICT_SELF = 446
+PR_SET_NO_NEW_PRIVS = 38
+
+
+def _libc():
+    global ctypes
+    if ctypes is None:
+        import ctypes as _c
+        ctypes = _c
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.syscall.restype = ctypes.c_long
+        return libc
+    return ctypes.CDLL(None, use_errno=True)
+
+
+class _RulesetAttr(object):
+    """struct landlock_ruleset_attr：两个 u64。ABI<4 时不认第二个字段，size 要变小。"""
+
+    def __init__(self, fs=0, net=0):
+        import ctypes as _c
+        self._buf = _c.create_string_buffer(16)
+        _c.c_uint64.from_buffer(self._buf, 0).value = fs
+        _c.c_uint64.from_buffer(self._buf, 8).value = net
+        self.ptr = _c.cast(self._buf, _c.c_void_p)
+
+
+class _PathBeneath(object):
+    """struct landlock_path_beneath_attr：u64 + s32，packed → 12 字节。"""
+
+    def __init__(self, access, fd):
+        import ctypes as _c
+        self._buf = _c.create_string_buffer(12)
+        _c.c_uint64.from_buffer(self._buf, 0).value = access
+        _c.c_int32.from_buffer(self._buf, 8).value = fd
+        self.ptr = _c.cast(self._buf, _c.c_void_p)
+
+
+def _close_quiet(fd):
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
+def _landlock_abi():
+    libc = _libc()
+    n = libc.syscall(SYS_LANDLOCK_CREATE_RULESET, None, 0, 1)
+    return int(n) if n > 0 else 0
+
+
+def _sandbox_rules():
+    """白名单：只给「跑起来真会用到」的东西开口子。
+
+    读：python 自己的 stdlib / 扩展模块、动态库、CA 证书、DNS 与 hosts 配置、
+        时区、随机源。
+    写：只有 /dev/null。
+    其它一律没有——包括 /tmp（真需要临时文件的功能就不该在服务端做）。
+    """
+    roots = ["/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/opt",
+             sys.prefix, sys.base_prefix,
+             "/etc/ssl", "/etc/pki", "/etc/ca-certificates", "/etc/crypto-policies",
+             "/proc/self", "/sys/devices/system/cpu"]
+    files = ["/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/gai.conf",
+             "/etc/localtime", "/etc/ld.so.cache", "/dev/urandom", "/dev/random",
+             "/dev/zero"]
+    rules = [(p, LL_READ) for p in roots]
+    rules += [(p, LL_READ_FILE) for p in files]
+    rules.append(("/dev/null", LL_READ_FILE | LL_WRITE_FILE))
+    return rules
+
+
+def _apply_landlock():
+    abi = _landlock_abi()
+    if abi <= 0:
+        return False, "内核未启用 Landlock（需要 5.13+，且 lsm 里有 landlock）"
+    libc = _libc()
+    handled = ((1 << 13) - 1)          # ABI 1 的 13 项文件权限
+    if abi >= 2:
+        handled |= LL_REFER
+    if abi >= 3:
+        handled |= LL_TRUNCATE
+    attr = _RulesetAttr(handled, 0)
+    size = 16 if abi >= 4 else 8       # 老内核不认 handled_access_net
+    fd = libc.syscall(SYS_LANDLOCK_CREATE_RULESET, attr.ptr, size, 0)
+    if fd < 0:
+        return False, "创建规则集失败（errno %d）" % ctypes.get_errno()
+    added = 0
+    for path, rights in _sandbox_rules():
+        try:
+            pfd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+        except OSError:
+            continue                    # 这台机器上没有这个路径，跳过
+        try:
+            rule = _PathBeneath(rights & handled, pfd)
+            if libc.syscall(SYS_LANDLOCK_ADD_RULE, fd, 1, rule.ptr, 0) == 0:
+                added += 1
+        finally:
+            os.close(pfd)
+    # no_new_privs：没有它 restrict_self 会被拒（非 root 时）
+    libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+    if libc.syscall(SYS_LANDLOCK_RESTRICT_SELF, fd, 0) != 0:
+        e = ctypes.get_errno()
+        _close_quiet(fd)
+        return False, "restrict_self 失败（errno %d）" % e
+    _close_quiet(fd)
+    return True, "landlock abi=%d · 只读白名单 %d 项 · 可写仅 /dev/null" % (abi, added)
+
+
+_SEATBELT_PROFILE = """(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr")
+                   (subpath "/dev/fd") (subpath "/private/var/folders"))
+"""
+
+
+def _apply_seatbelt():
+    libc = _libc()
+    try:
+        sandbox_init = libc.sandbox_init
+    except AttributeError:
+        return False, "系统里没有 sandbox_init（新版 macOS 可能已移除）"
+    err = ctypes.c_char_p()
+    rc = sandbox_init(_SEATBELT_PROFILE.encode(), ctypes.c_uint64(0), ctypes.byref(err))
+    if rc != 0:
+        msg = (err.value or b"").decode("utf-8", "replace")
+        return False, "seatbelt 拒绝加载策略：%s" % msg
+    return True, "seatbelt · 禁止写文件（读不限）"
+
+
+def apply_sandbox(enabled=True):
+    """给当前进程套上平台沙箱。返回 (是否成功, 说明)。"""
+    if not enabled:
+        return False, "已跳过（--unsafe-no-self-restrict）"
+    try:
+        if sys.platform.startswith("linux"):
+            return _apply_landlock()
+        if sys.platform == "darwin":
+            return _apply_seatbelt()
+        if sys.platform.startswith("win"):
+            return False, "Windows 没有无需管理员的按进程文件 ACL 接口，未启用"
+        return False, "未知平台 %s，未启用" % sys.platform
+    except Exception as e:
+        return False, "启用失败：%s" % e
+
+
+def sandbox_selftest():
+    """套上之后立刻验一遍：该拒的确实拒了，而不是「我以为拒了」。"""
+    out = []
+    try:
+        with open("/etc/passwd", "rb") as f:
+            f.read(1)
+        out.append(("读 /etc/passwd", "仍可读"))
+    except OSError:
+        out.append(("读 /etc/passwd", "已拒"))
+    probe = "/tmp/.ht-sandbox-probe-%d" % os.getpid()
+    try:
+        with open(probe, "wb") as f:
+            f.write(b"x")
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+        out.append(("写 /tmp", "仍可写"))
+    except OSError:
+        out.append(("写 /tmp", "已拒"))
+    return out
 
 
 # ------------------------------------------------------------------ OpenAI / custom
@@ -569,7 +885,8 @@ class Server(ThreadingHTTPServer):
     # 而 64 太少——自测里 100 个半开连接就能把槽位占满，让正常请求吃 503。
     max_workers = 128
 
-    def __init__(self, *a, chat_bucket=None, fetch_bucket=None, routes=None, **kw):
+    def __init__(self, *a, chat_bucket=None, fetch_bucket=None, routes=None, index=None,
+                 index_mtime=0, **kw):
         super().__init__(*a, **kw)
         self._slots = threading.BoundedSemaphore(self.max_workers)
         self.saturated = 0
@@ -578,7 +895,13 @@ class Server(ThreadingHTTPServer):
         self.fetch_bucket = fetch_bucket
         # 启用的路由白名单。不在里面的路径——无论是被 --no-* 关掉的，
         # 还是压根不存在——都走同一个 403，探不出区别。
+        # frozenset 不可变：运行期没有任何代码能往里加一条路由。
         self.routes = frozenset(routes or ())
+        # 静态页在启动时读一次，之后只发内存里这一份（见 load_index）。
+        self.index_raw = index
+        self.index_mtime = index_mtime
+        self.index_etag = ('"' + hashlib.sha256(index).hexdigest()[:20] + '"'
+                           if index else None)
 
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):
@@ -657,6 +980,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
+        # 错误响应一律关连接。原因：429/403/415 都发生在读 body 之前，
+        # 请求体还躺在 socket 里；keep-alive 复用这条连接时，下一轮会把那段
+        # JSON 当成请求行来解析 → "Bad request syntax" → 一个莫名其妙的 400。
+        # 关掉连接，未读的字节跟着 socket 一起消失。
+        if status >= 400:
+            self.close_connection = True
+            self.send_header("Connection", "close")
         self.end_headers()
         try:
             self.wfile.write(raw)
@@ -727,21 +1057,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def serve_index(self):
-        """把同目录的 index.html 原样返回。
-        这样「傻瓜式」：启动后端，浏览器打开 http://127.0.0.1:8787/ 就是应用本体，
-        不需要再另开一个静态服务器。"""
-        path = os.path.join(ROOT, "index.html")
-        try:
-            with open(path, "rb") as f:
-                raw = f.read()
-        except Exception:
+        """发启动时读进内存的那一份。
+
+        为什么不在每个请求里 open()：路径上的东西可以被换掉（软链、重命名、
+        bind mount），"先看路径再打开" 天然有两步。启动时用 O_NOFOLLOW 打开、
+        fstat 确认是普通文件、一次读完，之后只发这个 bytes 对象——请求阶段的
+        磁盘状态与响应内容彻底解耦，改文件不会影响已启动的实例（重启才生效）。
+        """
+        raw = self.server.index_raw
+        etag = self.server.index_etag
+        if raw is None:
             self.reply(404, {"error": {"message": "找不到 index.html（把它和本脚本放在同一目录）", "type": "not_found"}})
             return
         # index.html 是把全部代码内联进去的单文件，七百多 KB。
         # 以前发 no-store，每刷新一次就重下整包；改成协商缓存——
         # 内容没变走 304（只回一个头），改了才重发。no-cache 不是「不缓存」，
         # 是「每次用之前问我一句」，正好适合这种一改就要立刻生效的单页。
-        etag = '"' + hashlib.sha256(raw).hexdigest()[:20] + '"'
         inm = self.headers.get("If-None-Match", "")
         if inm and etag in [x.strip() for x in inm.split(",")]:
             self.send_response(304)
@@ -756,7 +1087,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("ETag", etag)
-        self.send_header("Last-Modified", self.date_time_string(int(os.path.getmtime(path))))
+        # 用快照时的 mtime，不是现在的（文件可能已经被改过，但发出去的不是它）
+        self.send_header("Last-Modified", self.date_time_string(int(self.server.index_mtime)))
         self.end_headers()
         self.wfile.write(raw)
 
@@ -868,6 +1200,33 @@ class Handler(BaseHTTPRequestHandler):
                          % (time.strftime("%H:%M:%S"), provider, status, (time.time() - started) * 1000))
 
 
+def load_index():
+    """启动时把 index.html 读成一份不可变快照。
+
+    这里用「先打开、再验 fd」而不是「先 stat 路径、再 open 路径」：后者是两步，
+    中间那个名字可以被换成软链或别的文件；前者只做一次，验的对象就是即将要读的
+    那个句柄（O_NOFOLLOW 顺带拒掉软链）。
+    """
+    path = os.path.join(ROOT, "index.html")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None, 0
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        parts = []
+        while True:
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            parts.append(chunk)
+        return b"".join(parts), st.st_mtime
+    finally:
+        os.close(fd)
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog="modelserver.py",
@@ -880,6 +1239,10 @@ def main():
                     help="抓网页每分钟上限，0 关闭（默认 %(default)s）")
     ap.add_argument("--no-chat", action="store_true", help="关闭模型请求（/v1/chat/completions）")
     ap.add_argument("--no-fetch", action="store_true", help="关闭网页抓取（/v1/fetch）")
+    ap.add_argument("--unsafe-no-self-restrict", action="store_true",
+                    dest="no_sandbox",
+                    default=os.environ.get("HT_NO_SELF_RESTRICT", "").lower() in ("1", "true", "yes"),
+                    help="跳过平台自沙箱（Landlock/seatbelt）。只在兼容性出问题时用")
     args = ap.parse_args()
 
     # 功能注册表决定路由白名单。将来加功能只改 FEATURES，这里不用动。
@@ -894,11 +1257,15 @@ def main():
     chat_bucket = TokenBucket(args.rpm, burst) if args.rpm > 0 else None
     fetch_bucket = TokenBucket(args.fetch_rpm, burst) if args.fetch_rpm > 0 else None
 
+    # 只在启动时读一次。之后请求阶段不碰磁盘。
+    index, index_mtime = load_index()
+
     srv = Server((HOST, PORT), Handler, chat_bucket=chat_bucket, fetch_bucket=fetch_bucket,
-                 routes=enabled)
+                 routes=enabled, index=index, index_mtime=index_mtime)
     print("hterminal modelserver %s" % VERSION)
     print("  listening  http://%s:%d" % (HOST, PORT))
     print("  features   %s" % " · ".join(sorted(enabled)))
+    print("  index.html %s" % ("%d B（启动时快照）" % len(index) if index else "缺失（/ 会 404）"))
     print("  limits     并发 %d · 排队 %d · 连接超时 %ds"
           % (srv.max_workers, srv.request_queue_size, Handler.timeout))
     def rate_text(path, bucket, rpm):
@@ -909,6 +1276,11 @@ def main():
     print("  rate       chat %s · fetch %s"
           % (rate_text("/v1/chat/completions", chat_bucket, args.rpm),
              rate_text("/v1/fetch", fetch_bucket, args.fetch_rpm)))
+    ok, why = apply_sandbox(not args.no_sandbox)
+    print("  sandbox    %s%s" % ("ON  " if ok else "off ", why))
+    if ok:
+        for what, res in sandbox_selftest():
+            print("             %s：%s" % (what, res))
     print("  providers  openai=%s anthropic=%s responses=%s" % (
         "yes" if OPENAI_KEY else "no", "yes" if ANTHROPIC_KEY else "no", "yes" if OPENAI_KEY else "no"))
     print("  密钥只在环境变量；不保存对话；不执行工具；不写文件。")
