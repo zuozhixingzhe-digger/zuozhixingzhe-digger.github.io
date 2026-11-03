@@ -24,6 +24,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -41,7 +42,7 @@ DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
 DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
-VERSION = "0.0.1.15"
+VERSION = "0.0.1.16"
 # 脚本所在目录：index.html 会从这里读
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -201,6 +202,15 @@ def fetch_public(url):
 
 
 # ------------------------------------------------------------------ OpenAI / custom
+def _reject_const(name):
+    """RFC 8259 不认 NaN / Infinity / -Infinity。
+
+    Python 的 json 默认接受，会原样透传给上游，然后上游返回一个莫名其妙的 4xx，
+    看起来像「模型服务坏了」。在入口就当非法 JSON 拒掉（自测 C14）。
+    """
+    raise ValueError("不支持的 JSON 常量：%s" % name)
+
+
 def do_openai(body, base, key):
     url = join_url(base, "/chat/completions")
     payload = dict(body)
@@ -466,12 +476,70 @@ def origin_allowed(origin):
         return False
 
 
+class Server(ThreadingHTTPServer):
+    """带并发上限的本地服务。
+
+    ThreadingHTTPServer 是「来一个连接起一个线程」，既没有上限也没有超时。
+    自测实测：100 个连上不说话的连接 = 100 个常驻线程，一直不释放（slowloris）；
+    默认 request_queue_size 只有 5，20 并发就触发 SYN 重传（1 秒起延迟），
+    200 并发开始出现超时。这里补三样：
+
+      - request_queue_size = 128    排队能力，不再是 5
+      - BoundedSemaphore(128)       第 129 个并发直接 503，不再无限起线程
+      - Handler.timeout = 15        慢速头 / 慢速体最多占 15 秒
+    """
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 128
+    # 128 而不是 64：一次浏览器对同源最多开 6 条连接，128 已经远超正常用量；
+    # 而 64 太少——自测里 100 个半开连接就能把槽位占满，让正常请求吃 503。
+    max_workers = 128
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._slots = threading.BoundedSemaphore(self.max_workers)
+        self.saturated = 0
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.saturated += 1
+            try:
+                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\n"
+                                b"Retry-After: 1\r\nContent-Length: 0\r\n"
+                                b"Connection: close\r\n\r\n")
+            except Exception:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hterminal-modelserver/" + VERSION
+    server_version = "hterminal-modelserver"
+    # 不报 Python 版本：`Server: hterminal-modelserver/0.0.1.15 Python/3.11.1`
+    # 等于把「该打哪个 CVE」直接写在响应头里（0.0.1.16 修）。
+    sys_version = ""
+    # 连接级超时。BaseHTTPRequestHandler 在建连后调用 settimeout，
+    # 慢速头 / 慢速体最多占 15 秒；正常请求在等上游时没有 socket 读写，不受影响。
+    timeout = 15
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), (fmt % args)))
+
+    def version_string(self):
+        # 默认是 server_version + " " + sys_version，sys_version 清空后会留一个尾空格
+        return self.server_version
 
     def security_headers(self):
         """每个响应都带。X-Frame-Options / frame-ancestors 是重点：
@@ -510,7 +578,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(raw)
+        try:
+            self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionResetError):
+            # 客户端先断了（关页面、超时取消）。这不是错误，但默认会把
+            # 一整段 traceback 打到 stderr，把真正的异常淹掉。
+            pass
 
     def _deny(self, reason, detail):
         sys.stderr.write("[%s] deny %s: %s\n" % (time.strftime("%H:%M:%S"), reason, detail))
@@ -620,8 +693,11 @@ class Handler(BaseHTTPRequestHandler):
         # "HTerMinaL"，而这里一直拿小写全等比较 —— 结果是自家前端每次都被自己
         # 403（0.0.1.15 修）。这个头的意义只是「必须触发 CORS 预检 + 自证是自家
         # 页面」，不是在验口令，没必要卡大小写。
-        if self.headers.get("X-HTerm-Client", "").strip().lower() != "hterminal":
-            self.reply(403, {"error": {"message": "缺少或错误的 X-HTerm-Client", "type": "forbidden"}})
+        # 重复头必须拒：有的服务器取第一个、有的取最后一个、有的拼成 "a, b"。
+        # 「哪个值说了算」取决于实现，正是头走私的土壤（自测 C15）。
+        clients = self.headers.get_all("X-HTerm-Client") or []
+        if len(clients) != 1 or clients[0].strip().lower() != "hterminal":
+            self.reply(403, {"error": {"message": "缺少、重复或错误的 X-HTerm-Client", "type": "forbidden"}})
             return
         ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
@@ -637,9 +713,16 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, {"error": {"message": "请求体为空或过大", "type": "bad_request"}})
             return
         try:
-            body = json.loads(self.rfile.read(length).decode("utf-8", "replace"))
+            body = json.loads(self.rfile.read(length).decode("utf-8", "replace"),
+                              parse_constant=_reject_const)
         except Exception as e:
             self.reply(400, {"error": {"message": "JSON 解析失败：%s" % e, "type": "bad_request"}})
+            return
+        # 合法 JSON 不等于合法请求体。`[]`、`"x"`、`null`、数字都能通过 json.loads，
+        # 但紧接着的 body.get() 会抛 AttributeError —— 连接被直接掐断、客户端收到空响应、
+        # stderr 打一整段 traceback（自测 C2/C3/C4 复现）。先统一成 400。
+        if not isinstance(body, dict):
+            self.reply(400, {"error": {"message": "请求体必须是 JSON 对象", "type": "bad_request"}})
             return
         if route == "/v1/fetch":
             try:
@@ -652,7 +735,12 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, {"error": {"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})
             return
 
-        provider = (self.headers.get("X-HTerm-Provider") or body.get("provider") or DEFAULT_PROVIDER).lower()
+        raw_provider = self.headers.get("X-HTerm-Provider") or body.get("provider") or DEFAULT_PROVIDER
+        # provider 来自请求体，可能是数字 / 数组。直接 .lower() 会崩（自测 C6/C7）。
+        if not isinstance(raw_provider, str):
+            self.reply(400, {"error": {"message": "provider 必须是字符串", "type": "bad_request"}})
+            return
+        provider = raw_provider.strip().lower()
         started = time.time()
         try:
             if provider in ("openai", "custom"):
@@ -671,10 +759,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
-    srv.daemon_threads = True
+    srv = Server((HOST, PORT), Handler)
     print("hterminal modelserver %s" % VERSION)
     print("  listening  http://%s:%d" % (HOST, PORT))
+    print("  limits     并发 %d · 排队 %d · 连接超时 %ds"
+          % (srv.max_workers, srv.request_queue_size, Handler.timeout))
     print("  providers  openai=%s anthropic=%s responses=%s" % (
         "yes" if OPENAI_KEY else "no", "yes" if ANTHROPIC_KEY else "no", "yes" if OPENAI_KEY else "no"))
     print("  密钥只在环境变量；不保存对话；不执行工具；不写文件。")

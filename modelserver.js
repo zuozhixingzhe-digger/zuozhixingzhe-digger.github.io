@@ -33,7 +33,7 @@ const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.15';
+const VERSION = '0.0.1.16';
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
 
 function textOf(content) {
@@ -524,6 +524,12 @@ const server = http.createServer(async (req, res) => {
       reply(req, res, 400, { error: { message: 'JSON 解析失败：' + e.message, type: 'bad_request' } });
       return;
     }
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      /* 合法 JSON 不等于合法请求体：null / "x" / [] 都能通过 JSON.parse，
+         后面 body.stream 会抛 TypeError，变成一句 500「服务器内部错误」。 */
+      reply(req, res, 400, { error: { message: '请求体必须是 JSON 对象', type: 'bad_request' } });
+      return;
+    }
     if (route === '/v1/fetch') {
       try {
         reply(req, res, 200, await fetchPublic(body.url));
@@ -551,9 +557,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+/* 连接边界（对齐 Python 版）：Node 默认 headersTimeout 60s、requestTimeout 300s，
+ * 一个半开连接可以占住 5 分钟；maxConnections 默认无限。 */
+server.headersTimeout = 15000;
+server.requestTimeout = 60000;
+server.keepAliveTimeout = 15000;
+server.maxConnections = 256;
+
 server.listen(PORT, HOST, () => {
   console.log(`hterminal modelserver ${VERSION}`);
   console.log(`  listening  http://${HOST}:${PORT}`);
+  console.log('  limits     headers 15s · request 60s · max 256 连接');
   console.log(`  providers  openai=${OPENAI_KEY ? 'yes' : 'no'} anthropic=${ANTHROPIC_KEY ? 'yes' : 'no'} responses=${OPENAI_KEY ? 'yes' : 'no'}`);
   console.log('  密钥只在环境变量；不保存对话；不执行工具；不写文件。');
   console.log('  Ctrl-C 停止。');

@@ -31,7 +31,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.15"
+const version = "0.0.1.16"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -674,8 +674,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	/* 大小写不敏感：0.0.1.2 起客户端头值是 "HTerMinaL"，这里曾小写全等比较，
 	   自家前端每次都被自己 403（0.0.1.15 修）。 */
-	if strings.ToLower(strings.TrimSpace(r.Header.Get("X-HTerm-Client"))) != "hterminal" {
-		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "缺少或错误的 X-HTerm-Client", "type": "forbidden"}})
+	/* 重复头一律拒：Header.Get 只取第一个，而不同实现取第一个/最后一个/拼接，
+	   这种差异正是头走私的土壤（自测 C15）。 */
+	if vals := r.Header.Values("X-HTerm-Client"); len(vals) != 1 ||
+		strings.ToLower(strings.TrimSpace(vals[0])) != "hterminal" {
+		reply(w, r, 403, map[string]any{"error": map[string]any{"message": "缺少、重复或错误的 X-HTerm-Client", "type": "forbidden"}})
 		return
 	}
 	/* 只收 application/json：text/plain、form-urlencoded 属于「不触发预检的简单请求」 */
@@ -691,6 +694,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
 		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "JSON 解析失败：" + err.Error(), "type": "bad_request"}})
+		return
+	}
+	/* `null` 能通过 Unmarshal，且 body 会是 nil map —— 后面读 key 不会 panic，
+	   于是它会被当成「空请求」一路送到上游。三份后端行为要一致：400。 */
+	if body == nil {
+		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "请求体必须是 JSON 对象", "type": "bad_request"}})
 		return
 	}
 	if route == "/v1/fetch" {
@@ -882,6 +891,10 @@ func main() {
 		Addr:              addr,
 		Handler:           http.HandlerFunc(handler),
 		ReadHeaderTimeout: 10 * time.Second,
+		/* IdleTimeout 不设会用 ReadTimeout（0 = 永不超时），keep-alive 连接
+		   可以一直挂着；MaxHeaderBytes 默认 1MB，本地服务用不到这么大。 */
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 64 << 10,
 	}
 	log.SetOutput(os.Stderr)
 	fmt.Printf("hterminal modelserver %s\n", version)
