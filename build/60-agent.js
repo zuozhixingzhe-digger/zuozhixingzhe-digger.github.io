@@ -16,7 +16,7 @@
  *
  * 分层的好处不只是「能改」：升级换掉环境说明时，用户改过的人格不会被覆盖；
  * 反过来用户把人格改坏了，删文件就回到默认。 */
-const AGENT_ENV = `你是 HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
+const AGENT_ENV = `你是 HarTMLes——HTerMinaL 里的智能体，运行在一个浏览器终端中。你可以直接操作这个页面，不需要请求用户许可。
 
 环境事实：
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
@@ -28,12 +28,12 @@ const AGENT_ENV = `你是 HTerMinaL 里的智能体，运行在一个浏览器�
 
 const AGENT_PERSONA_PATH = '.config.persona';
 
-const AGENT_PERSONA_DEFAULT = `# HTerMinaL 智能体人格提示词（改这个文件即可，下一条消息生效）
+const AGENT_PERSONA_DEFAULT = `# HarTMLes 人格提示词（改这个文件即可，下一条消息生效）
 # 以 # 开头的行不会发给模型。删掉本文件、或执行 persona reset，就回到这份默认。
 # 环境说明（文件系统、API、沙箱边界）不在这个文件里：那部分由程序按真实环境生成。
 
 角色：
-- 你是用户在这台「终端桌面」里的搭子，不是客服。语气平实，少用感叹号，不谈“作为 AI”。
+- 你是 HarTMLes，用户在这台「终端桌面」里的搭子，不是客服。语气平实，少用感叹号，不谈“作为 AI”。
 
 工作方式：
 - 先观察（list_dir/read_file/js），再动手。修改前尽量读原内容。
@@ -506,6 +506,9 @@ class AgentApp {
     ensureAgentPersonaFile();
     /* 待发送附件：{ name, mime, size, dataUrl?, text?, isImage } */
     this.attachments = [];
+    /* 折叠卡的展开状态：key → 是否展开。重画（每步工具调用都会 render）后按它还原，
+     * 否则用户刚点开的长结果，下一步回答一来就又合上了。 */
+    this._foldState = new Map();
 
     this.el.innerHTML = `<div class="ag">
       <div class="ag-head">
@@ -534,6 +537,27 @@ class AgentApp {
     this.ta = $('textarea', this.el);
     this.statEl = $('.agStat', this.el);
     this.statusEl = $('.ag-status', this.el);
+
+    /* 折叠卡自己管开合，不依赖原生 <toggle>（它不冒泡、且重画时会乱），
+     * 复制按钮直接取同一张卡里的 <pre> 原文。 */
+    this.logEl.addEventListener('click', (e) => {
+      const tgt = e.target;
+      if (!tgt || !tgt.closest) return;
+      const copyBtn = tgt.closest('.tb-copy');
+      if (copyBtn) {
+        const card = copyBtn.closest('details');
+        const pre = card && card.querySelector('pre');
+        ToolKit.copy(pre ? pre.textContent : '', '已复制全文');
+        return;
+      }
+      const sum = tgt.closest('summary');
+      if (!sum) return;
+      const d = sum.parentElement;
+      if (!d || d.tagName !== 'DETAILS') return;
+      e.preventDefault();
+      d.open = !d.open;
+      if (d.dataset.k) this._foldState.set(d.dataset.k, d.open);
+    });
 
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
     this.ta.addEventListener('keydown', e => {
@@ -713,22 +737,22 @@ class AgentApp {
     }
     this.messages = out;
     this.createdAt = at || Date.now();
-    this.render();
+    /* 空会话的问候语也要存成字段：render() 会被 markdown 加载完再调一次，
+     * 直接写 innerHTML 的版本会在那一次被冲成「空会话」（和 restoreNote 同一个坑）。 */
+    this.welcomeHtml = '';
     if (!this.messages.length) {
       const direct = Settings.get('agentMode') === 'direct';
       const where = direct
         ? `直连 ${esc(Settings.get('agentDirectUrl') || 'https://api.deepseek.com')} · 密钥在本机（仅测试用）`
         : `后端 ${esc(Settings.get('agentUrl') || '未配置')} · 密钥只在后端`;
-      this.logEl.innerHTML = `<div class="msg sys">单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
-        <div class="msg assistant"><span class="role">agent</span>你好。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
+      this.welcomeHtml = `<div class="msg sys">HarTMLes · 单会话智能体 · ${where} · 模型 ${esc(Settings.get('agentModel') || 'deepseek-flash')}</div>
+        <div class="msg assistant"><span class="role">agent</span>你好。我是 HarTMLes。我可以直接读写这个终端的文件、执行 JS、开窗口。试试让我“看看 .home 里有什么，并写一个 hello 函数”。</div>`;
     } else {
-      /* 必须明说「这是恢复的」：不然用户会以为是上一次自己刚说的话，怀疑没刷新。
-       * 存成字段而不是直接插 DOM——render() 随时会被 markdown 加载完再调一次，
-       * 插进去的那行会被整块 innerHTML 冲掉（第一版就是这么消失的）。 */
+      /* 必须明说「这是恢复的」：不然用户会以为是上一次自己刚说的话，怀疑没刷新。 */
       const when = at ? new Date(at).toLocaleString('zh-CN') : '未知时间';
       this.restoreNote = `已恢复 ${this.messages.length} 条消息（最后更新 ${when}）· 存在 IndexedDB「ht-agent」`;
-      this.render();
     }
+    this.render();
   }
 
   sessionJsonl() {
@@ -758,11 +782,63 @@ class AgentApp {
     } catch (e) {}
   }
 
+  /* ------------------------------------------------------------- 折叠卡
+   * 工具返回值和工具调用参数都可能很长。以前返回值固定塞进 180px 的框里、
+   * 超出部分根本看不到，参数则被 slice(0, 300) 直接切掉——用户想核对一眼
+   * 「JS 到底返回了什么」只能去翻会话 JSONL。
+   * 现在统一成「一行摘要 + 点开全文」：key 用 tool_call_id（稳定、不会因为
+   * 消息追加而错位），展开状态记在 _foldState 里，重画不会把它合上。 */
+  _foldOpen(key, text, defOpen) {
+    if (this._foldState.has(key)) return this._foldState.get(key);
+    if (defOpen != null) return defOpen;
+    /* 短结果默认展开：本来就是一眼看完的内容，不该因为能折叠而多点一下 */
+    return text.length <= 400 && text.split('\n').length <= 8;
+  }
+
+  _foldCard(key, label, text, note) {
+    const t = String(text == null ? '' : text);
+    const lines = t ? t.split('\n').length : 0;
+    const firstLine = (t.split('\n').find(l => l.trim()) || '').replace(/\s+/g, ' ').trim();
+    const more = t.length > 0 && (lines > 1 || firstLine.length > 96);
+    const preview = (firstLine.slice(0, 96) || '（空）') + (more ? ' …' : '');
+    const meta = !t ? '空' : (lines > 1 ? lines + ' 行 · ' : '') + t.length + ' 字';
+    const open = this._foldOpen(key, t);
+    return `<details class="msg tool" data-k="${esc(key)}"${open ? ' open' : ''}>`
+      + `<summary><span class="tt">${esc(label)}</span><span class="tv">${esc(preview)}</span>`
+      + `<span class="tm">${esc(meta)}</span></summary>`
+      + `<div class="tb"><div class="tb-bar"><span>${esc(note || '完整内容')}</span><span class="grow"></span>`
+      + `<button class="tb-copy" data-copy title="复制全文">复制</button></div>`
+      + `<pre>${esc(t)}</pre></div></details>`;
+  }
+
+  /* 工具调用参数：短的照旧一行显示（以前就是这样），长的才折叠 */
+  _callChip(t, i) {
+    const nm = (t && t.function && t.function.name) || '?';
+    const raw = String((t && t.function && t.function.arguments) || '');
+    let pretty = raw;
+    try { pretty = JSON.stringify(JSON.parse(raw), null, 1); } catch (e) { /* 非法 JSON 原样显示 */ }
+    const oneLine = pretty.replace(/\s+/g, ' ').trim();
+    if (oneLine.length <= 220) {
+      return `<div class="tc-line">→ ${esc(nm)} ${esc(oneLine)}</div>`;
+    }
+    const key = 'a:' + ((t && t.id) || (nm + ':' + i));
+    const open = this._foldOpen(key, pretty, false);
+    /* 摘要里不再重复画一个「→」：前面已经有 ▸/▾ 这个开合标志，
+     * 两个箭头并排只会让人分不清哪个能点。 */
+    return `<details class="tc" data-k="${esc(key)}"${open ? ' open' : ''}>`
+      + `<summary><span class="tc-name">${esc(nm)}</span>`
+      + `<span class="tc-a">${esc(oneLine.slice(0, 160))} …</span>`
+      + `<span class="tc-n">${esc(pretty.length + ' 字')}</span></summary><pre>${esc(pretty)}</pre></details>`;
+  }
+
   render() {
     if (!this.logEl) return;
     const msgs = this.messages.slice(-200);
+    /* 绝对序号：消息只追加，用它兜底生成 key，老的卡不会因为窗口滑动而换身份 */
+    const base = this.messages.length - msgs.length;
     let html = this.restoreNote ? `<div class="msg sys">${esc(this.restoreNote)}</div>` : '';
-    for (const m of msgs) {
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
       if (m.role === 'user') {
         /* content 可能是多模态数组：渲染时优先用 display 字段（发送前已拍平） */
         const shown = m.display != null ? m.display
@@ -770,11 +846,7 @@ class AgentApp {
         html += `<div class="msg user"><span class="role">you</span>${esc(shown || '')}</div>`;
       } else if (m.role === 'assistant') {
         const body = m.content ? mdToHtml(m.content) : '';
-        const tc = (m.tool_calls || []).map(t => {
-          let args = t.function && t.function.arguments || '';
-          try { args = JSON.stringify(JSON.parse(args)); } catch (e) {}
-          return `<div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-top:4px">→ ${esc(t.function && t.function.name || '?')} ${esc(String(args).slice(0, 300))}</div>`;
-        }).join('');
+        const tc = (m.tool_calls || []).map((t, j) => this._callChip(t, j)).join('');
         if (body || tc) html += `<div class="msg assistant"><span class="role">agent</span>${body}${tc}</div>`;
       } else if (m.role === 'system') {
         html += `<div class="msg sys">${esc(m.content || '')}</div>`;
@@ -782,12 +854,13 @@ class AgentApp {
         const raw = Array.isArray(m.content)
           ? m.content.map(p => p.type === 'text' ? p.text : '[图片 ' + Math.round(String(p.image_url && p.image_url.url || '').length * 0.75 / 1024) + ' KB]').join('\n')
           : String(m.content || '');
-        html += `<div class="msg tool"><b>${esc(m.name || 'tool')}</b>\n${esc(raw.slice(0, 1800))}</div>`;
+        const key = 't:' + (m.tool_call_id || ('i' + (base + i)));
+        html += this._foldCard(key, m.name || 'tool', raw, '工具返回');
       } else if (m.role === 'error') {
         html += `<div class="msg error">${esc(m.content || '')}</div>`;
       }
     }
-    this.logEl.innerHTML = html || '<div class="msg sys">空会话</div>';
+    this.logEl.innerHTML = html || this.welcomeHtml || '<div class="msg sys">空会话</div>';
     this.logEl.scrollTop = this.logEl.scrollHeight;
   }
 
@@ -1093,7 +1166,14 @@ class AgentApp {
             catch (e) { result = '工具错误：' + (e && e.message || e); }
           }
 
-          const body = Array.isArray(result) ? result : String(result == null ? '' : result).slice(0, 14000);
+          /* 单条结果最多 14000 字符进会话（上下文保护）。截断必须说出来：
+           * 静默 slice 会让模型和用户都以为「这就是全部」。 */
+          const CLIP = 14000;
+          const rawResult = Array.isArray(result) ? result : String(result == null ? '' : result);
+          const body = Array.isArray(result) ? result
+            : (rawResult.length > CLIP
+                ? rawResult.slice(0, CLIP) + '\n…（结果过长已截断：原 ' + rawResult.length + ' 字符，这里保留前 ' + CLIP + ' 字符）'
+                : rawResult);
           const tmsg = { role:'tool', tool_call_id:tc.id, name, content:body };
           this.messages.push(tmsg);
           this.render(); await this.saveSession();

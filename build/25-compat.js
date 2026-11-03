@@ -1411,6 +1411,24 @@ const COMPAT = (function () {
     return { out: DIM + 'hsl: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
   }, '再进一层 HSL（可嵌套）');
 
+  /* 从 HSL 里开一个新的 JSHeL 窗口。
+   * 语义是**独立会话**：新 worker、新环境、cwd 只是拷贝一份初始值；
+   * 关掉它不影响当前窗口，当前窗口 exit 也不会带走它。
+   * 这不是「子 shell」——子 shell 的 exit 该回父层，而窗口的 exit 是关窗，
+   * 两者混在一起只会让人猜。 */
+  def('jshel', async (a) => {
+    let cwd = IO.getCwd();
+    if (a[0]) {
+      const t = await realPath(a[0]).catch(() => null);
+      const s = t && await IO.call('fs.stat', t).catch(() => null);
+      if (s && s.kind === 'dir') cwd = s.path;
+      else return { code: 1, err: 'jshel: 不是目录: ' + a[0] + '\n' };
+    }
+    const r = await IO.call('shell.open', cwd, true);
+    if (!r) return { code: 1, err: 'jshel: 打开窗口失败\n' };
+    return { out: DIM + 'jshel: 新窗口 ' + (r.cwd || cwd) + '（独立会话，exit 关闭）' + R + '\n' };
+  }, '开一个新的 JSHeL 窗口（cwd 继承当前目录）');
+
   def('exit', async () => {
     if (hslDepth()) {
       const d = HSL.length;

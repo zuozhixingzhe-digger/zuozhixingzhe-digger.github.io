@@ -72,7 +72,7 @@
   <button type="button" data-app="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg>文件<i>⌃⇧F</i></button>
   <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌃⇧E</i></button>
   <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌃⇧P</i></button>
-  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>智能体<i>⌃⇧A</i></button>
+  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>HarTMLes<i>⌃⇧A</i></button>
   <hr>
   <button type="button" data-app="calc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.2"/><path d="M7.5 7h9M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>计算器<i>科学</i></button>
   <button type="button" data-app="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>数据转换<i>编码/哈希</i></button>
@@ -160,7 +160,7 @@
     </section>
 
     <section class="drawer__section">
-      <div class="drawer__title">智能体</div>
+      <div class="drawer__title">智能体 · HarTMLes</div>
       <div class="drawer__row"><span>直连 API</span>
         <label class="sw" title="浏览器直接请求模型服务，跳过本地后端"><input type="checkbox" id="setAgentDirect"><i></i></label>
       </div>
@@ -186,7 +186,7 @@
       <div class="drawer__row"><span>模型</span><input id="setAgentModel" type="text" spellcheck="false" placeholder="deepseek-flash"></div>
       <div class="drawer__row"><span>最大步数</span><input id="setAgentSteps" type="number" min="1" max="120" step="1"></div>
       <div class="drawer__grid">
-        <button class="dbtn primary" id="btnAgentOpen">打开智能体</button>
+        <button class="dbtn primary" id="btnAgentOpen">打开 HarTMLes</button>
         <button class="dbtn" id="btnAgentExport">导出会话 JSONL</button>
         <button class="dbtn" id="btnAgentImport">导入会话 JSONL</button>
         <button class="dbtn danger" id="btnAgentClear">清空会话</button>

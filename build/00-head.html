@@ -755,9 +755,41 @@ body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7ef
 .msg{max-width:94%;font-size:11.8px;line-height:1.6;border-radius:9px;padding:8px 10px;white-space:pre-wrap;word-break:break-word}
 .msg.user{align-self:flex-end;background:rgba(94,234,212,.10);border:1px solid rgba(94,234,212,.20);color:var(--fg)}
 .msg.assistant{align-self:flex-start;background:rgba(127,180,170,.06);border:1px solid var(--line-soft);color:var(--fg-dim)}
-.msg.tool{align-self:stretch;background:rgba(251,191,36,.045);border:1px solid rgba(251,191,36,.16);
-  color:var(--fg-mute);font-family:var(--mono);font-size:10.3px;line-height:1.55;max-height:180px;overflow:auto}
-.msg.tool b{color:var(--amber);font-weight:500}
+/* 工具结果：默认一行摘要，点开看全文。
+ * 旧版是固定 max-height:180px 的框——超出的部分既看不见、也展不开。 */
+.msg.tool{align-self:stretch;padding:0;background:rgba(251,191,36,.045);border:1px solid rgba(251,191,36,.16);
+  color:var(--fg-mute);font-family:var(--mono);font-size:10.3px;line-height:1.55;white-space:normal}
+.msg.tool>summary{display:flex;align-items:baseline;gap:7px;padding:6px 9px;cursor:pointer;outline:none;list-style:none}
+.msg.tool>summary::-webkit-details-marker{display:none}
+.msg.tool>summary::before{content:'▸';flex:0 0 auto;color:var(--amber);font-size:9px;transition:transform .12s}
+.msg.tool[open]>summary::before{transform:rotate(90deg)}
+.msg.tool>summary:hover{background:rgba(251,191,36,.07)}
+.msg.tool>summary .tt{color:var(--amber);font-weight:500;flex:0 0 auto}
+.msg.tool>summary .tv{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg.tool>summary .tm{flex:0 0 auto;font-size:9.5px;opacity:.65}
+.msg.tool .tb{border-top:1px solid rgba(251,191,36,.14);padding:5px 9px 8px}
+.msg.tool .tb-bar{display:flex;align-items:center;gap:6px;font-size:9.5px;opacity:.8;margin-bottom:4px}
+.msg.tool .tb-bar .grow{flex:1}
+.msg.tool .tb-copy{border:1px solid var(--line-soft);background:var(--bg-1);color:var(--fg-mute);
+  border-radius:5px;font-size:9.5px;padding:1px 6px;cursor:pointer;font-family:var(--mono)}
+.msg.tool .tb-copy:hover{color:var(--fg);border-color:var(--border)}
+.msg.tool .tb pre{margin:0;white-space:pre-wrap;word-break:break-word;max-height:52vh;overflow:auto;
+  color:var(--fg);font-size:10.5px;line-height:1.55}
+/* 智能体的工具调用参数：短的照旧一行，长的同样能展开 */
+.msg.assistant .tc{margin-top:4px;font-family:var(--mono);font-size:10px;color:var(--amber);white-space:normal}
+.msg.assistant .tc>summary{display:flex;align-items:baseline;gap:5px;cursor:pointer;outline:none;list-style:none;min-width:0;white-space:nowrap}
+.msg.assistant .tc>summary::-webkit-details-marker{display:none}
+.msg.assistant .tc>summary::before{content:'▸';display:inline-block;font-size:9px;flex:0 0 auto}
+.msg.assistant .tc[open]>summary::before{content:'▾'}
+/* 名字和字数都不能被压缩：文字节点做 flex 子项时会被挤到「一行只剩一个字母」，
+ * 名字必须自己包一层并 flex:0 0 auto。 */
+.msg.assistant .tc .tc-name{flex:0 0 auto;white-space:nowrap}
+.msg.assistant .tc .tc-a{color:var(--fg-mute);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg.assistant .tc .tc-n{color:var(--fg-mute);opacity:.7;font-size:9.5px;flex:0 0 auto;white-space:nowrap}
+.msg.assistant .tc pre{margin:3px 0 0;padding:5px 7px;max-height:38vh;overflow:auto;background:var(--bg-0);
+  border:1px solid var(--line-soft);border-radius:6px;color:var(--fg-dim);font-size:10px;
+  line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.msg.assistant .tc-line{font-family:var(--mono);font-size:10px;color:var(--amber);margin-top:4px}
 .msg.error{align-self:stretch;background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.2);color:var(--red);font-size:10.5px}
 .msg.sys{align-self:center;font-size:10px;color:var(--fg-mute);background:none;border:0;text-align:center}
 .msg .role{display:block;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--fg-mute);margin-bottom:3px;font-family:var(--mono)}

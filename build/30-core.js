@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.10';
+const HT_VERSION = '0.0.1.12';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -327,7 +327,7 @@ const APP_DEFS = [
   { name:'shell', title:'终端', desc:'新的 JS shell 窗口', type:'shell', icon:'▣' },
   { name:'browser', title:'浏览器', desc:'窗口里的真浏览器（iframe）', type:'browser', icon:'◎' },
   { name:'python', title:'Python', desc:'Pyodide 交互式环境', type:'python', icon:'🐍' },
-  { name:'agent', title:'智能体', desc:'轻量 AI harness（需要后端）', type:'agent', icon:'✦' },
+  { name:'agent', title:'HarTMLes', desc:'AI 智能体框架（需要后端）', type:'agent', icon:'✦' },
   { name:'files', title:'文件', desc:'浏览一切皆文件的世界', type:'files', icon:'▤' },
   { name:'editor', title:'编辑器', desc:'查看/编辑文本文件', type:'editor', icon:'✎' },
   /* 工具：沙箱的「日常用得上」那一面。全部自研，不引第三方库。 */
@@ -477,7 +477,7 @@ Copyright (c) 2026 HTerMinaL contributors
   Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
   '.sys.about': { kind:'file', mime:'text/plain', content:`HTerMinaL
-浏览器里的 JS 终端 / 一切皆文件桌面 / 轻量智能体宿主
+浏览器里的 JS 终端 / 一切皆文件桌面 / 智能体宿主 HarTMLes
 
 一个自包含的 index.html，加上三个可选的单文件模型转发后端。
 没有构建步骤，没有账号，没有云端。

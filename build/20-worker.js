@@ -162,6 +162,11 @@ class LineEditor {
   /** 提交完成后重开一行提示符。统一走 redraw，才不会出现两个提示符叠在一起。 */
   reopen() {
     if (this.closed || this.raw) return;
+    /* 先擦掉上一次画的块。正常提交后 _rows 已经是 0（光标停在新行行首），
+     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl 进/出层、
+     * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
+     * 屏幕上出现「.home $ .home $ 」。 */
+    this.erase();
     this.promptStr = this.promptText();
     this.buf = ''; this.cur = 0;
     this._rows = 0; this._curRow = 0;
@@ -227,8 +232,12 @@ class LineEditor {
     this.erase();
 
     /* 整块一次 out：一条 postMessage 画完，避免中间帧闪烁；
-     * 每按键发十来条消息的话，长文本输入会明显卡顿。 */
-    let buf = L.lines.join('\r\n');
+     * 每按键发十来条消息的话，长文本输入会明显卡顿。
+     * 开头的 \r 是保底：erase() 在 _rows=0 时什么都不做（resize 之后坐标系
+     * 已经失效，旧 _rows 不能信），这时光标可能停在行中间，不回车就会
+     * 把新提示符**追加**在旧内容后面——实测缩放窗口后变成
+     * 「.home> abc.home> abc」。 */
+    let buf = '\r' + L.lines.join('\r\n');
     const back = L.lines.length - 1 - L.curRow;
     if (back > 0) buf += '\x1b[' + back + 'A';
     buf += '\r';
@@ -627,7 +636,10 @@ function fmtRows(rows, long) {
 let shellCtx = null;
 
 const EXIT = Symbol('exit');
-const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','nuke']);
+/* 裸敲这些名字等价于调用：`ls` 和 `ls()` 一样，`jshel` 和 `jshel()` 一样。
+ * 名单要「同类一致」——hsl 能裸敲而 jshel 不能，用户就会以为 jshel 坏了
+ * （它只是把函数本身回显出来，看上去「没有真的打开」）。 */
+const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','jshel','nuke']);
 
 function makeShell(ctx) {
   const state = {
@@ -2075,7 +2087,7 @@ async function bootShell(init) {
 
       const w = Math.max(24, Math.min(72, (api.__state.cols || 80) - 2));
       const rule = '─'.repeat(Math.max(4, w - 9));
-      out('\r\n' + ANSI.cyan + '── agent ' + rule + ANSI.reset + '\r\n');
+      out('\r\n' + ANSI.cyan + '── HarTMLes ' + rule + ANSI.reset + '\r\n');
       out(ANSI.gray + agentWrap('直接输入任务，Enter 发送。:q 退出 · :stop 中断 · :help 命令 · Ctrl+C 中断当前轮 · Ctrl+D 退出', 2, api.__state.cols) + ANSI.reset + '\r\n');
       out(ANSI.cyan + '─'.repeat(w) + ANSI.reset + '\r\n');
       /* 接上历史，并明说接上了——否则刷新后一片空白，用户会以为对话丢了 */
@@ -2284,8 +2296,10 @@ async function bootShell(init) {
     /* 模式切换只改 state.mode + 重画提示符。真实的「第几层」在 COMPAT 的栈里，
      * 这里不存第二份状态——两份状态一定会不同步。 */
     setMode: (m) => { api.__state.mode = m; },
-    /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复 */
-    kick: () => { editor._rows = 0; editor._curRow = 0; editor.reopen(); },
+    /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复。
+     * 这里**不要**手动把 _rows 清零——reopen() 靠它判断屏上还有没有旧块，
+     * 清了就擦不掉，于是 hsl 进出层时会出现两个提示符并排。 */
+    kick: () => { editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
   });
@@ -2449,10 +2463,18 @@ self.onmessage = async (ev) => {
     if (ed && ed.raw) { if (ed._onResize) { try { ed._onResize(); } catch (e) {} } }
     else if (ed) {
       /* 尺寸一变，xterm 会把内容 reflow，旧块的坐标全失效。
-       * 不能拿旧 _rows 去上移擦除——那样只会擦错行。 */
+       * 不能拿旧 _rows 去上移擦除——那样只会擦错行。
+       * 但也不能什么都不清就重画：旧提示符还在这一行上，新的一画就变成
+       * 「.home> abc.home> abc」。清掉光标所在这一行再重画，单行输入正好
+       * 对齐；折行的输入最坏留一行残影，也好过两个提示符并排。
+       * 正在等输出（agent 回答、命令执行）时屏上没有输入块，画出来只会插在
+       * 输出中间——那时只归零坐标，等结束时的 reopen() 补提示符。 */
       ed._rows = 0; ed._curRow = 0;
-      ed.promptStr = ed.promptText();
-      ed.redraw();
+      if (!ed.busy) {
+        out('\r\x1b[2K');
+        ed.promptStr = ed.promptText();
+        ed.redraw();
+      }
     }
     return;
   }

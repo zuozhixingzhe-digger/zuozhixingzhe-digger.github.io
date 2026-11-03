@@ -1,11 +1,12 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.10**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.12**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
-再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主。
+再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主——宿主里的那个智能体，
+连同它背后的 harness，叫 **HarTMLes**。
 依赖（xterm / Pyodide / marked / html2canvas）走 CDN，**首次加载后统一进 IndexedDB**，
 之后离线也能开。
 
@@ -80,7 +81,7 @@ readme     welcome
 | 上面浮的窗口 | 终端、浏览器（iframe）、文件管理器、编辑器、Python、智能体 |
 | 文件系统 | 点分隔路径、命名像标识符、**一切皆文件**（函数、设备、进程、权限都是文件） |
 | 内核 | 每个终端窗口一个 Web Worker，真多线程 |
-| 智能体 | 单会话 harness，能直接在当前沙箱执行 JS，不问许可 |
+| 智能体 | **HarTMLes**——单会话 harness，能直接在当前沙箱执行 JS，不问许可 |
 | 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 看图修图 / 链接即状态（见[§15](#15-沙箱里的工具)） |
 
 它**不需要后端**。后端（`modelserver.*`）只用于替你保管 API 密钥，可选。
@@ -361,6 +362,23 @@ ReferenceError: nano is not defined
 **布尔量表达不了「第几层」**，现在每一层是一个栈帧（`{cwd, env}`），
 退栈时 cwd 和环境变量一起恢复——这就是真 shell 里 subshell 的语义。
 
+#### 从里面再开一个：`jshel`
+
+`hsl` 是**同一个窗口里换一层**；`jshel` 是**新开一个窗口**（新 Worker、新会话）。
+
+```text
+.home> jshel          → 开一个新终端窗口，落地 .home
+.home $ jshel         → HSL 里也能开；cwd 继承当前目录
+.home $ jshel .bin    → 指定落地目录
+```
+
+三处入口现在**行为一致**：JSHeL 里裸敲 `jshel`、写 `jshel()`、HSL 里敲 `jshel`，都真的开窗口。
+以前 `AUTO_CALL` 名单里有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来——看上去像「没打开」；
+HSL 里更是压根没有这条命令。
+
+语义是**独立会话**，不是子 shell：两个窗口各有自己的 cwd、环境变量和历史，关掉一个另一个照常；
+窗口里的 `exit` 是关窗，不是退回父层。窗口标题带落地目录（`终端 · .home`），多开时才分得清。
+
 #### 支持的东西（全部自研，不是搬 busybox）
 
 | 能力 | 说明 |
@@ -402,11 +420,11 @@ whoami xargs yes
 #### `fastfetch` / `neofetch`
 
 ```text
-██╗  ██╗████████╗    HTerMinaL 0.0.1.10
+██╗  ██╗████████╗    HTerMinaL 0.0.1.11
 ██║  ██║╚══██╔══╝    ──────────────────────────
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
-██║  ██║   ██║       Kernel     JSHeL 0.0.1.10
+██║  ██║   ██║       Kernel     JSHeL 0.0.1.11
 ╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
 ```
 
@@ -940,7 +958,10 @@ about() / sleep(ms) / uuid() / storage(IDB)
 
 ## 12. AI 智能体
 
-轻量 harness，**不是**框架。它做三件事：拼 prompt、跑工具循环、把会话存下来。
+**HarTMLes** 是这台机器里智能体的名字，也是它背后这层 harness 的名字——同一份东西，两个视角：
+对用户来说它是那个能读写文件、开窗口、执行 JS 的搭子；对代码来说它是 `build/60-agent.js` 里
+的那个循环。它刻意保持轻薄，做三件事：拼 prompt、跑工具循环、把会话存下来。
+它不提供多智能体编排、不做 RAG、不接管你的密钥——那些不属于「一个终端里的搭子」。
 
 - **对话存在 IndexedDB「ht-agent」**（库名独立于文件系统与依赖缓存）：
   `sessions` 一张表存列表，`messages` 一张表按 `sid + seq` 存正文，顺序不靠时钟
@@ -1022,6 +1043,26 @@ persona path                # 只打印文件路径
 输入框支持**多模态**：粘贴/拖入图片会变成缩略图附件，随消息一起发（OpenAI 的 `image_url` 格式）。
 附件在发送前以 base64 存在内存里，不落盘。
 
+### 工具结果：一行摘要，点开看全文
+
+智能体每调一次工具，日志里就多一张卡片。以前它是固定 `max-height:180px` 的框：
+**超过这个高度的部分根本看不到**，也不能展开——用户想核对「`js` 到底返回了什么」，
+只能去翻会话 JSONL；工具调用的参数更直接，`slice(0, 300)` 之后剩下的就没了。
+
+现在返回值统一成 `<details>` 卡片：
+
+- **收起时只有一行**：`▸ js  第一行内容…  40 行 · 671 字`，右侧是行数与字符数
+- **点一下展开全文**，正文用正常前景色（不是灰到看不清的次要色），超过 52vh 在卡片内滚动
+- 右上角「**复制**」把整段原文放进剪贴板
+- **长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`
+- 展开状态按 `tool_call_id` 记在 `_foldState` 里：每步工具调用都会重画日志，
+  不记的话用户刚点开的长结果，下一条回答一到就又合上了
+
+短结果（≤ 400 字符且 ≤ 8 行）**默认展开**，行为与以前一致，不用多点一下。
+
+单条结果进会话仍有 **14000 字符**上限（上下文保护）；超了会在正文末尾写
+「结果过长已截断：原 N 字符」，不再静默切掉——模型和用户都该知道那不是全部。
+
 ### 两种接入方式
 
 | 方式 | 密钥在哪 | 适用 |
@@ -1047,7 +1088,7 @@ DeepSeek 的思考模式默认开启：直连时默认请求 `thinking.type = "d
 JSONL 会话长这样（每行一条）：
 
 ```jsonl
-{"role":"system","content":"你是 HTerMinaL 里的助手……"}
+{"role":"system","content":"你是 HarTMLes……"}
 {"role":"user","content":"看看 .home 里有什么"}
 {"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".home\"}"}}]}
 {"role":"tool","tool_call_id":"c1","content":"[\"welcome\",\"notes.md\"]"}
@@ -1890,6 +1931,24 @@ TUI 输入行原来用相对位移重画（`\r\x1b[2K` + 提示符 + 内容 + `\
 **修法**：`Cache-Control: no-cache` + 内容 `ETag`，没变回 304。刷新传输从 712 KB 降到 0.4 KB。
 教训：`no-store` 是「我不想让浏览器缓存」，不是「我改了要立刻生效」——后者的正确做法是协商缓存。
 
+**50. 提示符重复：`reopen()` 不擦旧块，`redraw()` 又不回行首**
+把窗口从 1400px 拖到 900px，屏幕上变成 `.home> abc.home> abc`——提示符被**追加**了一遍。
+链条有两处：resize 时 xterm 会 reflow，旧 `_rows` 不可信，于是故意归零避免擦错行；
+可 `redraw()` 依赖 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，
+光标停在行中间，新内容就从那里往后写。hsl 切层、agent 退出这类**不换行就切提示符**的路径更直接：
+`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。
+**修法**：`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头做保底；
+resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆不画，等 `reopen()` 补。
+教训：**「擦」和「画」必须是一条链上的两半**——只要有一处路径跳过了擦，画出来就是叠加。
+
+**51. 「打开自己」有一半入口是假的，用户就认为整个功能是坏的**
+`jshel` 是 `shell.open` 的别名，但 `AUTO_CALL` 名单里只有 `hsl` 没有 `jshel`：
+裸敲 `jshel` 只是把函数对象回显出来，看上去「没有真的打开」；HSL 里也没有这条命令，
+想从里面再开一个 JSHeL 无门可走。**修法**：`AUTO_CALL` 加 `jshel`，
+`25-compat.js` 加 `def('jshel')`（可带目录参数），窗口标题带上落地目录。
+教训：**同类命令的入口要么全都能裸敲，要么全都不能**；一半一半时，
+用户不会去读实现，只会认定坏的那个是 bug。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -1947,6 +2006,7 @@ TUI 输入行原来用相对位移重画（`\r\x1b[2K` + 提示符 + 内容 + `\
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |\n| 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
 | 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
 | 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
 | 0.0.1.8 | 2026-11-03 | **系统提示词分层：环境写死，人格交给用户**：①把原来的单块 `AGENT_SYSTEM` 拆成两段——`AGENT_ENV`（文件系统形状、目录约定、Worker/主页面关系、沙箱边界，全部由程序生成）与 `AGENT_PERSONA_DEFAULT`（角色、语气、做事习惯）。环境是事实不是口味，用户改它只会得到一段与真实环境不符的说明；人格则本来就该由用户定。②人格落到 **`.config.persona`**，第一次打开智能体时写入默认值；之后以文件为准，升级换环境说明不会覆盖用户改过的人格，人格改坏了删文件就回默认。③文件里 `#` 开头的整行是注释，`stripPersonaComments()` 在拼 prompt 时剥掉——配置文件能自己解释自己，但解释不能当指令发出去；人格被清空/只剩注释时等价于「只要环境说明」。④`loadAgentPersona()` 带 1.2 秒 TTL 缓存：一轮 run 的多次模型调用共用一份，`callModel()` 每次请求前刷新，**改完下一条消息就生效，不用重启**；`persona set/edit/reset` 走 RPC 后会主动清缓存。⑤新增 CLI **`persona`**：无参看全文、`edit` 开编辑器、`set` / `append` 改、`reset` 回默认、`path` 打印路径，`… \| persona set -` 从管道读长文本。⑥**刻意不进设置面板**：设置页管功能开关，人格是一段持续影响行为的文本，混进去只会把设置页变成难维护的文本编辑器。⑦工具层对 `.config.persona` 只读（`write_file`/`delete_file` 明确报错）——挡的是「智能体顺手改自己的人设」和「一次网页注入长期改掉它」；`js` 绕得过去，所以是软边界。⑧文档 §12 新增「系统提示词：环境写死，人格可改」。 |
@@ -1973,6 +2033,7 @@ TUI 输入行原来用相对位移重画（`\r\x1b[2K` + 提示符 + 内容 + `\
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |\n| 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
 | 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |
 | 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
 | 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
@@ -2053,5 +2114,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.10 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.12 · 桌面就是终端 · 一切皆文件</sub>
 </p>
