@@ -36,7 +36,7 @@ readme     welcome
 2. [三十秒上手](#2-三十秒上手)
 3. [界面：顶栏 / 桌面 / 更多](#3-界面顶栏--桌面--更多)
 4. [快捷键](#4-快捷键)
-5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsl2 规划与风险](#54-hsl2-规划中的可选组件尚未实现)）
+5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsl2：WASM + FreeBSD + v86](#hsl2)）
 6. [文件系统](#6-文件系统)
 7. [一切皆文件](#7-一切皆文件)
 8. [窗口与线程](#8-窗口与线程)
@@ -66,7 +66,7 @@ readme     welcome
 
 **附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子：**移植第三方程序的许可证规则**、
 **`sptm` 挂载要先把五件事想清楚**。另：交互 shell 已由 `hsl` **全量改名 `hsl1`**（`hsl` 不再支持）；
-`hsl2` 是规划中的**可选**组件（WASM + FreeBSD + v86，有许可证风险、默认不加载），见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
+`hsl2` 是**可选**组件（WASM + FreeBSD + v86，有许可证风险、只在主动启动时经 CDN 加载并缓存到 IndexedDB），见 [5.4](#hsl2)。
 
 ---
 
@@ -318,7 +318,7 @@ hsl1()                      // 进 hsl1 交互 shell
 | 窗口 | `winOpen({type,title,url,code})` `spawn(code)` `winList()` `winClose(id)` `agentOpen()` |
 | 系统 | `saveFile(name, body)` `askFile()` `fetchText(url)` `openUrl(url)` `notify(msg)` `perm(name)` `ps()` `kill(pid)` `clear()` `history()` `nuke()` |
 | hsl1 | `hsl1()` 进交互 shell、`hsl1('ls -la')` 跑一行、`hsl1.run(cmd)` 拿 `{code,out,err}` |
-| hsl2 | 规划中的可选组件，`hsl2()` 看规划与风险说明（未实现、未加载，见 [5.4](#54-hsl2-规划中的可选组件尚未实现)） |
+| hsl2 | 可选组件：`hsl2()` 启动 WASM + FreeBSD 12.0（按需下载、IndexedDB 缓存，见 [5.4](#hsl2)）；`hsl2.stop()` / `hsl2.clear()` / `hsl2.status()` |
 
 几个容易误解的点：
 
@@ -334,7 +334,7 @@ hsl1()                      // 进 hsl1 交互 shell
 ### 5.1 hsl1（`build/25-compat.js`）
 
 > **命名变更**：原命令名 `hsl` 已**全量改名为 `hsl1`**，`hsl` 不再支持。
-> 本节正文里的 `HSL` 一律指 hsl1。`hsl2` 是另一回事，见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
+> 本节正文里的 `HSL` 一律指 hsl1。`hsl2` 是另一回事，见 [5.4](#hsl2)。
 
 **hsl1 = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
 
@@ -490,7 +490,7 @@ whoami xargs yes
 > GNU coreutils / busybox / bash 都是 GPL，把它们的 wasm 打进单文件会传染整个发布物，
 > 所以宁可自己重写。第三方清单见 `licenses/`。
 > **hsl2 是另一回事**：它涉及 FreeBSD（有 GPL 相关历史遗留问题），本项目【不分发】其源码或二进制，
-> 详见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
+> 详见 [5.4](#hsl2)。
 
 ### 5.2 内建 TUI 智能体
 
@@ -678,44 +678,67 @@ print()                     // 真的打开打印对话框
 之前这几个被「设计」过：`alert` 变成一条 toast、`confirm` 变成自绘对话框、
 `open` 变成内部浏览器窗口。那是产品行为，不是浏览器行为，全部删掉了。
 
-### 5.4 hsl2：规划中的可选组件（尚未实现）
+### <a id="hsl2"></a> 5.4 hsl2：可选组件（WASM + FreeBSD + v86，风险必读）
 
-> **一句话**：`hsl2` 目前**只有一个占位壳子**——敲 `hsl2()`（JSHeL）或 `hsl2`（hsl1 命令表）
-> 只会打印下面这段规划与风险说明，**不加载、不下载、不实现任何东西**。
-> 真身属于「后面再做一个大动作」，除非明确要求，本项目不会去动它。
+> **一句话**：hsl2 用 WASM 在浏览器里模拟一台 x86 PC，跑**真实的 FreeBSD 12.0 用户态**。
+> 它是**可选的**——不敲 `hsl2()`，页面一个字节都不下载；敲了才开始经 CDN 拉组件，
+> 并缓存进 IndexedDB。FreeBSD 有 GPL 相关历史遗留问题，介意就别用（hsl1 是纯自研 MIT）。
 
-#### 打算做成什么
+#### 它到底是什么
 
-用 **WASM + v86 + FreeBSD**：v86 是一个用 WebAssembly 写的 x86 PC 模拟器，
-在浏览器里跑一个真实的 FreeBSD 用户态，作为**第二代 Linux 风格 shell**（hsl1 之后的一层）。
-它和 hsl1 不是一回事：hsl1 是本项目自研的命令子集（纯 MIT 代码），hsl2 会引入**真正的第三方系统**。
+- **v86**（Simplified BSD / BSD-2-Clause，[许可证原文](licenses/LICENSE.v86.txt)）：用 WebAssembly 写的
+  x86 模拟器，模拟 CPU / IDE / VGA / PS2 等。本项目固定 `0.5.473`，从 jsdelivr 加载。
+- **FreeBSD 12.0 镜像**：v86 官方提供的 2 GB 分块磁盘镜像（1 MB 一块，按需读取）加一个
+  约 16 MB 的 zstd 压缩 state 快照——快照跳过冷启动，直接恢复到已登录的 shell。
+- **BIOS**：SeaBIOS / VGABIOS，从 jsdelivr 的 GitHub CDN 加载。
+- 实现全在 `build/66-hsl2.js`（主线程，需要 DOM 和 WASM）；Worker 里的 `hsl2()` 只发一条
+  RPC 让主线程开窗，组件加载与缓存策略都在主线程那一侧。
+
+它和 hsl1 不是一回事：hsl1 是本项目自研的命令子集（纯 MIT 代码），hsl2 是**第三方操作系统**。
 
 #### ⚠ 风险与合规（请务必先读）
 
 - **FreeBSD 有 GPL 相关的历史遗留问题**：其 base 与工具链历史上包含过 GPL 授权组件
   （早期 GCC / binutils / gdb 等），虽然后续版本逐步清理、替换，但**授权谱系复杂**，
-  不能想当然地当成「纯 BSD」。这也是 GPL 审查里最容易踩坑的一类。
+  不能想当然地当成「纯 BSD」。[FreeBSD COPYRIGHT 原文](licenses/LICENSE.freebsd.txt)只是主许可证声明，
+  **不代表镜像内所有组件的完整许可清单**。本项目不做法律结论，也不替用户判断适用场景。
 - **因此 hsl2 是【可选的】**：你可以完全不用。默认功能（JSHeL / hsl1 / 全部工具）
   不依赖它、不受它影响，不用它一切照常。
-- **本项目【不分发】其源码或二进制**：不把 FreeBSD 镜像、v86 内核、WASM 构建、
-  或任何 GPL 相关二进制**打包进 `index.html`、仓库或发布物**。
-- **用户不启动，就绝不加载**：这是本项目一贯的懒加载特性。组件只在用户**主动启动 hsl2**
-  时才经 **CDN** 拉取，并**缓存到 IndexedDB**（和现有 xterm / Pyodide 依赖同一套依赖缓存机制）。
-  不启动时既不下载、也不占空间，离线也不会莫名其妙多出一个几百 MB 的镜像。
+- **本项目【不分发】其源码或二进制**：不把 FreeBSD 镜像、v86 内核、WASM 构建、BIOS
+  或任何 GPL 相关二进制**打包进 `index.html`、仓库或发布物**。仓库里只有加载它们的
+  JavaScript 代码和两份许可证原文。
+- **用户不启动，就绝不加载**：`index.html` 里没有任何指向这些 CDN 的 `<script>` / `<link>`。
+  只有用户主动执行 `hsl2()`（JSHeL）或 `hsl2`（hsl1 命令）才发出第一个请求。
+- **CDN 加载 + IndexedDB 缓存**：拉下来的资源（引擎 / wasm / BIOS / state / 读过的磁盘分块）
+  全部落进 IndexedDB 的 `ht-hsl2` 库，第二次启动优先读本地，不再走网络；
+  `hsl2.clear()` 可清空。磁盘分块是按需拉取的，不会一次把 2 GB 全下下来。
 
-#### 当前状态与后续待办（真身实现时补齐）
+来源、版本、镜像地址全部写死在 `build/66-hsl2.js` 的 `A` 表里，不经任何中间代理，
+可自行审查或换成自己的镜像。第三方清单与更细的合规说明见
+[`licenses/README.md` 的 hsl2 章节](licenses/README.md#hsl2额外说明风险必读)。
 
-| 项 | 状态 |
-| --- | --- |
-| `hsl2` 命令 / 全局函数占位、风险说明文案 | ✅ 已有（本版） |
-| WASM + v86 + FreeBSD 运行时 | ⛔ 未实现、未加载、未分发 |
-| **第三方许可证**（v86、FreeBSD、WASM 依赖及可能的 GPL 组件，逐一核实并登记） | ⏳ **实现 hsl2 时必须补齐**，写入 `licenses/` 并在 `README` 补专门章节 |
-| `check-licenses.sh` 登记、`licenses/README.md` 清单 | ⏳ 实现时同步补齐 |
-| README 的实现说明 / 风险复核 / 「不分发源码或二进制」声明 | ⏳ 实现时补专门章节 |
+#### 怎么用
 
-> 之所以现在**不**去补这些许可证文件：项目里此刻**没有任何 hsl2 相关组件被引入或分发**，
-> 造一份空的 / 猜的许可证清单只会误导审查。等真身落地、确定了 CDN 来源与版本，
-> 再逐一核实授权、补齐文件，才是对的做法。这也是「后面记得补相关许可证，写 readme」的含义。
+```js
+hsl2()                    // 打开窗口并从 state 快照启动 FreeBSD
+hsl2({ cold: true })      // 跳过快照走冷启动（慢，快照版本不匹配时用）
+hsl2.stop()               // 停止虚拟机（缓存保留）
+hsl2.clear()              // 清空 IndexedDB 缓存
+await hsl2.status()       // { running, cold, cached }
+```
+
+hsl1 命令表里也有 `hsl2`（`hsl2 --cold` 等价冷启动）。窗口打开后**点一下画面再敲键盘**：
+键盘只在 hsl2 窗口聚焦时转发给虚拟机，不抢 hterminal 自己的全局快捷键。普通字符走
+`keyboard_send_text`，回车 / 方向键走 keyCode，Ctrl-C / Ctrl-D / Ctrl-L / Ctrl-Z / Ctrl-A /
+Ctrl-E 走 scancode。窗口顶部有风险提示条，另有「停止 / 重启 / 清缓存」按钮、下载进度和日志。
+
+#### 已知限制（第一版）
+
+- 依赖第三方 CDN 可达；**首次**启动必须联网（有缓存之后可以离线）。
+- state 快照由 v86 官方提供，**可能与特定 v86 版本不兼容**；恢复失败时用 `hsl2({cold:true})`。
+- 2 GB 磁盘按需分块拉取，进系统后某些操作会触发额外下载（同样会进缓存）。
+- 只跑文本模式，鼠标 / 声卡关掉，v86 网卡未接后端（客户机里没有网络）。
+- 模拟的是 32 位 x86（Pentium 级），慢，别拿它干重活。
 
 ## 6. 文件系统
 
@@ -1023,7 +1046,9 @@ agentTui.open() / agentTui.send(t) / agentTui.queue(t) / agentTui.stop() / agent
 hsl1()                      // 进交互式 Linux 风格 shell（可嵌套）
 hsl1('ls -la')              // 跑一行，输出直接进终端
 hsl1.run('cat x')           // 跑一行不打印，返回 { code, out, err }
-hsl2()                      // 打印 hsl2 的规划与风险说明（占位，未实现、未加载）
+hsl2()                      // 启动 WASM + FreeBSD 12.0 窗口（可选组件，按需下载）
+hsl2({cold:true})           // 跳过 state 快照，冷启动
+hsl2.stop() / hsl2.clear() / hsl2.status()
 shell.open(cwd) / shell.here() / shell.cd(p) / shell.exec(line)
 jshel()                     // = shell.open()：在窗口里再开一个 JSHeL，可以无限套
 
@@ -2975,6 +3000,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.24 | 2026-11-04 | **hsl2 真身：WASM + v86 + FreeBSD 12.0（可选组件）**：①新增 `build/66-hsl2.js`——v86 0.5.473 从 jsdelivr 加载，FreeBSD 12.0 的 2 GB 分块盘与 ~16 MB zstd state 快照从 v86 官方镜像 CDN 加载，全部经 **IndexedDB（`ht-hsl2`）缓存**；`XHR.prototype` 上做**按 CDN 前缀生效的拦截**，v86 看到的仍是原始 URL（`.zst` 后缀、1 MB 分块命名不变），解压逻辑不受影响。②**不启动不加载**：`index.html` 里没有任何相关 `<script>` / `<link>`，只有敲 `hsl2()`（JSHeL）或 `hsl2`（hsl1）才发第一个请求；`hsl2()` / `hsl2.stop()` / `hsl2.clear()` / `hsl2.status()` 与 hsl1 的 `hsl2 --cold`。③窗口系统注册 `hsl2` 类型，风险提示条 + 进度 + 日志 + 停止/重启/清缓存；v86 全局键盘监听创建后立刻 `destroy()`，改由窗口聚焦时转发（普通字符 / keyCode / scancode），不抢全局快捷键。④**许可证合规**：补 `licenses/LICENSE.v86.txt`（BSD-2-Clause）与 `licenses/LICENSE.freebsd.txt`（FreeBSD COPYRIGHT），`licenses/README.md` 新增「hsl2：额外说明（风险，必读）」，`check-licenses.sh` 登记 `v86@0.5.473`；README §5.4 由「规划中」整节改写为实现说明 + 风险复核。⑤四条硬约束落实：可选不用、不分发任何源码或二进制、不启动不加载、CDN + IndexedDB。⑥`build.sh` 把 `66-hsl2.js` 拼进产物。 |
 | 0.0.1.23 | 2026-11-04 | **JSHeL 纯 JS 化 + 键盘策略 + hsl1 改名 + 启动微打扰**：①JSHeL 固定提示符 `JSHeL> `、不再显示「当前目录」、删掉 `AUTO_CALL` 白名单——裸敲 `ls` 只求值为函数对象（和浏览器控制台一致），`ls()` 才真正调用。②顶栏删掉 Alt / Shift 只留 Ctrl；原 `Ctrl-Shift-*` 快捷键全改 `Alt-*`；`Ctrl` 全部留给终端（唯一例外 `Ctrl-,`，`Alt-,` 同样支持开关设置）；Alt 组合一律捕获但**直接吞掉**不交给终端，为以后的 Alt 功能预留键位；`Ctrl-Alt` 与 `Ctrl-Shift-C/V` 一律不捕获。③`hsl` 全量改名 `hsl1`（`hsl` 不再支持，颜色空间 HSL 不受影响），`hsl2` 只留壳子并写明 WASM + FreeBSD + v86 的规划与许可证风险，未实现、未加载、未分发任何组件。④启动不再弹模态框，改 toast 微打扰；设置页新增「访问令牌」专门一栏（sessionStorage，留空即清除）。⑤重建 `index.html`，Playwright 无头浏览器 23 项实测全过：提示符、裸命令、键位事件级探测、hsl1 进出、hsl2 占位、令牌存取、无 pageerror、无 WASM 组件请求。 |
 | 0.0.1.22 | 2026-11-04 | **零信任架构四条红线**：①§13 新增总纲「零信任架构：四条设计红线」（谁能请求 / 能请求啥 / 能得到啥信息 / 服务自己能做什么）＋「关于模型切换」（换模型是改参数重启的运维动作，不做运行时自动切换，避免复杂化扩大攻击面）＋「改代码前的自检」5 条，作为后续参照的约束而非功能介绍。②**按第 3 条收敛请求者可见信息**：`/health` 只回 `{"ok":true}`（删 version / service）；chat 路由**出口做白名单**（`minimize_chat` / `minimizeChat`），只放行 `choices[].message` 的必要字段，剥掉上游 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` 与转换函数自造的 `model`——这是真缺口：请求体的 model 虽已覆盖，真实模型名仍会从响应漏回去；错误体只留一句 message；Python 覆盖 `send_response` 不发 `Server` 头；所有拒绝统一回 `REJECTED`，「仅允许本机访问」「Host 只接受…」「需要令牌」等防线描述只进 stderr；内部错误不回显 URL / 异常 / 配置；429 去掉「上限 N 次/分」与 `X-RateLimit-*`，保留 `Retry-After`。三份后端一致，前端状态栏不再拼后端描述。③新增 `pentest-scripts/info_leak.py`（话特别多的假上游，84 项全过）；全量回归 9 套约 298 项全过；修掉 `lan_access.py` L26 依赖旧文案的假失败（并把 `check` 的 bytes 拼接导致的崩溃一并修）与 `file_origin_e2e.py` 自包含。④踩坑 72–73。 |
 | 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |

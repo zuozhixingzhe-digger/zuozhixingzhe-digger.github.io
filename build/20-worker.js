@@ -2313,13 +2313,20 @@ async function bootShell(init) {
   hsl1.run = (cmd) => COMPAT.execLine(String(cmd));
   globalThis.hsl1 = hsl1;
 
-  /* hsl2 —— 只有壳子：打印规划与风险说明，不实现、不加载、不分发任何组件。
-   * 真身（WASM + FreeBSD + v86）属于「后面再做大动作」，除非用户明确要求，否则不动。 */
-  globalThis.hsl2 = () => {
-    out(ANSI.yellow + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + ANSI.reset + '\r\n');
+  /* hsl2 —— WASM + v86 + FreeBSD 12.0 的真实入口（可选组件，用户已明确要求实现）。
+   * 这里只发一条 RPC 让主线程开窗口：v86 需要 DOM / WASM，Worker 里跑不了。
+   * 关键：不敲 hsl2() 就永远不会执行到这里，页面也就永远不会去碰那些 CDN 资源。 */
+  globalThis.hsl2 = (opts) => {
+    out(ANSI.yellow + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + ANSI.reset + '\r\n');
     out(ANSI.gray + COMPAT.hsl2Notice() + ANSI.reset + '\r\n');
+    out(ANSI.gray + '正在打开 hsl2 窗口 …（从现在起才经 CDN 下载组件，并缓存到 IndexedDB）' + ANSI.reset + '\r\n');
+    call('hsl2.open', opts || {}).catch(e =>
+      out(ANSI.red + 'hsl2 启动失败：' + String(e && e.message || e) + ANSI.reset + '\r\n'));
     return undefined;
   };
+  hsl2.stop = () => call('hsl2.stop');
+  hsl2.clear = () => call('hsl2.clear');
+  hsl2.status = () => call('hsl2.status');
 
   COMPAT.attach({
     out: (t) => out(t),

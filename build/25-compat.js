@@ -13,9 +13,9 @@
  * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
  * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
  *
- * hsl2 只有占位壳子（def('hsl2') 打印风险与规划说明），不加载任何组件。
- * WASM + FreeBSD + v86 的真身属于「后面再做大动作」，除非明确要求否则不实现，
- * 也不分发任何源码 / 二进制。
+ * hsl2 是可选组件：def('hsl2') 只在用户主动敲命令时才让主线程加载 WASM + FreeBSD。
+ * 真身是 v86 0.5.473（BSD-2-Clause）+ FreeBSD 12.0，全部经 CDN 按需加载并缓存到
+ * IndexedDB；本项目不分发任何相关源码 / 二进制，许可证原文见 licenses/。
  * ==========================================================================*/
 
 const COMPAT = (function () {
@@ -943,7 +943,7 @@ const COMPAT = (function () {
       line += seg;
     }
     s += line + '\n';
-    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 看规划说明' + R + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 启动可选组件' + R + '\n';
     return { out: s };
   }, '命令表');
 
@@ -1428,13 +1428,11 @@ const COMPAT = (function () {
     return { out: DIM + 'hsl1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
   }, '再进一层 hsl1（可嵌套）');
 
-  /* ---------------------------------------------------------------- hsl2：只有壳子
-   * 用户明确要求：现在「后面再做一个大动作」才用 WASM + FreeBSD + v86 实现 hsl2；
-   * 在此之前只保留这个占位命令，绝不实现、绝不加载、绝不分发任何组件。
-   * 风险必须讲清楚（FreeBSD 的 GPL 历史遗留、可选不用、不分发源码/二进制、
-   * 不启动就不加载、CDN + IndexedDB），见 HSL2_NOTICE。 */
+  /* ---------------------------------------------------------------- hsl2：可选组件
+   * 用户已明确要求实现：WASM + v86 + 真实 FreeBSD 12.0 用户态。
+   * 四条硬约束不变（风险、可选、不分发、不启动不加载），见 HSL2_NOTICE。 */
   const HSL2_NOTICE = [
-    '计划：用 WASM + v86 在浏览器里跑一个真实的 FreeBSD 用户态，作为第二代 Linux 风格 shell。',
+    'hsl2 用 WASM（v86）在浏览器里模拟 x86，跑真实的 FreeBSD 12.0 用户态。',
     '',
     '风险与合规（请务必先读）：',
     '  · FreeBSD 及其工具链有 GPL 相关的历史遗留问题，授权情况复杂；',
@@ -1442,15 +1440,20 @@ const COMPAT = (function () {
     '  · 本项目【不分发】FreeBSD / v86 / WASM 相关的源码或二进制；',
     '  · 组件只在用户【主动启动 hsl2】时才经 CDN 加载，并缓存到 IndexedDB；',
     '    用户不启动，就不会下载、不会加载，也不占用任何空间；',
-    '  · 真正实现时会补齐相关第三方许可证文件，并在 README 写专门章节。',
+    '  · 第三方许可证原文见 licenses/，专门章节见 README §5.4。',
     '',
-    '当前只有这段占位说明。除非明确要求，本项目不会实现或加载 hsl2。'
+    '用法：hsl2() 启动；hsl2({cold:true}) 跳过快照走冷启动；hsl2.stop() 停止；hsl2.clear() 清缓存。'
   ].join('\n');
 
-  def('hsl2', async () => ({
-    out: YELLOW + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + R + '\n'
-       + DIM + HSL2_NOTICE + R + '\n'
-  }), 'hsl2 规划说明（占位，未实现；有许可证风险，可选不用）');
+  def('hsl2', async (a) => {
+    const cold = a.includes('--cold') || a.includes('-c');
+    const r = await IO.call('hsl2.open', cold ? { cold: true } : {}, true);
+    return {
+      out: YELLOW + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + R + '\n'
+         + DIM + HSL2_NOTICE + R + '\n'
+         + DIM + (r && r.reused ? '已复用 hsl2 窗口' : '已打开 hsl2 窗口') + '，组件开始按需下载。' + R + '\n'
+    };
+  }, '启动 hsl2（WASM + FreeBSD + v86，可选组件；有许可证风险，可选不用）');
 
   /* 从 hsl1 里敲 jshel：与 hsl1 对称，回到 JSHeL（弹出这一层），
    * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSL、还多出来一个窗口」的困惑，

@@ -160,6 +160,11 @@ const RPC = {
       case 'agent.reset': return AgentTuiHost.reset();
       /* ---- 嵌套 shell / 截图 ---- */
       case 'shell.open': { const w = WindowManager.open({ type:'shell', cwd:a[0] || undefined, banner:a[1] !== false }); return w ? { id:w.id, cwd:w.cwd || a[0] || '.home' } : null; }
+      /* ---- hsl2：可选组件，只有用户敲了 hsl2() 才会走到这里（才会下载） ---- */
+      case 'hsl2.open': return HSL2.open(a[0] || {});
+      case 'hsl2.stop': HSL2.stop(); return true;
+      case 'hsl2.clear': await HSL2.clearCache(); return true;
+      case 'hsl2.status': return { running:HSL2.running, cold:HSL2.cold, cached:await HSL2.usage() };
       case 'shot.page': return await shot(a[0] || null, a[1] || {});
       case 'shot.window': return await shotWindow(a[0]);
       /* ---- 依赖缓存 ---- */
