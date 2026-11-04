@@ -40,7 +40,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.21"
+const version = "0.0.1.22"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -54,9 +54,9 @@ var (
 	// 否则用户在页面上把 flash 改成 pro，账单就跟着变。
 	serverModel    = envStr("HT_MODEL", "gpt-4o-mini")
 	serverProvider = strings.ToLower(envStr("HT_PROVIDER", envStr("HT_DEFAULT_PROVIDER", "openai")))
-	timeout          = time.Duration(envInt("HT_TIMEOUT", 120)) * time.Second
-	maxBody          = int64(8 * 1024 * 1024)
-	allowedHosts     = map[string]bool{
+	timeout        = time.Duration(envInt("HT_TIMEOUT", 120)) * time.Second
+	maxBody        = int64(8 * 1024 * 1024)
+	allowedHosts   = map[string]bool{
 		fmt.Sprintf("127.0.0.1:%d", port): true,
 		fmt.Sprintf("localhost:%d", port): true,
 		fmt.Sprintf("[::1]:%d", port):     true,
@@ -231,26 +231,85 @@ func joinURL(base, path string) string {
 func upstream(rawURL string, payload any, headers map[string]string) (int, map[string]any) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return 500, map[string]any{"error": map[string]any{"message": "编码请求失败：" + err.Error(), "type": "internal"}}
+		log.Printf("[upstream] 编码请求失败：%v", err)
+		return 500, map[string]any{"error": map[string]any{"message": "服务暂时不可用", "type": "internal"}}
 	}
 	req, err := http.NewRequest(http.MethodPost, rawURL, bytes.NewReader(body))
 	if err != nil {
-		return 500, map[string]any{"error": map[string]any{"message": "构造上游请求失败：" + err.Error(), "type": "internal"}}
+		log.Printf("[upstream] 构造上游请求失败：%v", err)
+		return 500, map[string]any{"error": map[string]any{"message": "服务暂时不可用", "type": "internal"}}
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 502, map[string]any{"error": map[string]any{"message": "连不上上游：" + err.Error(), "type": "upstream_unreachable"}}
+		log.Printf("[upstream] 连不上上游：%v", err)
+		return 502, map[string]any{"error": map[string]any{"message": "连不上上游", "type": "upstream_unreachable"}}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
-		return 502, map[string]any{"error": map[string]any{"message": fmt.Sprintf("上游返回了非 JSON（HTTP %d）", resp.StatusCode), "type": "bad_upstream"}}
+		log.Printf("[upstream] 上游返回非 JSON（HTTP %d）", resp.StatusCode)
+		return 502, map[string]any{"error": map[string]any{"message": "上游返回了非 JSON", "type": "bad_upstream"}}
 	}
 	return resp.StatusCode, data
+}
+
+/* ---------------------------------------------------------------- 响应最小化（0.0.1.22）
+ * 零信任第 3 条：请求者只该拿到「这一问的答案」。上游那套 model / id / created /
+ * object / usage / system_fingerprint 一个都不给，fromAnthropic / fromResponses
+ * 自己造的 model / id / usage 也一并挡掉——统一在路由出口做白名单，不逐个函数删。
+ */
+var chatMessageFields = []string{"content", "reasoning_content", "tool_calls", "function_call", "refusal"}
+
+func minimizeChat(status int, data map[string]any) map[string]any {
+	if data == nil {
+		return map[string]any{"error": map[string]any{"message": "上游响应异常"}}
+	}
+	if status >= 400 || data["error"] != nil {
+		msg := ""
+		switch e := data["error"].(type) {
+		case map[string]any:
+			msg = asStr(e["message"])
+		case string:
+			msg = e
+		}
+		if strings.TrimSpace(msg) == "" {
+			msg = "上游请求失败"
+		}
+		if len(msg) > 2000 {
+			msg = msg[:2000]
+		}
+		return map[string]any{"error": map[string]any{"message": msg}}
+	}
+	choices := []any{}
+	for _, raw := range asSlice(data["choices"]) {
+		c, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		m := asMap(c["message"])
+		msg := map[string]any{"role": "assistant"}
+		if role := asStr(m["role"]); role != "" {
+			msg["role"] = role
+		}
+		for _, k := range chatMessageFields {
+			if v, ok := m[k]; ok {
+				msg[k] = v
+			}
+		}
+		ch := map[string]any{"message": msg}
+		if v, ok := c["index"]; ok {
+			ch["index"] = v
+		}
+		if v, ok := c["finish_reason"]; ok {
+			ch["finish_reason"] = v
+		}
+		choices = append(choices, ch)
+	}
+	return map[string]any{"choices": choices}
 }
 
 /* ---------------------------------------------------------------- OpenAI / custom */
@@ -460,7 +519,7 @@ func doAnthropic(body map[string]any) (int, map[string]any) {
 		if e := asMap(data["error"]); asStr(e["message"]) != "" {
 			msg = asStr(e["message"])
 		}
-		return status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error", "provider": "anthropic"}}
+		return status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}}
 	}
 	return 200, fromAnthropic(data, asStr(payload["model"]))
 }
@@ -604,7 +663,7 @@ func doResponses(body map[string]any) (int, map[string]any) {
 		if e := asMap(data["error"]); asStr(e["message"]) != "" {
 			msg = asStr(e["message"])
 		}
-		return status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error", "provider": "responses"}}
+		return status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}}
 	}
 	return 200, fromResponses(data, asStr(payload["model"]))
 }
@@ -705,7 +764,7 @@ func reply(w http.ResponseWriter, r *http.Request, status int, obj any) {
 
 func deny(w http.ResponseWriter, r *http.Request, reason, detail string) bool {
 	log.Printf("deny %s: %s", reason, detail)
-	reply(w, r, 403, map[string]any{"error": map[string]any{"message": detail, "type": "forbidden"}})
+	reply(w, r, 403, rejectedBody) /* 细节只进日志，不把防线画给探测者 */
 	return false
 }
 
@@ -725,7 +784,7 @@ func localOnly(w http.ResponseWriter, r *http.Request, preflight bool) bool {
 	origin := r.Header.Get("Origin")
 	/* preflight 只用于 OPTIONS：预检由浏览器发，带不了自定义头，这里无从验令牌，
 	   先放行。预检没有副作用，真正拦人的是随后那条带令牌的请求。 */
-	if !originAllowed(origin, tokenOK(r)||preflight) {
+	if !originAllowed(origin, tokenOK(r) || preflight) {
 		if strings.EqualFold(strings.TrimSpace(origin), "null") {
 			return deny(w, r, "origin", "本地文件页面需要访问令牌（见后端启动横幅）")
 		}
@@ -797,12 +856,10 @@ func rateGate(w http.ResponseWriter, r *http.Request, b *tokenBucket, label stri
 	if rejected == 1 || rejected%50 == 0 {
 		log.Printf("429 %s（累计拒绝 %d 次，%d 次/分）", label, rejected, b.rpm)
 	}
-	w.Header().Set("Retry-After", strconv.Itoa(retry))
-	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(b.rpm))
-	w.Header().Set("X-RateLimit-Remaining", "0")
+	w.Header().Set("Retry-After", strconv.Itoa(retry)) /* 上限是服务配置，不外泄 */
 	reply(w, r, http.StatusTooManyRequests, map[string]any{
 		"error": map[string]any{
-			"message": fmt.Sprintf("%s过于频繁（上限 %d 次/分），请 %d 秒后再试", label, b.rpm, retry),
+			"message": fmt.Sprintf("%s过于频繁，请 %d 秒后再试", label, retry),
 			"type":    "rate_limit_error",
 			"code":    "rate_limited",
 		},
@@ -829,7 +886,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			raw := indexRaw
 			if raw == nil {
-				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "找不到 index.html（和本脚本放同一目录）", "type": "not_found"}})
+				reply(w, r, 404, map[string]any{"error": map[string]any{"message": "页面不可用", "type": "not_found"}})
 				return
 			}
 			/* 单文件应用七百多 KB；no-store 让每次刷新重下整包。
@@ -853,9 +910,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			/* 只报「活着」。以前列 providers 明细，等于一份能力清单：
 			   关了哪个功能、有没有配 key，一问便知。前端只用状态码。 */
-			reply(w, r, 200, map[string]any{
-				"ok": true, "service": "hterminal-modelserver", "version": version,
-			})
+			/* 零信任：只回「活着」。版本号 / 程序名 / 功能清单 / 真实模型名一律不给。 */
+			reply(w, r, 200, map[string]any{"ok": true})
 			return
 		}
 		/* 其他 GET 一律拒绝：不做文件服务器，也不列接口清单 */
@@ -899,7 +955,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	var body map[string]any
 	if err := json.Unmarshal(raw, &body); err != nil {
-		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "JSON 解析失败：" + err.Error(), "type": "bad_request"}})
+		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "JSON 解析失败", "type": "bad_request"}})
 		return
 	}
 	/* `null` 能通过 Unmarshal，且 body 会是 nil map —— 后面读 key 不会 panic，
@@ -911,7 +967,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if route == "/v1/fetch" {
 		data, err := fetchPublic(asStr(body["url"]))
 		if err != nil {
-			reply(w, r, 502, map[string]any{"error": map[string]any{"message": "抓取失败：" + err.Error(), "type": "fetch_failed"}})
+			log.Printf("[fetch] 失败：%v", err)
+			reply(w, r, 502, map[string]any{"error": map[string]any{"message": "抓取失败", "type": "fetch_failed"}})
 			return
 		}
 		reply(w, r, 200, data)
@@ -937,9 +994,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case "responses", "response":
 		status, data = doResponses(body)
 	default:
-		status, data = 400, map[string]any{"error": map[string]any{"message": "未知 provider：" + provider, "type": "bad_request"}}
+		log.Printf("[chat] provider 配置无效：%s", provider)
+		status, data = 500, map[string]any{"error": map[string]any{"message": "服务暂时不可用", "type": "server_config_error"}}
 	}
-	reply(w, r, status, data)
+	reply(w, r, status, minimizeChat(status, data))
 	log.Printf("POST /v1/chat/completions provider=%s status=%d %dms", provider, status, time.Since(started).Milliseconds())
 }
 

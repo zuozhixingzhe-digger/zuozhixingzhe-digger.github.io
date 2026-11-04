@@ -5774,7 +5774,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.21';
+const HT_VERSION = '0.0.1.22';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -16308,7 +16308,9 @@ const Drawer = {
         el.style.color = 'var(--red)';
         return;
       }
-      el.textContent = r.ok ? ('在线 · ' + (j.provider || 'ready')) : ('HTTP ' + r.status);
+      /* /health 现在只回 {"ok":true}：版本号、程序名、功能清单、真实模型名
+       * 都不再下发（零信任第 3 条）。这里只显示「在线」，不再拼任何后端描述。 */
+      el.textContent = r.ok ? '在线' : ('HTTP ' + r.status);
       el.style.color = r.ok ? 'var(--green)' : 'var(--amber)';
     } catch (e) {
       el.textContent = '未连接';

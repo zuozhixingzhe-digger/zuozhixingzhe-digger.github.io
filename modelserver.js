@@ -165,7 +165,7 @@ const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.21';
+const VERSION = '0.0.1.22';
 
 /* 启动时把 index.html 读成一份不可变快照。
  *
@@ -253,11 +253,47 @@ async function upstream(url, payload, headers) {
     const raw = await resp.text();
     let data;
     try { data = JSON.parse(raw); }
-    catch (e) { return [502, { error: { message: `上游返回了非 JSON（HTTP ${resp.status}）`, type: 'bad_upstream' } }]; }
+    catch (e) {
+      process.stderr.write(`[upstream] 上游返回非 JSON（HTTP ${resp.status}）\n`);
+      return [502, { error: { message: '上游返回了非 JSON', type: 'bad_upstream' } }];
+    }
     return [resp.status, data];
   } catch (e) {
-    return [502, { error: { message: `连不上上游：${e.message}`, type: 'upstream_unreachable' } }];
+    process.stderr.write(`[upstream] 连不上上游：${e.message}\n`);
+    return [502, { error: { message: '连不上上游', type: 'upstream_unreachable' } }];
   }
+}
+
+/* ---------------------------------------------------------------- 响应最小化（0.0.1.22）
+ * 零信任第 3 条：请求者只该拿到「这一问的答案」。上游那套 model / id / created /
+ * object / usage / system_fingerprint 一个都不给，fromAnthropic / fromResponses
+ * 自己造的 model / id / usage 也一并挡掉——统一在路由出口做白名单，不逐个函数删。
+ */
+const CHAT_MESSAGE_FIELDS = ['content', 'reasoning_content', 'tool_calls', 'function_call', 'refusal'];
+
+function minimizeChat(status, data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { error: { message: '上游响应异常' } };
+  }
+  if (status >= 400 || data.error) {
+    const err = data.error;
+    let msg = (err && typeof err === 'object') ? err.message
+            : (typeof err === 'string' ? err : null);
+    if (typeof msg !== 'string' || !msg.trim()) msg = '上游请求失败';
+    return { error: { message: msg.slice(0, 2000) } };
+  }
+  const choices = [];
+  for (const c of (Array.isArray(data.choices) ? data.choices : [])) {
+    if (!c || typeof c !== 'object') continue;
+    const m = (c.message && typeof c.message === 'object') ? c.message : {};
+    const msg = { role: m.role || 'assistant' };
+    for (const k of CHAT_MESSAGE_FIELDS) if (k in m) msg[k] = m[k];
+    const ch = { message: msg };
+    if ('index' in c) ch.index = c.index;
+    if ('finish_reason' in c) ch.finish_reason = c.finish_reason;
+    choices.push(ch);
+  }
+  return { choices };
 }
 
 /* ---------------------------------------------------------------- OpenAI / custom */
@@ -385,8 +421,8 @@ async function doAnthropic(body) {
   const [status, data] = await upstream(joinUrl(ANTHROPIC_BASE, '/messages'), payload, headers);
   if (status >= 400) {
     const err = data && data.error;
-    const msg = err && err.message ? err.message : JSON.stringify(data).slice(0, 400);
-    return [status, { error: { message: msg || '上游错误', type: 'upstream_error', provider: 'anthropic' } }];
+    const msg = err && err.message ? err.message : null;
+    return [status, { error: { message: msg || '上游错误', type: 'upstream_error' } }];
   }
   return [200, fromAnthropic(data, payload.model)];
 }
@@ -475,8 +511,8 @@ async function doResponses(body) {
   const [status, data] = await upstream(joinUrl(OPENAI_BASE, '/responses'), payload, headers);
   if (status >= 400) {
     const err = data && data.error;
-    const msg = err && err.message ? err.message : JSON.stringify(data).slice(0, 400);
-    return [status, { error: { message: msg || '上游错误', type: 'upstream_error', provider: 'responses' } }];
+    const msg = err && err.message ? err.message : null;
+    return [status, { error: { message: msg || '上游错误', type: 'upstream_error' } }];
   }
   return [200, fromResponses(data, payload.model)];
 }
@@ -727,21 +763,17 @@ function rateGate(bucket, label, req, res) {
   }
   reply(req, res, 429, {
     error: {
-      message: `${label}过于频繁（上限 ${bucket.rpm} 次/分），请 ${retry} 秒后再试`,
+      message: `${label}过于频繁，请 ${retry} 秒后再试`,
       type: 'rate_limit_error',
       code: 'rate_limited'
     }
-  }, {
-    'Retry-After': String(retry),
-    'X-RateLimit-Limit': String(bucket.rpm),
-    'X-RateLimit-Remaining': '0'
-  });
+  }, { 'Retry-After': String(retry) });   /* 上限是服务配置，不外泄 */
   return false;
 }
 
 function deny(req, res, reason, detail) {
   process.stderr.write(`[${new Date().toISOString().slice(11, 19)}] deny ${reason}: ${detail}\n`);
-  reply(req, res, 403, { error: { message: detail, type: 'forbidden' } });
+  reply(req, res, 403, REJECTED);   /* 细节只进 stderr，不把防线画给探测者 */
   return false;
 }
 
@@ -803,7 +835,7 @@ const server = http.createServer(async (req, res) => {
            也影响不到已启动的实例（改文件要重启才生效）。 */
         const raw = INDEX_RAW;
         if (!raw) {
-          reply(req, res, 404, { error: { message: '找不到 index.html（和本脚本放同一目录）', type: 'not_found' } });
+          reply(req, res, 404, { error: { message: '页面不可用', type: 'not_found' } });
           return;
         }
         /* 单文件应用七百多 KB，no-store 会让每次刷新都重下整包。
@@ -827,7 +859,8 @@ const server = http.createServer(async (req, res) => {
       if (reqPath === '/health') {
         /* 只报「活着」。以前列 providers 明细，等于一份能力清单：
            关了哪个功能、有没有配 key，一问便知。前端只用 r.ok。 */
-        reply(req, res, 200, { ok: true, service: 'hterminal-modelserver', version: VERSION });
+        /* 零信任：只回「活着」。版本号 / 程序名 / 功能清单 / 真实模型名一律不给。 */
+        reply(req, res, 200, { ok: true });
         return;
       }
       /* 其他所有 GET 一律拒绝：不做文件服务器，也不列接口清单 */
@@ -876,7 +909,8 @@ const server = http.createServer(async (req, res) => {
       try {
         reply(req, res, 200, await fetchPublic(body.url));
       } catch (e) {
-        reply(req, res, 502, { error: { message: '抓取失败：' + e.message, type: 'fetch_failed' } });
+        process.stderr.write(`[fetch] 失败：${e.message}\n`);
+        reply(req, res, 502, { error: { message: '抓取失败', type: 'fetch_failed' } });
       }
       return;
     }
@@ -895,11 +929,17 @@ const server = http.createServer(async (req, res) => {
     if (provider === 'openai' || provider === 'custom') [status, data] = await doOpenAI(body);
     else if (provider === 'anthropic') [status, data] = await doAnthropic(body);
     else if (provider === 'responses' || provider === 'response') [status, data] = await doResponses(body);
-    else [status, data] = [400, { error: { message: '未知 provider：' + provider, type: 'bad_request' } }];
-    reply(req, res, status, data);
+    else {
+      process.stderr.write(`[chat] provider 配置无效：${provider}\n`);
+      [status, data] = [500, { error: { message: '服务暂时不可用', type: 'server_config_error' } }];
+    }
+    reply(req, res, status, minimizeChat(status, data));
     process.stderr.write(`[${new Date().toTimeString().slice(0, 8)}] POST /v1/chat/completions provider=${provider} status=${status} ${Date.now() - started}ms\n`);
   } catch (e) {
-    if (!res.headersSent) reply(req, res, 500, { error: { message: '服务器内部错误：' + e.message, type: 'internal' } });
+    if (!res.headersSent) {
+      process.stderr.write(`[chat] 内部错误：${e.message}\n`);
+      reply(req, res, 500, { error: { message: '服务暂时不可用', type: 'internal' } });
+    }
     else res.end();
   }
 });

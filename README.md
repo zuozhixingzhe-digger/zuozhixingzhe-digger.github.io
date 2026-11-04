@@ -1161,6 +1161,103 @@ JSONL 会话长这样（每行一条）：
 | `modelserver.js` | `node modelserver.js` | Node 18+（内置 fetch） |
 | `modelserver.go` | `go run modelserver.go` | Go 1.21+ 标准库 |
 
+### 零信任架构：四条设计红线（设计思想 · 后续参照）
+
+> 这一节是**约束**，不是功能介绍。改后端任何一行之前先读它；
+> 想加功能之前先回答「它会不会违反其中一条」。
+
+**定位**：这个进程只负责**搭桥**——把本机页面的请求转成一次对公网的、带密钥的
+HTTP 调用，再把答案带回来。它不是应用服务器，不是网关，不是智能体。
+我们是业余爱好者 + AI 工具，能力和审计能力都有限，所以不追求「功能全」，
+只追求「**能力面削到最小，且每一条边界都能用一条测试钉住**」。
+「零信任」在这里是字面意思：**不信任调用方的身份声明、不信任请求体、
+不信任上游响应，也不信任自己这个进程**——最后一条尤其重要，所以有平台自沙箱
+（见 §13「进程自沙箱」）。
+
+**1. 谁能请求：只有本地，外来网页一律禁止。**
+
+| 调用方 | 能不能 | 凭什么 |
+| --- | --- | --- |
+| 用户自己（浏览器打开 `http://127.0.0.1:8787`） | 能 | 本机页面 |
+| 经过验证的本地页面（带正确令牌的 `file://` 页面） | 能 | 令牌是用户从服务端横幅手工搬过去的 |
+| 未验证身份的本地应用程序（本机 `curl`、任何进程） | **能** | 见下方取舍 |
+| 局域网机器 / 公网网页 / 别的源的页面 | 不能 | 只绑回环 + peer + Host + Origin + Sec-Fetch 四道 |
+| 公网页面里的 sandbox iframe（`Origin: null`） | 不能 | 拿不到带外令牌 |
+
+**「本机任意进程无需任何头就能调用」是刻意的，不是漏的**。它跑在你的用户账户下，
+本来就能读你的文件、开你的浏览器、用你的 key；给它加一道「认证」只是自我安慰，
+反而会诱导人把端口开到网卡上。真正的边界是**物理层**（`listen(127.0.0.1)`），
+不是令牌。因此**故意不提供 `--host` / `--bind`**，也不做登录。
+
+**2. 能请求啥：目前只有网页抓取和 AI 大模型 API。**
+
+路由白名单在启动时冻结成不可变集合，只有 `/`（页面）、`/health`、
+`/v1/chat/completions`、`/v1/fetch` 和 `OPTIONS` 预检；其余一律 403，
+且**被关掉的功能和压根不存在的路径回逐字节相同的响应**——不让人靠差异
+探出「这里本来有个接口」。两个功能可分别关，全关则直接退出、不监听。
+将来加功能，要同时过一遍第 3、4 条。
+
+**3. 请求者能得到啥信息：只有「这一问的答案」，没有关于本服务的任何描述。**
+
+明确**不给**：版本号、后端程序叫什么、有哪些功能 / 有没有配 key、
+服务状态与配置（限流上限、上游是谁）、**请求的到底是哪个模型**、
+上游响应里的 `id` / `usage` / `system_fingerprint` 等指纹。
+
+| 信息 | 给不给 | 怎么保证 |
+| --- | --- | --- |
+| 网页正文 / 模型回复 / 工具调用 / 失败原因 | 给 | 这些是「答案」本身 |
+| `/health` | 只给 `{"ok":true}` | 端口开着藏不住，其余一个字不多给 |
+| 版本号 / 程序名 / 功能清单 | 不给 | 0.0.1.22 起从 `/health` 删除；启动横幅只打在**服务端控制台** |
+| 真实模型名 | 不给 | 请求体的 `model` 由后端覆盖；**响应出口白名单**只放行 `choices[].message` 的几个字段 |
+| 服务配置（限流上限等） | 不给 | 429 只说「等几秒」，不发 `X-RateLimit-*`；错误细节只进 stderr |
+| 防线长什么样 | 不给 | 所有拒绝统一回 `{"error":{"message":"请求不被接受"}}` |
+| `Server` 响应头 | 不发 | Python 覆盖 `send_response` 跳过它 |
+
+上游给的东西**默认是脏的**：`model`、`id`、`usage`、`system_fingerprint`
+会顺带说出「后端接的是谁、用的哪个模型」；`from_anthropic` / `from_responses`
+还会自己造一份 `model` / `id`。所以不是「删掉几个字段」，而是在 chat 路由
+**出口做白名单**——中间谁生成了什么都不重要，只有列在白名单里的字段能出网。
+错误响应同理，只留一句人类可读的 message；**上游 429 的文本要留着**，
+「限流了」是用户排障必需的信息。
+
+**4. 服务自己能做什么：除了「访问公网」，什么都别做。**
+
+| 禁止 | 落地 |
+| --- | --- |
+| 读本地任意文件 | 平台自沙箱（Linux Landlock / macOS seatbelt）锁死文件读写；`index.html` 只在启动时用 `O_NOFOLLOW` + `fstat` 验普通文件读一次成快照，请求阶段不碰磁盘 |
+| 发起任意系统请求 / 执行任意代码 | 不 `eval`、不 `exec`、不调 shell；只发固定形状的 HTTP 请求 |
+| 访问内网服务 | `/v1/fetch` 解析后按 IP 判公网、钉 IP 建连、连上后 `getpeername` 再验对端；只放行 80/443、禁降级、禁 URL 带账号密码 |
+| 负责智能体等复杂逻辑 | 循环、工具分发、会话全在**前端**；后端只做一次转发，无状态、不存对话 |
+
+**系统代理是唯一例外，且只影响「发给固定上游」那条链路**：Python 的 `urllib`
+会读 `HTTP_PROXY` / `HTTPS_PROXY`，把 AI API 请求交给系统代理；网页抓取三份实现
+都绕开代理、直连钉死的公网 IP。用户自己配的代理属于「系统有代理另考虑」，
+但**原则上仍然只访问公网**——代理不能成为「由请求者指定目标」的通道。
+另：Go / Node 版暂未内置进程自沙箱（需按平台拆文件或原生扩展，会破坏
+「单文件后端」约定），横幅里如实写明；这是已知取舍，不要当成已修复。
+
+#### 关于「模型切换」
+
+模型名和调用方式由**后端配置**钉死（`--model` / `--provider` / `HT_MODEL` /
+`HT_PROVIDER`），前端传什么都不算数——这是第 2、3 条的直接结论：
+否则前端（或被提示词注入的页面脚本）能把便宜模型换成贵模型、花你的钱，
+还能从响应里读出真实模型名。
+
+**换模型是运维动作：改参数后重启后端。** 后端**不做**运行时自动换模型、
+多模型轮询、失败降级——那属于第 4 条要避免的复杂逻辑，会扩大攻击面。
+开发 0.0.1.22 时正好撞上过一次上游 429（提示「切换其他模型继续使用」）：
+这类限流是常态，后端的职责是**如实把 429 与等待时间交给前端**（必要信息），
+让用户自己决定等一会儿、还是让运维换个模型；它不替用户做决定，
+也不在错误信息里夹带上游身份。
+
+#### 改代码前的自检
+
+1. 新加的路由，关掉时和不存在时是否**逐字节一致**？
+2. 新加的响应字段，是「答案」还是「关于本服务的描述」？后者一律不发。
+3. 有没有把请求体、请求头、上游响应**整包**往外递？白名单在哪？
+4. 错误信息里有没有 URL、异常、配置值、内部路径？只该出现在 stderr。
+5. 三份实现是否同步？有没有一条测试同时打三份？
+
 ### 配置（环境变量）
 
 ```bash
@@ -1169,8 +1266,10 @@ export OPENAI_API_KEY=sk-...              # OpenAI / 兼容端点
 export OPENAI_BASE_URL=https://api.openai.com/v1
 export ANTHROPIC_API_KEY=sk-ant-...       # Anthropic
 export ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
-export HT_MODEL=gpt-4o-mini               # 默认模型
-export HT_DEFAULT_PROVIDER=openai         # openai | anthropic | responses
+export HT_MODEL=gpt-4o-mini               # 模型名，前端传的 model 一律被忽略（0.0.1.21）
+export HT_PROVIDER=openai                 # 调用方式 openai | custom | anthropic | responses
+                                          # HT_DEFAULT_PROVIDER 是兼容别名
+export HT_FILE_TOKEN=...                  # file:// 页面令牌；不设则每次启动随机生成，打印在横幅
 export HT_TIMEOUT=120
 export HT_RPM=60                          # 模型请求每分钟上限，0 关闭限流
 export HT_BURST=20                        # 允许的瞬时突发次数
@@ -1182,6 +1281,9 @@ export HT_NO_SELF_RESTRICT=1              # 跳过平台自沙箱（等价于 --
 python3 modelserver.py                    # 默认：模型 + 抓网页都开
 python3 modelserver.py --no-fetch         # 只做模型转发
 python3 modelserver.py --rpm 120 --burst 30
+python3 modelserver.py --model deepseek-chat --provider openai  # 换模型/调用方式（运维动作，需重启）
+python3 modelserver.py --file-token my-token   # 固定 file:// 令牌（默认随机，重启就换）
+python3 modelserver.py --no-file-origin   # 完全不接受 file:// 打开的页面
 python3 modelserver.py --no-chat --no-fetch   # 报错退出（exit 2），端口不开
 python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起来时用
 
@@ -1196,7 +1298,7 @@ python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/` `/index.html` | **直接返回同目录下的 `index.html`**，于是 `python3 modelserver.py` 一条命令就能把这个终端跑在 `http://127.0.0.1:8787` |
-| `GET` | `/health` | `{"ok":true,"service":"hterminal-modelserver","version":"…"}`，前端启动后自动探测（0.0.1.22 起收敛为 `{"ok":true}`） |
+| `GET` | `/health` | 只回 `{"ok":true}`，前端启动后用它探活；版本号 / 程序名 / 功能清单一律不给（0.0.1.22） |
 | `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**模型调用只用这一种**；`--no-chat` 可关 |
 | `POST` | `/v1/fetch` | 代抓网页：`{"url":"https://…"}` → `{status, finalUrl, contentType, text}`。**只有后端模式会用到**；`--no-fetch` 可关 |
 | `OPTIONS` | `*` | CORS 预检，返回 204；**必须带 `Origin` 且通过校验**，否则 403 |
@@ -1275,7 +1377,8 @@ POST /v1/chat/completions
 - **第二层是 peer**：应用层再判一次「对端是不是 loopback」。这一层不是为正常启动
   准备的，是为**误操作**准备的——有人图省事把绑定地址改成 `0.0.0.0`，想让手机
   也能打开页面。物理层这时已经挡不住了，peer 校验会把所有非回环请求回
-  `403 仅允许本机访问`（自测 L20/L21 实测：绑 `0.0.0.0` 后从局域网 IP 访问仍是 403）。
+  `403` 统一拒绝体（自测 L25/L26 实测：绑 `0.0.0.0` 后从局域网 IP 访问仍是 403；
+  0.0.1.22 起拒绝原因只写进 stderr，不再回显「仅允许本机访问」）。
 
 **故意不提供 `--host` / `--bind` 参数。** 这个服务的定位是「本机页面的伴生进程」，
 一旦监听在网卡上，同网段任何人都能用你的 key 花钱、借 `/v1/fetch` 读内网，
@@ -1390,17 +1493,18 @@ body 里一个控制字段都没有；`X-Forwarded-For: 8.8.8.8` 也不改变任
 第一轮就撞 429；桶太大，页面脚本 `for` 循环能刷满。实测默认配置下一轮 8 次调用，
 0 个 429。
 
-超限回 429，带 `Retry-After`（秒，向上取整）和两个计数头：
+超限回 429，只带 `Retry-After`（秒，向上取整）：
 
 ```http
 HTTP/1.1 429 Too Many Requests
 Retry-After: 1
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 0
 
-{"error":{"message":"模型请求过于频繁（上限 60 次/分），请 1 秒后再试",
+{"error":{"message":"模型请求过于频繁，请 1 秒后再试",
           "type":"rate_limit_error","code":"rate_limited"}}
 ```
+
+> 0.0.1.22 起不再发 `X-RateLimit-Limit` / `X-RateLimit-Remaining`，文案也不说
+> 「上限多少次/分」——那是服务配置（零信任第 3 条）。只告诉调用方「等多久」。
 
 几个实现上的选择：
 
@@ -1437,8 +1541,8 @@ X-RateLimit-Remaining: 0
 
 两条诚实的边界：
 
-> **端口在监听这件事藏不住。** 关闭的接口可以做到与不存在不可区分，但 TCP 握手成功、
-> `Server: hterminal-modelserver` 这些还在。真要完全不可见，只能不启动。
+> **端口在监听这件事藏不住。** 关闭的接口可以做到与不存在不可区分，但 TCP 握手
+> 成功本身还在（0.0.1.22 起连 `Server` 响应头也不发了）。真要完全不可见，只能不启动。
 >
 > **关掉后端抓取，不等于关掉前端的出网。** 前端 `rawFetch` 还有直连、`r.jina.ai`、
 > `allorigins` 三级降级；`--no-fetch` 关的是「后端替你抓」，浏览器自己发起的请求不受它管。
@@ -1574,6 +1678,37 @@ sandbox    ON  landlock abi=3 · 只读白名单 22 项 · 可写仅 /dev/null
 两道独立成立：钉 IP 让「连错」不发生，验对端让「连错了也进不来」。
 自测方式：本地起一个监听，把它的地址当目标塞进 `_fetch_once`，必须被拒。
 
+### 自测记录：0.0.1.22（零信任 · 请求者能看到什么）
+
+这一轮只问一件事：**把一个「话特别多」的假上游接在后面，请求者能从响应里
+读出多少关于本服务的情报。**
+
+| 项目 | 方法 | 结果 |
+| --- | --- | --- |
+| `/health` | 三份后端各取一次 | 只有 `{"ok":true}`；无 version / service / provider / model / feature |
+| 响应头 | 逐头检查 | 三份都没有 `Server` / `X-Powered-By` |
+| 上游指纹 | 假上游塞满 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` / `service_tier` / `vendor_meta` | 顶层只剩 `choices`；真实模型名与指纹值一个都没出现 |
+| 必要字段 | 同上 | `content` / `reasoning_content` / `tool_calls` / `finish_reason` 全部保留，没有误删 |
+| 上游错误 | 假上游回 429 / 500，body 带 `type` / `code` / `vendor` | 状态码透传；错误体只剩一句 `message` |
+| 拒绝体 | `Origin: http://evil.com` | 403 + 统一 `{"error":{"message":"请求不被接受"}}`，不含「仅允许本机访问」「Host 不被允许」「令牌」 |
+| 关闭 vs 不存在 | `/v1/fetch`（已关）与 `/totally/guess` | 状态码与响应体逐字节一致 |
+| 限流 429 | 单独起 `--rpm 2 --burst 1` 实例连打两次 | 保留 `Retry-After`；无 `X-RateLimit-*`；文案不含上限 |
+| 合计 | `pentest-scripts/info_leak.py` | **84 项全过**（三份各 24 项主测 + 各 4 项限流） |
+
+**同时全量回归**：`info_leak` 84 + `field_trust` 24 + `lan_access` 74 +
+`feature_switch` 27 + `rate_limit` 26 + `pentest_redirect` 8 +
+`file_origin` 48 + `file_origin_e2e` 7 + `sandbox_selftest`，全部通过
+（约 298 项）。`lan_access.py` 的 L26 与 `file_origin_e2e.py` 各修了一处
+「依赖旧文案 / 依赖人工起后端」的测试脆弱性（踩坑 71、73）。
+
+**发现并修掉的真缺口**：`upstream()` 以前把上游 JSON **整包**透传，
+`from_anthropic` / `from_responses` 还会自己造一份 `model` / `id` / `usage`。
+请求体里的 `model` 虽然 0.0.1.21 起已被覆盖，但**真实模型名会从响应里漏回去**——
+等于「不许你指定」只做了一半。改成路由出口白名单之后，这条才闭合。
+另外 `/health` 的 `version` / `service`、Python 的 `Server` 响应头、
+以及拒绝响应里「仅允许本机访问」这类防线描述，都属于踩坑 64 早写过、
+却一直漏网的同类问题。
+
 ### 自测记录：0.0.1.19–0.0.1.20（局域网 / 元数据地址 / 字段信任）
 
 这一轮问三个问题：**同网段能不能碰到这个后端；碰不到的话，能不能骗它替你去碰内网；
@@ -1583,7 +1718,7 @@ sandbox    ON  landlock abi=3 · 只读白名单 22 项 · 可写仅 /dev/null
 | --- | --- | --- |
 | 实际监听地址 | `ss -lntp` 看三份后端 | 只有 `127.0.0.1:PORT`，没有 `0.0.0.0` |
 | 局域网直连 | 从本机非回环地址 `172.24.0.12` 连 8891/8892/8893 | 三份全部 `Connection refused` |
-| 误绑兜底 | 临时把 Python 版 `HOST` 改成 `0.0.0.0` 再起，从 `172.24.0.12` 访问 | `403 仅允许本机访问`（peer 校验生效） |
+| 误绑兜底 | 临时把 Python 版 `HOST` 改成 `0.0.0.0` 再起，从 `172.24.0.12` 访问 | `403` 统一拒绝体（peer 校验生效；0.0.1.22 起不再回显原因） |
 | Host 白名单 | `evil.com:PORT` / `172.24.0.12:PORT` / `127.0.0.1.nip.io:PORT` | 三份全 403 |
 | Origin 白名单 | `http://evil.com` / `null` / `http://172.24.0.12:3000` | 三份全 403 |
 | 抓取内网 | 14 个目标：`127.0.0.1`、`169.254.169.254`、`100.64.0.1`、`198.18.0.1`、`192.168.1.1`、本机 LAN 地址、`[::1]`、`[fd00::1]`、`0.0.0.0`，外加元数据地址的 5 种变形（十进制 / 十六进制 / 八进制 / IPv4-mapped / nip.io） | 三份全 502 `fetch_failed` |
@@ -1621,7 +1756,7 @@ Python 的 `is_global` 与 Node 的显式表本来就拒，只有 Go 漂了。�
 | 降级重定向 | 伪造 `https → http` 跳转 | 拒绝 |
 | 前端六轮真机 | 无头 Chromium + DeepSeek 真 key + `http://127.0.0.1:8787/` | 2.9 / 3.8 / 3.9 / 3.7 / 3.3 / 3.2 s，六轮全对；10 次后端调用全 200；工具 `write_file` / `read_file` / `news` 均生效 |
 | 前端 TUI 路径 | `agent("…")` 打进终端 | 修前：模型只收到 system、回一句自我介绍；修后：0.4 s 正确回复 |
-| 限流交互 | `--rpm 5 --burst 1` | 状态码 `200 → 429 → 429 → 429`（修前是 `200 → 429 → 400 → 429`），界面提示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」 |
+| 限流交互 | `--rpm 5 --burst 1` | 状态码 `200 → 429 → 429 → 429`（修前是 `200 → 429 → 400 → 429`），界面提示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」（0.0.1.22 起不再显示上限，只说等几秒） |
 
 > 本机内核没有启用 Landlock，所以端到端只验证了「退化路径」。调用序列用假 libc 逐参数钉死，
 > 结构体尺寸对齐内核 ABI 定义；真到支持的内核上跑，走的是同一套调用。
@@ -2695,6 +2830,30 @@ Node 版手写了一张 `BlockList`，也拒。三份实现各写一套，只有
 `try/finally` 里只关自己起的那个（复用别人的进程时绝不越权去关）。
 教训：**验收脚本必须自包含**；依赖「人记得先做某一步」的测试，迟早会给出不可信的结论。
 
+**72. 「不许你指定模型」只做了一半：响应会把真实模型名送回去**
+0.0.1.21 把请求体里的 `model` 覆盖成服务端配置，看起来「前端改不动模型」已经成立。
+但 `upstream()` 是 `return status, json.loads(raw)`——上游 JSON **整包**透传，
+里面的 `model: "deepseek-chat-…"` 原样给了前端；`from_anthropic` /
+`from_responses` 更主动，自己造一份 `model` / `id` / `usage`。请求者只要读一次
+响应就知道「后端接的是谁、用的哪个模型」，还能顺手拿到 `system_fingerprint`
+这类厂商指纹。
+**修法**：不在每个转换函数里删字段（迟早漏），在 chat 路由**出口**做白名单：
+只放行 `choices[].message` 的 content / reasoning_content / tool_calls /
+function_call / refusal 加 index / finish_reason，其余一概不发；错误体只留一句
+message。教训：**「输入不可信」和「输出也要收敛」是两件事**；禁止调用方指定
+某个值，不等于可以不给他看这个值。默认拒绝要作用在边界上，不是只作用在入口上。
+
+**73. 改了错误文案，测试里的旧文案会变成假失败，还可能把真失败盖掉**
+0.0.1.22 把拒绝体统一成 `REJECTED`，`lan_access.py` 的 L26 还断言
+`"仅允许本机".encode() in raw`，于是挂了。更糟的是它的 `check()` 在失败分支
+写的是 `"  → " + detail`，而 detail 是 bytes——直接抛 `TypeError`，
+连「哪一项失败」都打印不出来，只剩一段 traceback。
+**修法**：断言改成「403 + 统一拒绝体」这种**结构性**判断，不再匹配中文措辞；
+`check()` 的 detail 统一 `str(detail)`。顺带把 `file_origin_e2e.py` 从
+「依赖人工先起后端」改成自包含（踩坑 71）。
+教训：**测试别断言给人看的文案**；文案会随安全收敛而改，结构不会。
+失败分支自己也不能崩，否则测试失去诊断能力。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -2752,14 +2911,18 @@ Node 版手写了一张 `BlockList`，也拒。三份实现各写一套，只有
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
-| 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |\n| 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |
+| 0.0.1.22 | 2026-11-04 | **零信任架构四条红线**：①§13 新增总纲「零信任架构：四条设计红线」（谁能请求 / 能请求啥 / 能得到啥信息 / 服务自己能做什么）＋「关于模型切换」（换模型是改参数重启的运维动作，不做运行时自动切换，避免复杂化扩大攻击面）＋「改代码前的自检」5 条，作为后续参照的约束而非功能介绍。②**按第 3 条收敛请求者可见信息**：`/health` 只回 `{"ok":true}`（删 version / service）；chat 路由**出口做白名单**（`minimize_chat` / `minimizeChat`），只放行 `choices[].message` 的必要字段，剥掉上游 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` 与转换函数自造的 `model`——这是真缺口：请求体的 model 虽已覆盖，真实模型名仍会从响应漏回去；错误体只留一句 message；Python 覆盖 `send_response` 不发 `Server` 头；所有拒绝统一回 `REJECTED`，「仅允许本机访问」「Host 只接受…」「需要令牌」等防线描述只进 stderr；内部错误不回显 URL / 异常 / 配置；429 去掉「上限 N 次/分」与 `X-RateLimit-*`，保留 `Retry-After`。三份后端一致，前端状态栏不再拼后端描述。③新增 `pentest-scripts/info_leak.py`（话特别多的假上游，84 项全过）；全量回归 9 套约 298 项全过；修掉 `lan_access.py` L26 依赖旧文案的假失败（并把 `check` 的 bytes 拼接导致的崩溃一并修）与 `file_origin_e2e.py` 自包含。④踩坑 72–73。 |
+| 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |
+| 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |
 | 0.0.1.19 | 2026-11-04 | **局域网可达面复查**：①三份后端都只 `listen(127.0.0.1)`，从同网段地址直连一律 `Connection refused`；应用层 peer 校验作为第二道，即使把 `HOST` 误改成 `0.0.0.0`，非回环请求仍回 `403 仅允许本机访问`。②**修掉 Go 版一个真缺口**：`IsGlobalUnicast && !IsPrivate` 把 `100.64.0.0/10`（RFC 6598 CGNAT，Tailscale / ZeroTier 默认网段）当成公网，`/v1/fetch` 可被诱导读整个虚拟内网；改成显式网段表，与 Python `is_global`、Node `BlockList` 对齐，并补 `192.88.99/24`、`2001::/32`、`2001:2::/48`、`2001:10::/28`、`5f00::/8`、`100::/64`。③新增 `pentest-scripts/lan_access.py`：三份各 19 项 + 误绑兜底 2 项，59 项全过。④文档：§13 安全模型补「局域网能不能连」，SSRF 边界补网段清单，踩坑 68。 |
 | 0.0.1.18 | 2026-11-04 | **进程自沙箱 + 原子化改造 + 前端真机六轮**：①**平台沙箱**——Linux 用 Landlock（`ctypes` 直调 `syscall 444/445/446`，零依赖）把后端自己的文件权限收成白名单：读只放系统库 / CA / DNS 配置，写只有 `/dev/null`，网络不声明（出网照常）；macOS 用 seatbelt 禁写；Windows 明确不支持。拿不到就打印原因退化成无沙箱，绝不假装开着。`--unsafe-no-self-restrict` / `HT_NO_SELF_RESTRICT=1` 是逃生门。启动后自检「读 /etc/passwd、写 /tmp」并把结果打进横幅。②**原子化**——`/v1/fetch` 建连后校验**真实对端**（`getpeername` / `RemoteAddr` / `remoteAddress`），不再只信「解析结果」；`index.html` 启动时 `O_NOFOLLOW` + `fstat` 读进内存，请求阶段不碰磁盘；路由白名单冻结成不可变集合；3xx 禁止 `https → http` 降级。③**前端两个真 bug**——`loadSession` 覆盖刚 push 的用户消息（TUI 的 `agent("…")` 必踩，表现为「你说的话没进去，它在自我介绍」）；错误响应不关连接导致 `keep-alive` 下把残留 body 当请求行解析，冒出 HTML 400（`200→429→400→429`）。④**真机验证**——DeepSeek 真 key，无头 Chromium 打 `http://127.0.0.1:8787/`，六轮对话（含 `write_file` / `read_file` / `news` / 上下文回忆 / 算术）全部 2.9–3.9 s 通过，10 次后端调用全 200；TUI 路径从「必失败」修到 0.4 s 正确回复；限流下前端正确显示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」。⑤文档：§13 新增「进程自沙箱」「原子化」，踩坑 65–67。 |
 | 0.0.1.17 | 2026-11-03 | **速率限制 + 功能开关 + 威胁模型写进文档**：①**限流**——按路由分两个令牌桶（模型 60 次/分、抓网页 120 次/分，突发 20），超限回 429 + `Retry-After` + `X-RateLimit-*`。不用固定窗口是因为它在边界会放过两倍突发、空闲期又不攒额度。`burst` 按「一轮任务最多几次模型调用」定（实测一轮 8 次 0 个 429），不按最坏情况定——取小了先被挡住的是自己。失败不扣令牌、`OPTIONS` 不限、日志只报第 1 次和每 50 次。②**功能开关**——`--no-chat` / `--no-fetch` 分别关两条路由；关闭的接口与瞎猜的路径走**同一条分支**，状态码、头、正文逐字节一致（回「功能已关闭」等于承认这里有个接口）。`/health` 同步砍掉 `providers` 能力清单，只回 `ok`。两个都关直接 `exit 2`，端口不开——监听一个只回 403 的端口本身就是情报。判定走 `FEATURES` 表，将来加接口只加一行。③参数支持命令行与环境变量（`--rpm` / `--burst` / `--fetch-rpm`，`HT_RPM` / `HT_BURST` / `HT_FETCH_RPM`），三份后端行为一致。④**文档**——§13 新增「速率限制」「功能开关」「威胁模型：能做什么，做不到什么」（信任域四级、攻击对照表、提示词注入链、误操作清单、三条不打算改的取舍），踩坑 63–64。自测：限流 26 项、开关 27 项，全过。 |
 | 0.0.1.16 | 2026-11-03 | **后端的内部渗透测试：84 项，修掉 8 个问题**。范围只有 `127.0.0.1:8787`，不碰任何第三方，畸形请求全用原始 socket 发。①**并发队列只有 5**（`socketserver` 默认）——20 并发触发 SYN 重传、整批慢 1 秒，200 并发 5 个超时（7.05 s / p95 5428 ms）；改 `request_queue_size = 128` 后 0.06 s / 29 ms。②**半开连接无限占线程**——100 个连上不说话 = 100 个常驻线程，永不释放；加连接级 `timeout = 15` + `BoundedSemaphore(128)` + 超限 503，实测 15.0 s 精确断开、占住期间正常请求 9 ms。③**合法 JSON 但非对象会打崩处理**——`[]`/`"x"`/`null` 过 `json.loads` 后 `body.get()` 抛 `AttributeError`，客户端收空响应、stderr 打 traceback；三份后端统一 400。④**provider 不是字符串就崩**（数字 / 数组），加类型校验。⑤**重复 `X-HTerm-Client` 取第一个**——三种运行时取法不同，是头走私的土壤，统一「多于一个就 403」。⑥**`NaN`/`Infinity` 透传上游**——入口 `parse_constant` 拒。⑦**`Server` 头写着版本 + Python 版本**，改成只留服务名。⑧**客户端提前断开时打 traceback**（`BrokenPipeError`）。验证有效且未改：四重校验、`Origin: null`、路径穿越 9 种、SSRF 29 种（含 `nip.io`、十进制 IP、`[::ffff:127.0.0.1]`）、逐跳 302 白盒校验、3 MB 精确截断。文档：§13 自测记录、踩坑 60–62。 | 
 | 0.0.1.15 | 2026-11-03 | **光标该藏就藏 + 智能体真的能抓新闻 + 四个「维护中」做完**：①**光标滚出画布不隐藏**——`_cursorPlace()` 的越界判断本来是对的（`vRow = cursorY + baseY - viewportY`），但重算只挂在 `onCursorMove` / `term.onScroll` 上；`onScroll` 只在**缓冲区滚动**（新输出把内容顶上去）时触发，用户拖滚动条、滚轮回看历史时 `viewportY` 变了它一声不响。实测 `vp 183→120`、光标行 84（共 22 行），`.ht-cursor` 还亮在最后一行。**修法**：监听 `.xterm-viewport` 的 `scroll`（不挑渲染器），隐藏时 `init=false`，滚回来直接落位、不补动画。②**智能体抓新闻必失败**——三个后端的 `X-HTerm-Client` 还在和小写 `hterminal` 全等比较，而客户端从 0.0.1.2 起就发 `HTerMinaL`，于是**自家前端每次模型调用都被自己 403**（`缺少 X-HTerm-Client`）。改成 `trim().toLowerCase()` 比较。③**抓网页有了真正能走的路**——浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头，`r.jina.ai` / `allorigins` 在国内经常连不上，所谓「三级降级」实际没有一级能通。后端新增 `POST /v1/fetch` 代抓（只允许 http/https、80/443、目标必须解析到公网 IP、逐跳校验重定向、3 MB / 20 s 上限）；`fetch_url` 拿到 HTML / RSS / JSON 统一转正文；新增 **`news` 工具**（今日头条热榜 + 新浪滚动新闻，`count` / `source`），并在 `AGENT_ENV` 里写明「要新闻用 news，别猜 URL」。④**四个「维护中」做完了**（新 `build/59-media.js`）——**录音机**（MediaRecorder + AnalyserNode 实时波形、暂停、计时、设备选择、试听、存 `.home`、关窗收音轨）；**定位**（单次 / `watchPosition`、七项数据、复制 / 存 `.home.geo-json` / 开 OSM）；**3D 视图**（自写 WebGL：环面结 / 立方体 / 球 / 二十面体、轨道相机、自转、线框、fps，不引 three.js）；**音频播放**（WebAudio 解码波形、点击定位、进度 / 音量 / 0.5–2× / 循环、拖入即放）。⑤**顺带修的四个真坑**——`Permissions-Policy: ()` 把自家页面的麦克风与定位也关了（改 `(self)`）；3D 画布用 `getBoundingClientRect()` 量到开窗动画的 `scale` 值，被定成 80×80（改 `clientWidth`）；`[hidden]` 打不过 `.au-drop{display:flex}`；录音落盘名 `rec-….webm` 被点号拆成三层路径（走 `spotEscape`）。⑥**README 新增 §0「接活规则」**——被打断时先记住、手上的活继续做、收尾前逐条核对历史任务，没查过不许说做完。⑦文档：§12 抓新闻与 `/v1/fetch`、§13 接口与 SSRF 边界、§15 工具表、踩坑 54–59。 |
 | 0.0.1.14 | 2026-11-03 | **emoji 后面还是偏：这次是渲染层在改宽度**：①**现象**——`.home> 👨‍👩‍👧‍👦哈哈`，家庭图标后面紧贴「哈哈」，光标却在右边 6 格空地上，后面输入的字也全部左移。②**根因**——xterm 5.5 默认 **DOM 渲染器**，把一行里同属性的字符塞进同一个 `<span>`；浏览器对 span 内的 ZWJ 序列做连字，`👨‍👩‍👧‍👦` 画成一个家庭图标、只占 2 格，而 buffer 仍按「每个 emoji 2 格」推进 8 格。上一版统一了「谁算宽度」，没管「谁按这个宽度画」。③**修法**——加载 `@xterm/addon-canvas`（CDN 双源、可失败），逐格绘制，视觉宽度与 cell 严格一致；拿不到 addon 就留在 DOM 渲染器，功能不受影响。④**副作用与取舍**——家庭 emoji 显示成 4 个并排的人像（xterm 本来就不认 ZWJ cluster），换位置永远对。⑤**顺带**——canvas 的 cell 宽是整数 8px（DOM 是 8.426px 并靠 `letter-spacing` 补），`_cursorPlace` 的列×格宽更干净。⑥文档 §5.2 补「渲染器必须逐格画」、踩坑 53、第三方许可表加 addon-canvas。 |
-| 0.0.1.13 | 2026-11-03 | **光标在 emoji 后面跑偏**：①**现象**——中文正常，一打 emoji 光标就停在文字右边很远的空地上，折行点也比实际更早。②**根因**——Worker 的 `charWidth` 是手写的「哪些区段算 2 列」，渲染层用的是 xterm 的 Unicode 11 表；两份宽度算法在 ZWJ 序列上分家：`🧑‍🦲` 的 ZWJ 被算 1 列（实际 0，偏 1）、`👨‍👩‍👧‍👦` 三个 ZWJ 各算 1 列（偏 3）、`1️⃣` 的 U+20E3 算 1 列（偏 1）、`🏳️‍🌈` 的 U+1F3F3 算 2 列（xterm 算 1，偏 1）。③**修法**——主线程新增 `termWidthTable(term)`：用 `term._core.unicodeService.wcwidth()` 遍历 0–0x10FFFF，导出「宽 2」114 段、「宽 0」333 段（6 KB，约 16 ms），随 `init` 消息的 `wc` 字段发给 Worker；`charWidth` 有表就二分查表，没表才退回启发式（兜底补了 ZWJ / VS16 / U+20E3）。④**效果**——15 组 emoji 的 `cursorX - 文本结束列` 全部为 0；47 列窄窗里折两行，Home/End/退格位置正确。⑤文档 §5.2 宽度段落改写、踩坑 52。 |\n| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |\n| 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
+| 0.0.1.13 | 2026-11-03 | **光标在 emoji 后面跑偏**：①**现象**——中文正常，一打 emoji 光标就停在文字右边很远的空地上，折行点也比实际更早。②**根因**——Worker 的 `charWidth` 是手写的「哪些区段算 2 列」，渲染层用的是 xterm 的 Unicode 11 表；两份宽度算法在 ZWJ 序列上分家：`🧑‍🦲` 的 ZWJ 被算 1 列（实际 0，偏 1）、`👨‍👩‍👧‍👦` 三个 ZWJ 各算 1 列（偏 3）、`1️⃣` 的 U+20E3 算 1 列（偏 1）、`🏳️‍🌈` 的 U+1F3F3 算 2 列（xterm 算 1，偏 1）。③**修法**——主线程新增 `termWidthTable(term)`：用 `term._core.unicodeService.wcwidth()` 遍历 0–0x10FFFF，导出「宽 2」114 段、「宽 0」333 段（6 KB，约 16 ms），随 `init` 消息的 `wc` 字段发给 Worker；`charWidth` 有表就二分查表，没表才退回启发式（兜底补了 ZWJ / VS16 / U+20E3）。④**效果**——15 组 emoji 的 `cursorX - 文本结束列` 全部为 0；47 列窄窗里折两行，Home/End/退格位置正确。⑤文档 §5.2 宽度段落改写、踩坑 52。 |
+| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |
+| 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
 | 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
 | 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
 | 0.0.1.8 | 2026-11-03 | **系统提示词分层：环境写死，人格交给用户**：①把原来的单块 `AGENT_SYSTEM` 拆成两段——`AGENT_ENV`（文件系统形状、目录约定、Worker/主页面关系、沙箱边界，全部由程序生成）与 `AGENT_PERSONA_DEFAULT`（角色、语气、做事习惯）。环境是事实不是口味，用户改它只会得到一段与真实环境不符的说明；人格则本来就该由用户定。②人格落到 **`.config.persona`**，第一次打开智能体时写入默认值；之后以文件为准，升级换环境说明不会覆盖用户改过的人格，人格改坏了删文件就回默认。③文件里 `#` 开头的整行是注释，`stripPersonaComments()` 在拼 prompt 时剥掉——配置文件能自己解释自己，但解释不能当指令发出去；人格被清空/只剩注释时等价于「只要环境说明」。④`loadAgentPersona()` 带 1.2 秒 TTL 缓存：一轮 run 的多次模型调用共用一份，`callModel()` 每次请求前刷新，**改完下一条消息就生效，不用重启**；`persona set/edit/reset` 走 RPC 后会主动清缓存。⑤新增 CLI **`persona`**：无参看全文、`edit` 开编辑器、`set` / `append` 改、`reset` 回默认、`path` 打印路径，`… \| persona set -` 从管道读长文本。⑥**刻意不进设置面板**：设置页管功能开关，人格是一段持续影响行为的文本，混进去只会把设置页变成难维护的文本编辑器。⑦工具层对 `.config.persona` 只读（`write_file`/`delete_file` 明确报错）——挡的是「智能体顺手改自己的人设」和「一次网页注入长期改掉它」；`js` 绕得过去，所以是软边界。⑧文档 §12 新增「系统提示词：环境写死，人格可改」。 |
@@ -2789,7 +2952,9 @@ Node 版手写了一张 `BlockList`，也拒。三份实现各写一套，只有
 | 2026-11-03 23:05 | 0.0.1.16：后端内部渗透测试（84 项）与加固 | `modelserver.py`（`Server` 类：backlog 128 / 128 并发上限 / 503；`Handler.timeout=15`、`sys_version=""`、`version_string`、`get_all` 拒重复头、非 dict body、provider 类型、`parse_constant`、BrokenPipe）、`modelserver.js`（body 形状、headersTimeout/requestTimeout/maxConnections）、`modelserver.go`（`Values` 拒重复头、`body == nil`、IdleTimeout、MaxHeaderBytes）、`build/30-core.js` + 三份后端版本号、`README.md`（§13 自测记录、踩坑 60–62、日志） | 原始 socket 构造 84 项：访问控制 16 / 路由 18 / 解析 15 / 泄露 5 / SSRF 30 / 韧性 6。修复前 8 项 FAIL；修复后全过。并发 200：7.05 s→0.06 s，p95 5428 ms→29 ms；半开连接 15.0 s 被断开；100 个占住连接下正常请求 9 ms；三份后端对 `null`/`[]`/重复头行为一致（400/400/403）；前端启动无 pageerror，版本 0.0.1.16 | 本轮 |
 | 2026-11-03 22:10 | 0.0.1.15：光标滚出画布隐藏、智能体 403 / 抓新闻、四个维护中工具完成 | `build/40-term.js`（`.xterm-viewport` 监听、隐藏时 `init=false`、四工具接入、窗口尺寸）、`build/00-head.html`（媒体工具样式）、`build/59-media.js`（新增：Recorder/Geo/View3D/Audio）、`build/55-tools.js`（删 `MaintApp` 壳子）、`build/30-core.js`（APP_DEFS 描述、版本）、`build/60-agent.js`（`rawFetch`/`readable`/`agentNews`、`news` 工具、`AGENT_ENV`、保存路径）、`build.sh`（拼入 59-media）、`modelserver.{py,js,go}`（`/v1/fetch` + SSRF、头值大小写、`Permissions-Policy`、版本）、`README.md`（§0、§12、§13、§15、踩坑 54–59、日志） | Playwright：真实 DeepSeek 后端（`deepseek-flash`）「给我抓取最近10条新闻」→ 一次 `news` 调用、3.3 s 返回 10 条，窗口版排版成表格；TUI `agentTui.open()` 同一任务 6.9 s 出结果、`agent>` 提示符只有一条、光标落在提示符后（`cy=23 rows=24`）；滚轮上滚 `display:none`、回滚 `display:block`；录音 15.4 KB webm 落盘、波形绘制 447 px；定位 31.2304/121.4737 ±18 m 并存 `.home.geo-json`；音频波形 900 桶、播放 `currentTime=0.63`；3D 在 xvfb + swiftshader 下 58–60 fps、四种几何体索引数正确、拖动改变 yaw、线框/自转/复位正常；无 pageerror | 本轮 |
 | 2026-11-03 19:52 | 0.0.1.14：修「emoji 连字后光标偏右」（换 canvas 渲染器） | `build/40-term.js`（`CANVAS_JS` 双 CDN；`loadXterm` 去掉「齐了就 return」改为逐个补装；`_mount` 在 `open` 之后 `loadAddon(CanvasAddon)`，失败只 warn）、`licenses/README.md`（登记 addon-canvas 0.7.0，共用 `LICENSE.xterm.js.txt`）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2、踩坑 53、日志） | Playwright（无头 Chromium）：`👀` `🧑‍🦲` `👨‍👩‍👧‍👦` `🇨🇳` `👍🏽` `❤️` `1️⃣` 等 7 组，`cursorX − textEnd` 全 0；`.home> 👨‍👩‍👧‍👦哈哈` 光标 `left=152px`（19×8）与文本末尾齐平，像素扫描确认「哈哈」紧随 emoji、中间无空隙；47 列窄窗折两行、Home/End/退格正常；3000 行输出无卡顿；缩放 1200→820 后 `cols=96`、`cellW=8`；两个 jshel 窗口各自有 canvas、子窗口 `👨‍👩‍👧‍👦ab` 光标 `cx=17 left=136`；HarTMLes 窗口正常；`shot()` 截图 79 KB、终端文字与 emoji 均在图中；路由屏蔽 addon-canvas 后回退 DOM 渲染器、页面无报错；无 pageerror | 本轮 |
-| 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSL 切层/agent 退出回归无重复；无 pageerror | 本轮 |\n| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |\n| 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
+| 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSL 切层/agent 退出回归无重复；无 pageerror | 本轮 |
+| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |
+| 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
 | 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |
 | 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
 | 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
@@ -2870,5 +3035,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.14 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.22 · 桌面就是终端 · 一切皆文件</sub>
 </p>

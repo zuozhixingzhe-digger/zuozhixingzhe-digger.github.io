@@ -77,7 +77,7 @@ MAX_BODY = 8 * 1024 * 1024
 RPM = env_int("HT_RPM", 60)
 BURST = env_int("HT_BURST", 20)
 FETCH_RPM = env_int("HT_FETCH_RPM", 120)
-VERSION = "0.0.1.21"
+VERSION = "0.0.1.22"
 # 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
 # (argparse 里的开关名, 路由, 中文名)
 FEATURES = (
@@ -126,11 +126,62 @@ def upstream(url, payload, headers):
         raw = e.read()
         status = e.code
     except Exception as e:
-        return 502, {"error": {"message": "连不上上游：%s" % e, "type": "upstream_unreachable"}}
+        # 异常里常带上游 URL、DNS 结果、代理地址——写进 stderr 给自己看，
+        # 不写进响应体给请求者看。
+        sys.stderr.write("[upstream] 连不上上游：%s\n" % e)
+        return 502, {"error": {"message": "连不上上游", "type": "upstream_unreachable"}}
     try:
         return status, json.loads(raw.decode("utf-8", "replace"))
     except Exception:
-        return 502, {"error": {"message": "上游返回了非 JSON（HTTP %s）" % status, "type": "bad_upstream"}}
+        sys.stderr.write("[upstream] 上游返回非 JSON（HTTP %s）\n" % status)
+        return 502, {"error": {"message": "上游返回了非 JSON", "type": "bad_upstream"}}
+
+
+# ------------------------------------------------------------------ 响应最小化（0.0.1.22）
+#
+# 零信任第 3 条：请求者只该拿到「这一问的答案」，不该拿到关于本服务的任何描述。
+# 上游会给一整套元数据：model（真实模型名）、id、created、object、usage、
+# system_fingerprint、service_tier…… 前端一个都不用，却等于把「后端接的是谁、
+# 用的是哪个模型」原样交出去。from_anthropic / from_responses 还会自己造一份
+# model / id / usage。逐个函数去删迟早漏，所以统一在 chat 路由**出口**做白名单：
+# 不管中间谁生成了什么，只有列在这里的字段能出网。
+_CHAT_MESSAGE_FIELDS = ("content", "reasoning_content", "tool_calls",
+                        "function_call", "refusal")
+
+
+def minimize_chat(status, data):
+    """把 chat 响应裁成调用方必需的最小结构。
+
+    错误响应同样收敛：只保留一句人类可读的 message，剥掉 type / code / param /
+    provider 这些描述上游身份与内部状态机的字段。上游 429 的文本要留着——
+    「限流了、为什么」是用户排障必需的信息（0.0.1.22 开发时刚撞上一次）。
+    """
+    if not isinstance(data, dict):
+        return {"error": {"message": "上游响应异常"}}
+    if status >= 400 or data.get("error"):
+        err = data.get("error")
+        msg = err.get("message") if isinstance(err, dict) else (err if isinstance(err, str) else None)
+        if not isinstance(msg, str) or not msg.strip():
+            msg = "上游请求失败"
+        return {"error": {"message": msg[:2000]}}
+    choices = []
+    for c in (data.get("choices") or []):
+        if not isinstance(c, dict):
+            continue
+        m = c.get("message") or {}
+        if not isinstance(m, dict):
+            m = {}
+        msg = {"role": m.get("role") or "assistant"}
+        for k in _CHAT_MESSAGE_FIELDS:
+            if k in m:
+                msg[k] = m[k]
+        ch = {"message": msg}
+        if "index" in c:
+            ch["index"] = c["index"]
+        if "finish_reason" in c:
+            ch["finish_reason"] = c["finish_reason"]
+        choices.append(ch)
+    return {"choices": choices}
 
 
 # ------------------------------------------------------------------ 抓网页（/v1/fetch）
@@ -714,8 +765,8 @@ def do_anthropic(body):
     status, data = upstream(join_url(ANTHROPIC_BASE, "/messages"), payload, headers)
     if status >= 400:
         err = data.get("error") if isinstance(data, dict) else None
-        msg = err.get("message") if isinstance(err, dict) else json.dumps(data, ensure_ascii=False)[:400]
-        return status, {"error": {"message": msg or "上游错误", "type": "upstream_error", "provider": "anthropic"}}
+        msg = err.get("message") if isinstance(err, dict) else None
+        return status, {"error": {"message": msg or "上游错误", "type": "upstream_error"}}
     return 200, from_anthropic(data, payload["model"])
 
 
@@ -814,8 +865,8 @@ def do_responses(body):
     status, data = upstream(join_url(OPENAI_BASE, "/responses"), payload, headers)
     if status >= 400:
         err = data.get("error") if isinstance(data, dict) else None
-        msg = err.get("message") if isinstance(err, dict) else json.dumps(data, ensure_ascii=False)[:400]
-        return status, {"error": {"message": msg or "上游错误", "type": "upstream_error", "provider": "responses"}}
+        msg = err.get("message") if isinstance(err, dict) else None
+        return status, {"error": {"message": msg or "上游错误", "type": "upstream_error"}}
     return 200, from_responses(data, payload["model"])
 
 
@@ -967,9 +1018,9 @@ class Server(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "hterminal-modelserver"
-    # 不报 Python 版本：`Server: hterminal-modelserver/0.0.1.15 Python/3.11.1`
-    # 等于把「该打哪个 CVE」直接写在响应头里（0.0.1.16 修）。
+    # 连 `Server: hterminal-modelserver` 都不发。0.0.1.16 只是把 Python 版本去掉，
+    # 但程序名本身就是情报（零信任第 3 条：后端程序是啥，不给）。
+    server_version = ""
     sys_version = ""
     # 连接级超时。BaseHTTPRequestHandler 在建连后调用 settimeout，
     # 慢速头 / 慢速体最多占 15 秒；正常请求在等上游时没有 socket 读写，不受影响。
@@ -978,9 +1029,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), (fmt % args)))
 
-    def version_string(self):
-        # 默认是 server_version + " " + sys_version，sys_version 清空后会留一个尾空格
-        return self.server_version
+    def send_response(self, code, message=None):
+        """覆盖标准实现，跳过 `Server` 头。Date 不含身份信息，保留。"""
+        self.log_request(code)
+        self.send_response_only(code, message)
+        self.send_header("Date", self.date_time_string())
 
     def security_headers(self):
         """每个响应都带。X-Frame-Options / frame-ancestors 是重点：
@@ -1048,8 +1101,11 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _deny(self, reason, detail):
+        # 细节只进 stderr。响应体统一回 REJECTED——写「仅允许本机访问」
+        # 「Host 只接受 127.0.0.1」「需要访问令牌」等于把防线画给探测者看
+        # （踩坑 64 早写过这个教训，0.0.1.22 把这几处漏网的也收干净）。
         sys.stderr.write("[%s] deny %s: %s\n" % (time.strftime("%H:%M:%S"), reason, detail))
-        self.reply(403, {"error": {"message": detail, "type": "forbidden"}})
+        self.reply(403, REJECTED)
         return False
 
     def rate_gate(self, bucket, label):
@@ -1065,16 +1121,16 @@ class Handler(BaseHTTPRequestHandler):
         if bucket.rejected == 1 or bucket.rejected % 50 == 0:
             sys.stderr.write("[%s] 429 %s（累计拒绝 %d 次，%d 次/分）\n"
                              % (time.strftime("%H:%M:%S"), label, bucket.rejected, bucket.rpm))
+        # 只说「等多久」，不说「上限是多少次/分」——那是服务配置，
+        # 告诉对方等于帮它卡着阈值打。X-RateLimit-* 同理，一并去掉。
         self.reply(429, {
             "error": {
-                "message": "%s过于频繁（上限 %d 次/分），请 %d 秒后再试" % (label, bucket.rpm, retry),
+                "message": "%s过于频繁，请 %d 秒后再试" % (label, retry),
                 "type": "rate_limit_error",
                 "code": "rate_limited",
             }
         }, {
             "Retry-After": str(retry),
-            "X-RateLimit-Limit": str(bucket.rpm),
-            "X-RateLimit-Remaining": "0",
         })
         return False
 
@@ -1129,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.server.index_raw
         etag = self.server.index_etag
         if raw is None:
-            self.reply(404, {"error": {"message": "找不到 index.html（把它和本脚本放在同一目录）", "type": "not_found"}})
+            self.reply(404, {"error": {"message": "页面不可用", "type": "not_found"}})
             return
         # index.html 是把全部代码内联进去的单文件，七百多 KB。
         # 以前发 no-store，每刷新一次就重下整包；改成协商缓存——
@@ -1168,13 +1224,10 @@ class Handler(BaseHTTPRequestHandler):
             self.serve_index()
             return
         if path == "/health":
-            # 只报「活着」。以前这里列 providers 明细，等于一份能力清单：
-            # 关了哪个功能、有没有配 key，一问便知。前端只用 r.ok，不影响。
-            self.reply(200, {
-                "ok": True,
-                "service": "hterminal-modelserver",
-                "version": VERSION,
-            })
+            # 零信任：只回「活着」这一个布尔。版本号、程序名、功能清单、
+            # 服务状态、真实模型名一律不给。前端只用 r.ok 判断在线。
+            # 端口开着这件事本身藏不住，但除此之外不主动送任何情报。
+            self.reply(200, {"ok": True})
             return
         self.deny()
 
@@ -1220,7 +1273,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode("utf-8", "replace"),
                               parse_constant=_reject_const)
         except Exception as e:
-            self.reply(400, {"error": {"message": "JSON 解析失败：%s" % e, "type": "bad_request"}})
+            self.reply(400, {"error": {"message": "JSON 解析失败", "type": "bad_request"}})
             return
         # 合法 JSON 不等于合法请求体。`[]`、`"x"`、`null`、数字都能通过 json.loads，
         # 但紧接着的 body.get() 会抛 AttributeError —— 连接被直接掐断、客户端收到空响应、
@@ -1233,7 +1286,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = fetch_public(body.get("url"))
                 self.reply(200, data)
             except Exception as e:
-                self.reply(502, {"error": {"message": "抓取失败：%s" % e, "type": "fetch_failed"}})
+                sys.stderr.write("[fetch] 失败：%s\n" % e)
+                self.reply(502, {"error": {"message": "抓取失败", "type": "fetch_failed"}})
             return
         if body.get("stream"):
             self.reply(400, {"error": {"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})
@@ -1256,11 +1310,12 @@ class Handler(BaseHTTPRequestHandler):
                 status, data = do_responses(body)
             else:
                 # 服务端配置写错不是调用方的错，但仍然要说清楚
-                status, data = 500, {"error": {"message": "服务端 provider 配置无效：%s" % provider,
-                                               "type": "server_config_error"}}
+                sys.stderr.write("[chat] provider 配置无效：%s\n" % provider)
+                status, data = 500, {"error": {"message": "服务暂时不可用", "type": "server_config_error"}}
         except Exception as e:
-            status, data = 500, {"error": {"message": "服务器内部错误：%s" % e, "type": "internal"}}
-        self.reply(status, data)
+            sys.stderr.write("[chat] 内部错误：%s\n" % e)
+            status, data = 500, {"error": {"message": "服务暂时不可用", "type": "internal"}}
+        self.reply(status, minimize_chat(status, data))
         sys.stderr.write("[%s] POST /v1/chat/completions provider=%s status=%s %.0fms\n"
                          % (time.strftime("%H:%M:%S"), provider, status, (time.time() - started) * 1000))
 
