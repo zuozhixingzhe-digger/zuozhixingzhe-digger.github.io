@@ -29,12 +29,14 @@
 
 import argparse
 import hashlib
+import hmac
 import http.client
 import ipaddress
 import json
 import math
 import os
 import re
+import secrets
 import socket
 import ssl
 import stat
@@ -64,14 +66,18 @@ OPENAI_BASE = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rst
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_BASE = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1").rstrip("/")
 ANTHROPIC_VERSION = os.environ.get("ANTHROPIC_VERSION", "2023-06-01")
-DEFAULT_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
-DEFAULT_PROVIDER = os.environ.get("HT_DEFAULT_PROVIDER", "openai").lower()
+# 模型与调用方式由**服务端**决定，前端说了不算（0.0.1.21）。
+# 前端仍然按标准 OpenAI 格式发 `model` 字段（格式要求，不能少），但值会被覆盖：
+# 否则用户在页面上把 flash 改成 pro，账单就跟着变。想换模型改 --model / HT_MODEL。
+SERVER_MODEL = os.environ.get("HT_MODEL", "gpt-4o-mini")
+SERVER_PROVIDER = os.environ.get("HT_PROVIDER",
+                                os.environ.get("HT_DEFAULT_PROVIDER", "openai")).lower()
 TIMEOUT = float(os.environ.get("HT_TIMEOUT", "120"))
 MAX_BODY = 8 * 1024 * 1024
 RPM = env_int("HT_RPM", 60)
 BURST = env_int("HT_BURST", 20)
 FETCH_RPM = env_int("HT_FETCH_RPM", 120)
-VERSION = "0.0.1.20"
+VERSION = "0.0.1.21"
 # 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
 # (argparse 里的开关名, 路由, 中文名)
 FEATURES = (
@@ -585,8 +591,8 @@ def do_openai(body, base, key):
     # 只带走「属于 OpenAI 请求」的字段；控制字段（base_url / api_key / headers…）
     # 一个都不许跟着走。上游是哪个、用哪把钥匙，只由本进程的环境变量决定。
     payload = {k: v for k, v in body.items() if not _is_control_field(k)}
-    if not payload.get("model"):
-        payload["model"] = DEFAULT_MODEL
+    # 双保险：入口已经覆盖过，这里再钉一次，防止将来有人绕过入口直接调
+    payload["model"] = SERVER_MODEL
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = "Bearer " + key
@@ -632,7 +638,7 @@ def to_anthropic(body):
         m.pop("_toolbatch", None)
 
     payload = {
-        "model": body.get("model") or DEFAULT_MODEL,
+        "model": SERVER_MODEL,
         "max_tokens": int(body.get("max_tokens") or body.get("max_completion_tokens") or 4096),
         "messages": msgs,
     }
@@ -736,7 +742,7 @@ def to_responses(body):
                           "output": content})
 
     payload = {
-        "model": body.get("model") or DEFAULT_MODEL,
+        "model": SERVER_MODEL,
         "input": items,
     }
     if instructions:
@@ -821,21 +827,34 @@ def do_responses(body):
 ALLOWED_HOSTS = {"127.0.0.1:%d" % PORT, "localhost:%d" % PORT, "[::1]:%d" % PORT}
 LOCAL_NAMES = ("127.0.0.1", "localhost", "::1")
 
+# file:// 页面（Origin: null）的访问令牌。启动时随机生成，打印在终端横幅里。
+#
+# 为什么非要令牌：file:// 页面与「公网页面里的 <iframe sandbox>」发出的请求头
+# 逐字节相同——实测都是 Origin: null、Sec-Fetch-Site: cross-site、没有 Referer。
+# 也就是说，只要放行 null，就等于让任意网站都能进信任域。头里没有任何东西
+# 能区分这两者，唯一不可伪造的区别是「知不知道这个令牌」。
+#
+# 令牌只认 X-HTerm-Token 头，不认 query（query 会进日志、进 Referer）。
+# 页面上存 sessionStorage（标签页级），不存 localStorage——实测 file:// 的
+# localStorage 是所有本地文件共享的，存那里等于把「双击任何一个下载的 HTML」
+# 也变成有权限的。
+FILE_TOKEN = ""
+FILE_ORIGIN_ENABLED = True
 
-def origin_allowed(origin):
-    """Origin 只认本机页面。
+
+def origin_allowed(origin, token_ok=False):
+    """Origin 只认本机页面；"null" 另需访问令牌。
 
     - 缺省（同源导航、curl、服务端调用）：允许
-    - "null"：**拒绝**。sandbox iframe / data: 页面的 Origin 就是 null，
-      不拒的话任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">`
-      绕过同源策略打本地服务。
+    - "null"：file:// 打开的本页面，以及 sandbox iframe / data: 页面——两者
+      请求头完全一样，只能靠令牌区分。令牌对不上就一律拒。
     - 其它：必须是 http(s) 且 host 是本机名。端口不卡死（本地开发常换端口），
       但公网域名一律不认。
     """
     if not origin:
         return True
     if origin.strip().lower() == "null":
-        return False
+        return bool(FILE_ORIGIN_ENABLED and token_ok)
     try:
         from urllib.parse import urlparse
         u = urlparse(origin)
@@ -977,15 +996,29 @@ class Handler(BaseHTTPRequestHandler):
         # "Permissions policy violation"，工具做好了也用不了（0.0.1.15 修）。
         self.send_header("Permissions-Policy", "geolocation=(self), microphone=(self), camera=(self)")
 
+    def token_ok(self):
+        """常量时间比较，避免用响应时间把令牌一位一位试出来。"""
+        if not FILE_TOKEN:
+            return False
+        got = self.headers.get("X-HTerm-Token") or ""
+        return hmac.compare_digest(got.encode("utf-8", "replace"), FILE_TOKEN.encode("utf-8"))
+
     def cors(self):
         """只对「已经通过 Origin 校验」的请求回 CORS 头，绝不回显任意 Origin，
-        也绝不发 Allow-Credentials。"""
+        也绝不发 Allow-Credentials。
+
+        例外是 null：它**不代表授权**（授权靠令牌），回显它只是为了让 file://
+        页面能读到响应体——否则令牌填错时用户只会看到一条 CORS 报错。
+        没有令牌的 null 请求拿到的仍然是一份不含任何信息的 403。"""
         origin = self.headers.get("Origin")
-        if origin and origin_allowed(origin):
+        is_null = bool(origin) and origin.strip().lower() == "null"
+        if origin and (origin_allowed(origin, self.token_ok())
+                       or (is_null and FILE_ORIGIN_ENABLED)):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-HTerm-Provider, X-HTerm-Client")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, X-HTerm-Provider, X-HTerm-Client, X-HTerm-Token")
         self.send_header("Access-Control-Max-Age", "600")
 
     def reply(self, status, obj, extra=None):
@@ -1045,8 +1078,13 @@ class Handler(BaseHTTPRequestHandler):
         })
         return False
 
-    def local_only(self):
-        """四重校验：socket 层 / Host / Origin / Sec-Fetch-Site。"""
+    def local_only(self, preflight=False):
+        """四重校验：socket 层 / Host / Origin / Sec-Fetch-Site。
+
+        preflight=True 只用于 OPTIONS：预检由浏览器自己发，带不了自定义头，
+        所以「null 但有令牌」这一条在预检阶段无从判定，先放行。预检不产生
+        任何副作用，真正拦人的是随后那条带令牌的实际请求。
+        """
         peer = self.client_address[0]
         if peer not in ("127.0.0.1", "::1"):
             return self._deny("peer", "仅允许本机访问")
@@ -1054,17 +1092,22 @@ class Handler(BaseHTTPRequestHandler):
         if host not in ALLOWED_HOSTS:
             return self._deny("host", "Host 不被允许（只接受 127.0.0.1 / localhost）")
         origin = self.headers.get("Origin")
-        if not origin_allowed(origin):
+        if not origin_allowed(origin, self.token_ok() or preflight):
+            if (origin or "").strip().lower() == "null":
+                # 不透露令牌本身，只说去哪儿找。攻击者拿这条也无从下手。
+                return self._deny("origin", "本地文件页面需要访问令牌（见后端启动横幅）")
             return self._deny("origin", "Origin 不被允许（%s）" % origin)
         # Sec-Fetch-Site 是浏览器自己打的标，页面改不了：
         # cross-site 一律拒绝，等于把「公网网页 → 本地端口」这条路彻底堵死。
+        # 例外：file:// 页面的请求天然是 cross-site（不透明源），令牌已验过就放行。
         site = (self.headers.get("Sec-Fetch-Site") or "").lower()
-        if site == "cross-site":
+        is_null = (origin or "").strip().lower() == "null"
+        if site == "cross-site" and not ((is_null and self.token_ok()) or preflight):
             return self._deny("fetch-site", "跨站请求被拒绝")
         return True
 
     def do_OPTIONS(self):
-        if not self.local_only():
+        if not self.local_only(preflight=True):
             return
         if not self.headers.get("Origin"):
             self.reply(403, {"error": {"message": "预检必须带 Origin", "type": "forbidden"}})
@@ -1196,12 +1239,13 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, {"error": {"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})
             return
 
-        raw_provider = self.headers.get("X-HTerm-Provider") or body.get("provider") or DEFAULT_PROVIDER
-        # provider 来自请求体，可能是数字 / 数组。直接 .lower() 会崩（自测 C6/C7）。
-        if not isinstance(raw_provider, str):
-            self.reply(400, {"error": {"message": "provider 必须是字符串", "type": "bad_request"}})
-            return
-        provider = raw_provider.strip().lower()
+        # 调用方式只看服务端配置：不读 X-HTerm-Provider，也不读 body.provider。
+        # 老前端发这两个字段也照收——只是不起作用（0.0.1.21）。
+        provider = SERVER_PROVIDER
+        # 模型名同理：标准 OpenAI 请求必须有 model，但值由服务端覆盖。
+        # 前端把它当占位符就行（deepseek-flash / 空 / 乱写都可以）。
+        body["model"] = SERVER_MODEL
+        body.pop("provider", None)
         started = time.time()
         try:
             if provider in ("openai", "custom"):
@@ -1211,7 +1255,9 @@ class Handler(BaseHTTPRequestHandler):
             elif provider in ("responses", "response"):
                 status, data = do_responses(body)
             else:
-                status, data = 400, {"error": {"message": "未知 provider：%s" % provider, "type": "bad_request"}}
+                # 服务端配置写错不是调用方的错，但仍然要说清楚
+                status, data = 500, {"error": {"message": "服务端 provider 配置无效：%s" % provider,
+                                               "type": "server_config_error"}}
         except Exception as e:
             status, data = 500, {"error": {"message": "服务器内部错误：%s" % e, "type": "internal"}}
         self.reply(status, data)
@@ -1247,6 +1293,7 @@ def load_index():
 
 
 def main():
+    global SERVER_MODEL, SERVER_PROVIDER, FILE_TOKEN, FILE_ORIGIN_ENABLED
     ap = argparse.ArgumentParser(
         prog="modelserver.py",
         description="HTerMinaL modelserver：本地 Chat Completions 转发（默认 127.0.0.1:%d）" % PORT)
@@ -1256,13 +1303,37 @@ def main():
                     help="允许的瞬时突发次数（默认 %(default)s）")
     ap.add_argument("--fetch-rpm", type=int, default=FETCH_RPM, metavar="N", dest="fetch_rpm",
                     help="抓网页每分钟上限，0 关闭（默认 %(default)s）")
+    ap.add_argument("--model", default=SERVER_MODEL, metavar="NAME",
+                    help="固定模型名；前端传的 model 会被忽略（默认 %(default)s）")
+    ap.add_argument("--provider", default=SERVER_PROVIDER,
+                    choices=("openai", "custom", "anthropic", "responses"),
+                    help="固定调用方式；前端传的 provider 会被忽略（默认 %(default)s）")
     ap.add_argument("--no-chat", action="store_true", help="关闭模型请求（/v1/chat/completions）")
     ap.add_argument("--no-fetch", action="store_true", help="关闭网页抓取（/v1/fetch）")
+    ap.add_argument("--file-token", default=os.environ.get("HT_FILE_TOKEN", ""), metavar="TOKEN",
+                    help="file:// 页面用的访问令牌；默认每次启动随机生成（打印在横幅里）")
+    ap.add_argument("--no-file-origin", action="store_true",
+                    help="不接受 file:// 打开的页面（Origin: null 一律拒）")
     ap.add_argument("--unsafe-no-self-restrict", action="store_true",
                     dest="no_sandbox",
                     default=os.environ.get("HT_NO_SELF_RESTRICT", "").lower() in ("1", "true", "yes"),
                     help="跳过平台自沙箱（Landlock/seatbelt）。只在兼容性出问题时用")
     args = ap.parse_args()
+
+    # 命令行 > 环境变量 > 内置默认。改完立刻生效于所有请求；前端无从置喙。
+    SERVER_MODEL = args.model.strip()
+    SERVER_PROVIDER = args.provider.strip().lower()
+    if not SERVER_MODEL:
+        ap.error("--model 不能为空")
+
+    FILE_ORIGIN_ENABLED = not args.no_file_origin
+    FILE_TOKEN = (args.file_token.strip() if FILE_ORIGIN_ENABLED else "")
+    if FILE_ORIGIN_ENABLED and not FILE_TOKEN:
+        # 每次启动换一把。用户重启后端后要重新粘一次——这是有意的：
+        # 固定令牌迟早会被写进脚本、截图、聊天记录里。
+        FILE_TOKEN = secrets.token_urlsafe(18)
+    if FILE_TOKEN and len(FILE_TOKEN) < 12:
+        ap.error("--file-token 太短（至少 12 字符），会被轻易猜中")
 
     # 功能注册表决定路由白名单。将来加功能只改 FEATURES，这里不用动。
     enabled = {path for flag, path, _ in FEATURES if not getattr(args, flag, False)}
@@ -1284,7 +1355,14 @@ def main():
     print("hterminal modelserver %s" % VERSION)
     print("  listening  http://%s:%d" % (HOST, PORT))
     print("  features   %s" % " · ".join(sorted(enabled)))
+    print("  model      %s / %s（前端传的 model、provider 会被忽略）"
+          % (SERVER_PROVIDER, SERVER_MODEL))
     print("  index.html %s" % ("%d B（启动时快照）" % len(index) if index else "缺失（/ 会 404）"))
+    if FILE_ORIGIN_ENABLED:
+        print("  file://    %s" % FILE_TOKEN)
+        print("             ↑ 双击 index.html 打开时，把它粘进页面顶部的提示条；重启会换")
+    else:
+        print("  file://    已关闭（Origin: null 一律拒）")
     print("  limits     并发 %d · 排队 %d · 连接超时 %ds"
           % (srv.max_workers, srv.request_queue_size, Handler.timeout))
     def rate_text(path, bucket, rpm):

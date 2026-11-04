@@ -18,6 +18,7 @@
 const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
+const crypto = require('node:crypto');
 const dns = require('node:dns').promises;
 const fs = require('node:fs');
 const nodePath = require('node:path');
@@ -34,6 +35,10 @@ function parseArgs(argv) {
     fetchRpm: intEnv('HT_FETCH_RPM', 120),
     noChat: false,
     noFetch: false,
+    model: process.env.HT_MODEL || 'gpt-4o-mini',
+    provider: String(process.env.HT_PROVIDER || process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase(),
+    fileToken: String(process.env.HT_FILE_TOKEN || ''),
+    noFileOrigin: false,
     noSandbox: /^(1|true|yes)$/i.test(String(process.env.HT_NO_SELF_RESTRICT || ''))
   };
   for (let i = 0; i < argv.length; i++) {
@@ -46,16 +51,48 @@ function parseArgs(argv) {
   --fetch-rpm N  抓网页每分钟上限，0 关闭（默认 ${o.fetchRpm}）
   --no-chat      关闭模型请求（/v1/chat/completions）
   --no-fetch     关闭网页抓取（/v1/fetch）
+  --model NAME   固定模型名；前端传的 model 会被忽略（默认 ${o.model}）
+  --provider P   固定调用方式 openai|custom|anthropic|responses（默认 ${o.provider}）
+  --file-token T file:// 页面用的访问令牌；默认每次启动随机生成（打印在横幅里）
+  --no-file-origin
+                 不接受 file:// 打开的页面（Origin: null 一律拒）
   --unsafe-no-self-restrict
                  跳过平台自沙箱（本实现未内置，保留参数以保持三份后端命令行一致）
 
-也可用环境变量 HT_RPM / HT_BURST / HT_FETCH_RPM 设默认值。
+也可用环境变量 HT_RPM / HT_BURST / HT_FETCH_RPM / HT_FILE_TOKEN / HT_MODEL 设默认值。
 两个功能不能同时关闭：全关等于没有服务，会直接退出。`);
       process.exit(0);
     }
     if (a === '--no-chat') { o.noChat = true; continue; }
     if (a === '--no-fetch') { o.noFetch = true; continue; }
+    if (a === '--no-file-origin') { o.noFileOrigin = true; continue; }
     if (a === '--unsafe-no-self-restrict') { o.noSandbox = true; continue; }
+    const ms = /^--(model|provider)(?:=(.*))?$/.exec(a);
+    if (ms) {
+      const v = (ms[2] !== undefined ? ms[2] : argv[++i]) || '';
+      if (!v.trim()) { console.error(`--${ms[1]} 不能为空`); process.exit(2); }
+      if (ms[1] === 'model') o.model = v.trim();
+      else {
+        const pv = v.trim().toLowerCase();
+        if (!['openai', 'custom', 'anthropic', 'responses'].includes(pv)) {
+          console.error(`--provider 只能是 openai / custom / anthropic / responses`);
+          process.exit(2);
+        }
+        o.provider = pv;
+      }
+      continue;
+    }
+    const mt = /^--file-token(?:=(.*))?$/.exec(a);
+    if (mt) {
+      const v = mt[1] !== undefined ? mt[1] : argv[++i];
+      if (v === undefined) { console.error('--file-token 需要一个值'); process.exit(2); }
+      if (v.length > 0 && v.length < 12) {
+        console.error('--file-token 太短（至少 12 字符），会被轻易猜中');
+        process.exit(2);
+      }
+      o.fileToken = v;
+      continue;
+    }
     const m = /^--(rpm|burst|fetch-rpm)(?:=(.*))?$/.exec(a);
     if (!m) {
       console.error(`未知参数：${a}（--help 看用法）`);
@@ -96,19 +133,39 @@ const REJECTED = { error: { message: '请求不被接受', type: 'forbidden' } }
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.HT_PORT || 8787);
+
+/* file:// 页面的访问令牌。file:// 与「公网页面里的 <iframe sandbox>」请求头
+ * 逐字节相同（Origin: null / Sec-Fetch-Site: cross-site / 无 Referer），
+ * 放行 null 就等于放行所有网站；唯一不可伪造的区别是知不知道该令牌。
+ * 令牌只认 X-HTerm-Token 头——不认 query，query 会进日志和 Referer。 */
+const FILE_ORIGIN_ENABLED = !ARGS.noFileOrigin;
+const FILE_TOKEN = !FILE_ORIGIN_ENABLED ? ''
+  : (ARGS.fileToken || crypto.randomBytes(18).toString('base64url'));
+
+function tokenOk(req) {
+  if (!FILE_TOKEN) return false;
+  const got = String(req.headers['x-hterm-token'] || '');
+  const a = Buffer.from(got, 'utf8');
+  const b = Buffer.from(FILE_TOKEN, 'utf8');
+  /* 长度不同直接 false；长度相同再定长比较，别用时间侧信道把令牌试出来。 */
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_BASE = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ANTHROPIC_BASE = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com/v1').replace(/\/+$/, '');
 const ANTHROPIC_VERSION = process.env.ANTHROPIC_VERSION || '2023-06-01';
-const DEFAULT_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
-const DEFAULT_PROVIDER = (process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
+/* 模型与调用方式由服务端决定：前端发什么 model / provider 都不算数。
+ * 用 let：命令行参数要能覆盖它（--model / --provider）。 */
+let SERVER_MODEL = process.env.HT_MODEL || 'gpt-4o-mini';
+let SERVER_PROVIDER = String(process.env.HT_PROVIDER || process.env.HT_DEFAULT_PROVIDER || 'openai').toLowerCase();
 const TIMEOUT = Number(process.env.HT_TIMEOUT || 120);
 const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.20';
+const VERSION = '0.0.1.21';
 
 /* 启动时把 index.html 读成一份不可变快照。
  *
@@ -222,7 +279,8 @@ async function doOpenAI(body) {
   for (const [k, v] of Object.entries(body)) {
     if (!isControlField(k)) payload[k] = v;
   }
-  if (!payload.model) payload.model = DEFAULT_MODEL;
+  /* 双保险：入口已经覆盖过，这里再钉一次，防止将来有人绕过入口直接调 */
+  payload.model = SERVER_MODEL;
   const headers = { 'Content-Type': 'application/json' };
   if (OPENAI_KEY) headers.Authorization = 'Bearer ' + OPENAI_KEY;
   return upstream(joinUrl(OPENAI_BASE, '/chat/completions'), payload, headers);
@@ -260,7 +318,7 @@ function toAnthropic(body) {
   for (const m of msgs) delete m._toolbatch;
 
   const payload = {
-    model: body.model || DEFAULT_MODEL,
+    model: SERVER_MODEL,
     max_tokens: Number(body.max_tokens || body.max_completion_tokens || 4096),
     messages: msgs
   };
@@ -352,7 +410,7 @@ function toResponses(body) {
       items.push({ type: 'function_call_output', call_id: m.tool_call_id || '', output: content });
     }
   }
-  const payload = { model: body.model || DEFAULT_MODEL, input: items };
+  const payload = { model: SERVER_MODEL, input: items };
   if (instructions.length) payload.instructions = instructions.join('\n\n');
   if (body.max_tokens || body.max_output_tokens) payload.max_output_tokens = Number(body.max_tokens || body.max_output_tokens);
   if (body.temperature != null) payload.temperature = body.temperature;
@@ -601,9 +659,13 @@ async function fetchPublic(rawUrl) {
 
 const LOCAL_NAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
-function originAllowed(origin) {
+function originAllowed(origin, tokenOkFlag) {
   if (!origin) return true;                       // 同源导航 / curl
-  if (String(origin).trim().toLowerCase() === 'null') return false;
+  /* null = file:// 页面，也是 sandbox iframe / data: 页面的 Origin。
+     两者请求头一模一样，只能靠令牌区分——没有令牌就当它是后者。 */
+  if (String(origin).trim().toLowerCase() === 'null') {
+    return Boolean(FILE_ORIGIN_ENABLED && tokenOkFlag);
+  }
   try {
     const u = new URL(origin);
     if (!['http:', 'https:'].includes(u.protocol)) return false;
@@ -625,12 +687,15 @@ function securityHeaders(res) {
 
 function cors(req, res) {
   const origin = req.headers.origin;
-  if (origin && originAllowed(origin)) {
+  /* null 只是「让页面能读到响应体」，不构成授权——授权靠令牌。
+     否则令牌填错时，用户只会看到一条 CORS 报错，无从排错。 */
+  const isNull = origin && String(origin).trim().toLowerCase() === 'null';
+  if (origin && (originAllowed(origin, tokenOk(req)) || (isNull && FILE_ORIGIN_ENABLED))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-HTerm-Provider, X-HTerm-Client');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-HTerm-Provider, X-HTerm-Client, X-HTerm-Token');
   res.setHeader('Access-Control-Max-Age', '600');
 }
 
@@ -680,13 +745,23 @@ function deny(req, res, reason, detail) {
   return false;
 }
 
-function localOnly(req, res) {
+function localOnly(req, res, preflight) {
   const peer = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
   if (!['127.0.0.1', '::1'].includes(peer)) return deny(req, res, 'peer', '仅允许本机访问');
   if (!ALLOWED_HOSTS.has(req.headers.host || '')) return deny(req, res, 'host', 'Host 不被允许（只接受 127.0.0.1 / localhost）');
   const origin = req.headers.origin;
-  if (!originAllowed(origin)) return deny(req, res, 'origin', 'Origin 不被允许（' + origin + '）');
-  if (String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site') {
+  /* preflight 只用于 OPTIONS：预检由浏览器发，带不了自定义头，这里无从验令牌，
+     先放行。预检没有副作用，真正拦人的是随后那条带令牌的请求。 */
+  if (!originAllowed(origin, tokenOk(req) || preflight)) {
+    if (String(origin || '').trim().toLowerCase() === 'null') {
+      return deny(req, res, 'origin', '本地文件页面需要访问令牌（见后端启动横幅）');
+    }
+    return deny(req, res, 'origin', 'Origin 不被允许（' + origin + '）');
+  }
+  /* file:// 页面的请求天然是 cross-site（不透明源），令牌已验过就放行。 */
+  const isNull = String(origin || '').trim().toLowerCase() === 'null';
+  if (String(req.headers['sec-fetch-site'] || '').toLowerCase() === 'cross-site'
+      && !((isNull && tokenOk(req)) || preflight)) {
     return deny(req, res, 'fetch-site', '跨站请求被拒绝');
   }
   return true;
@@ -707,7 +782,7 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
-  if (!localOnly(req, res)) return;
+  if (!localOnly(req, res, req.method === 'OPTIONS')) return;
   try {
     if (req.method === 'OPTIONS') {
       if (!req.headers.origin) {
@@ -809,7 +884,12 @@ const server = http.createServer(async (req, res) => {
       reply(req, res, 400, { error: { message: '本后端只支持非流式（stream:false）', type: 'bad_request' } });
       return;
     }
-    const provider = String(req.headers['x-hterm-provider'] || body.provider || DEFAULT_PROVIDER).toLowerCase();
+    /* 调用方式与模型只听服务端的：X-HTerm-Provider / body.provider 一律不看，
+     * body.model 用服务端配置覆盖。老前端照发也能用，只是不起作用。
+     * 这条挡的是「前端把 flash 改成 pro，账单跟着变」。 */
+    const provider = SERVER_PROVIDER;
+    body.model = SERVER_MODEL;
+    delete body.provider;
     const started = Date.now();
     let status, data;
     if (provider === 'openai' || provider === 'custom') [status, data] = await doOpenAI(body);
@@ -831,11 +911,19 @@ server.requestTimeout = 60000;
 server.keepAliveTimeout = 15000;
 server.maxConnections = 256;
 
+/* 命令行 > 环境变量 > 内置默认。改完立刻生效于所有请求；前端无从置喙。 */
+SERVER_MODEL = ARGS.model;
+SERVER_PROVIDER = ARGS.provider;
+
 server.listen(PORT, HOST, () => {
   console.log(`hterminal modelserver ${VERSION}`);
   console.log(`  listening  http://${HOST}:${PORT}`);
   console.log(`  features   ${[...ENABLED].sort().join(' · ')}`);
+  console.log(`  model      ${SERVER_PROVIDER} / ${SERVER_MODEL}（前端传的 model、provider 会被忽略）`);
   console.log(`  index.html ${INDEX_RAW ? INDEX_RAW.length + ' B（启动时快照）' : '缺失（/ 会 404）'}`);
+  console.log(FILE_ORIGIN_ENABLED
+    ? `  file://    ${FILE_TOKEN}\n             ↑ 双击 index.html 打开时，把它粘进页面顶部的提示条；重启会换`
+    : '  file://    已关闭（Origin: null 一律拒）');
   console.log(`  sandbox    ${ARGS.noSandbox ? '已跳过（--unsafe-no-self-restrict）' : 'off 本实现未内置平台沙箱（Python 版提供 Landlock/seatbelt）'}`);
   console.log('  limits     headers 15s · request 60s · max 256 连接');
   const rateText = (path, bucket, rpm) =>

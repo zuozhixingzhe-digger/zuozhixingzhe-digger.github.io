@@ -209,14 +209,15 @@ async function rawFetch(url) {
   const useBackend = String(Settings.get('agentMode') || 'backend') !== 'direct';
   const base = useBackend ? String(Settings.get('agentUrl') || '').replace(/\/+$/, '') : '';
   const tries = [];
-  if (base) {
+  /* file:// 页面没有令牌的话，这一档必然 403，先问一次；用户放弃就直接落到直连/代理。 */
+  if (base && await ensureFileToken('抓网页要走后端，需要一个访问令牌。')) {
     tries.push(async () => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 30000);
       try {
         const r = await fetch(base + '/v1/fetch', {
           method:'POST', signal:ctrl.signal, credentials:'omit',
-          headers:{ 'Content-Type':'application/json', 'X-HTerm-Client':'HTerMinaL' },
+          headers:{ 'Content-Type':'application/json', 'X-HTerm-Client':'HTerMinaL', ...FileToken.header() },
           body:JSON.stringify({ url })
         });
         const j = await r.json().catch(() => ({}));
@@ -1184,12 +1185,11 @@ class AgentApp {
         payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
       }
     } else {
-      /* file:// 的 Origin 是 null，后端的 null 校验会直接 403（与恶意 sandbox iframe 无法区分），
-       * 与其让用户看一条 CORS 报错，不如在这里说清楚该怎么办。 */
-      if (location.protocol === 'file:') {
-        throw new Error('这个页面是 file:// 打开的，浏览器把它的 Origin 置为 null，后端会当成跨站请求拒绝。'
-          + '请用 `python3 modelserver.py` 启动后打开 http://127.0.0.1:8787/ ，'
-          + '或在「更多 → 智能体」里勾选「直连 API」。');
+      /* file:// 页面要先拿到令牌：Origin 是 null，与公网页里的 sandbox iframe
+       * 在后端看来完全一样，只能靠令牌自证。 */
+      if (!(await ensureFileToken('发消息需要后端的访问令牌。'))) {
+        throw new Error('没有访问令牌，后端不会接受 file:// 页面的请求。'
+          + '令牌在启动后端的终端横幅里；也可以改用 http://127.0.0.1:8787/ 打开（同源，不需要令牌）。');
       }
       const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
       if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
@@ -1198,7 +1198,8 @@ class AgentApp {
       headers = {
         'Content-Type':'application/json',
         'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
-        'X-HTerm-Client':'HTerMinaL'
+        'X-HTerm-Client':'HTerMinaL',
+        ...FileToken.header()
       };
       payload = {
         model, provider: Settings.get('agentProvider') || 'openai',

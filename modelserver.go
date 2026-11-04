@@ -15,7 +15,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -37,7 +40,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.20"
+const version = "0.0.1.21"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -46,8 +49,11 @@ var (
 	anthropicKey     = os.Getenv("ANTHROPIC_API_KEY")
 	anthropicBase    = strings.TrimRight(envStr("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"), "/")
 	anthropicVersion = envStr("ANTHROPIC_VERSION", "2023-06-01")
-	defaultModel     = envStr("HT_MODEL", "gpt-4o-mini")
-	defaultProvider  = strings.ToLower(envStr("HT_DEFAULT_PROVIDER", "openai"))
+	// 模型与调用方式由服务端决定，前端说了不算（0.0.1.21）。
+	// 前端仍按标准 OpenAI 格式发 model（格式要求），值会被覆盖；
+	// 否则用户在页面上把 flash 改成 pro，账单就跟着变。
+	serverModel    = envStr("HT_MODEL", "gpt-4o-mini")
+	serverProvider = strings.ToLower(envStr("HT_PROVIDER", envStr("HT_DEFAULT_PROVIDER", "openai")))
 	timeout          = time.Duration(envInt("HT_TIMEOUT", 120)) * time.Second
 	maxBody          = int64(8 * 1024 * 1024)
 	allowedHosts     = map[string]bool{
@@ -74,6 +80,12 @@ var (
 	   也影响不到已经跑起来的实例（改文件要重启才生效）。 */
 	indexRaw  []byte
 	indexETag string
+	/* file:// 页面的访问令牌。file:// 与「公网页面里的 <iframe sandbox>」
+	   请求头逐字节相同（Origin: null / Sec-Fetch-Site: cross-site / 无 Referer），
+	   放行 null 等于放行所有网站；唯一不可伪造的区别是知不知道该令牌。
+	   只认 X-HTerm-Token 头，不认 query——query 会进日志和 Referer。 */
+	fileOriginEnabled = true
+	fileToken         string
 )
 
 /*
@@ -272,7 +284,7 @@ func doOpenAI(body map[string]any) (int, map[string]any) {
 		payload[k] = v
 	}
 	if asStr(payload["model"]) == "" {
-		payload["model"] = defaultModel
+		payload["model"] = serverModel
 	}
 	headers := map[string]string{"Content-Type": "application/json"}
 	if openaiKey != "" {
@@ -333,7 +345,7 @@ func toAnthropic(body map[string]any) map[string]any {
 	}
 
 	payload := map[string]any{
-		"model":      firstNonEmpty(asStr(body["model"]), defaultModel),
+		"model":      serverModel,
 		"max_tokens": asInt(firstNonNil(body["max_tokens"], body["max_completion_tokens"]), 4096),
 		"messages":   msgs,
 	}
@@ -483,7 +495,7 @@ func toResponses(body map[string]any) map[string]any {
 		}
 	}
 	payload := map[string]any{
-		"model": firstNonEmpty(asStr(body["model"]), defaultModel),
+		"model": serverModel,
 		"input": items,
 	}
 	if len(instructions) > 0 {
@@ -619,16 +631,16 @@ func firstNonNil(vals ...any) any {
 /* originAllowed：只认本机页面。
  *
  *   - 空（同源导航 / curl）：允许
- *   - "null"：拒绝。sandbox iframe / data: 页面的 Origin 就是 null，
- *     放过它等于任何网站都能用 <iframe sandbox srcdoc="fetch(...)"> 打本地端口。
+ *   - "null"：file:// 页面，也是 sandbox iframe / data: 页面的 Origin。
+ *     两者请求头一模一样，只能靠令牌区分——没有令牌就当它是后者，拒绝。
  *   - 其它：必须 http(s) 且 host 是本机名。端口不卡死（本地开发常换端口）。
  */
-func originAllowed(origin string) bool {
+func originAllowed(origin string, tokenOK bool) bool {
 	if origin == "" {
 		return true
 	}
 	if strings.EqualFold(strings.TrimSpace(origin), "null") {
-		return false
+		return fileOriginEnabled && tokenOK
 	}
 	u, err := url.Parse(origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
@@ -636,6 +648,15 @@ func originAllowed(origin string) bool {
 	}
 	h := u.Hostname()
 	return h == "127.0.0.1" || h == "localhost" || h == "::1"
+}
+
+/* tokenOK：常量时间比较，别用响应时间把令牌一位一位试出来。 */
+func tokenOK(r *http.Request) bool {
+	if fileToken == "" {
+		return false
+	}
+	got := r.Header.Get("X-HTerm-Token")
+	return subtle.ConstantTimeCompare([]byte(got), []byte(fileToken)) == 1
 }
 
 /* securityHeaders：每个响应都带。X-Frame-Options / frame-ancestors 是重点，
@@ -653,12 +674,16 @@ func securityHeaders(w http.ResponseWriter) {
 }
 
 func cors(w http.ResponseWriter, r *http.Request) {
-	if origin := r.Header.Get("Origin"); origin != "" && originAllowed(origin) {
+	origin := r.Header.Get("Origin")
+	/* null 只是「让页面能读到响应体」，不构成授权——授权靠令牌。
+	   否则令牌填错时，用户只会看到一条 CORS 报错，无从排错。 */
+	isNull := strings.EqualFold(strings.TrimSpace(origin), "null")
+	if origin != "" && (originAllowed(origin, tokenOK(r)) || (isNull && fileOriginEnabled)) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-HTerm-Provider, X-HTerm-Client")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-HTerm-Provider, X-HTerm-Client, X-HTerm-Token")
 	w.Header().Set("Access-Control-Max-Age", "600")
 }
 
@@ -685,7 +710,7 @@ func deny(w http.ResponseWriter, r *http.Request, reason, detail string) bool {
 }
 
 /* localOnly：四重校验 —— socket 层 / Host / Origin / Sec-Fetch-Site。 */
-func localOnly(w http.ResponseWriter, r *http.Request) bool {
+func localOnly(w http.ResponseWriter, r *http.Request, preflight bool) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
@@ -697,11 +722,19 @@ func localOnly(w http.ResponseWriter, r *http.Request) bool {
 	if !allowedHosts[r.Host] {
 		return deny(w, r, "host", "Host 不被允许（只接受 127.0.0.1 / localhost）")
 	}
-	if !originAllowed(r.Header.Get("Origin")) {
-		return deny(w, r, "origin", "Origin 不被允许（"+r.Header.Get("Origin")+"）")
+	origin := r.Header.Get("Origin")
+	/* preflight 只用于 OPTIONS：预检由浏览器发，带不了自定义头，这里无从验令牌，
+	   先放行。预检没有副作用，真正拦人的是随后那条带令牌的请求。 */
+	if !originAllowed(origin, tokenOK(r)||preflight) {
+		if strings.EqualFold(strings.TrimSpace(origin), "null") {
+			return deny(w, r, "origin", "本地文件页面需要访问令牌（见后端启动横幅）")
+		}
+		return deny(w, r, "origin", "Origin 不被允许（"+origin+"）")
 	}
-	/* Sec-Fetch-Site 是浏览器自己打的标，页面改不了：cross-site 一律拒。 */
-	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+	/* Sec-Fetch-Site 是浏览器自己打的标，页面改不了：cross-site 一律拒。
+	   file:// 页面的请求天然是 cross-site（不透明源），令牌已验过就放行。 */
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") &&
+		!((strings.EqualFold(strings.TrimSpace(origin), "null") && tokenOK(r)) || preflight) {
 		return deny(w, r, "fetch-site", "跨站请求被拒绝")
 	}
 	return true
@@ -778,7 +811,7 @@ func rateGate(w http.ResponseWriter, r *http.Request, b *tokenBucket, label stri
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	if !localOnly(w, r) {
+	if !localOnly(w, r, r.Method == http.MethodOptions) {
 		return
 	}
 	if r.Method == http.MethodOptions {
@@ -888,7 +921,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, 400, map[string]any{"error": map[string]any{"message": "本后端只支持非流式（stream:false）", "type": "bad_request"}})
 		return
 	}
-	provider := strings.ToLower(firstNonEmpty(r.Header.Get("X-HTerm-Provider"), asStr(body["provider"]), defaultProvider))
+	// 调用方式与模型只听服务端的：X-HTerm-Provider / body.provider 一律不看，
+	// body.model 用服务端配置覆盖。老前端照发也能用，只是不起作用（0.0.1.21）。
+	provider := serverProvider
+	body["model"] = serverModel
+	delete(body, "provider")
 	started := time.Now()
 	var status int
 	var data map[string]any
@@ -1189,12 +1226,39 @@ func main() {
 	fetchRpm := flag.Int("fetch-rpm", envInt("HT_FETCH_RPM", 120), "抓网页每分钟上限，0 关闭")
 	noChat := flag.Bool("no-chat", false, "关闭模型请求（/v1/chat/completions）")
 	noFetch := flag.Bool("no-fetch", false, "关闭网页抓取（/v1/fetch）")
+	fileTokenFlag := flag.String("file-token", envStr("HT_FILE_TOKEN", ""),
+		"file:// 页面用的访问令牌；默认每次启动随机生成（打印在横幅里）")
+	noFileOrigin := flag.Bool("no-file-origin", false, "不接受 file:// 打开的页面（Origin: null 一律拒）")
+	modelFlag := flag.String("model", serverModel, "固定模型名；前端传的 model 会被忽略")
+	providerFlag := flag.String("provider", serverProvider, "固定调用方式；前端传的 provider 会被忽略")
 	/* 与 Python 版同名同义。Go 版没有内置平台沙箱（见 README §13.6），
 	   这个开关保留是为了三份后端命令行一致，脚本不用为它们写分支。 */
 	noSandbox := flag.Bool("unsafe-no-self-restrict", false,
 		"跳过平台自沙箱（本实现未内置，保留参数以保持三份后端命令行一致）")
 	flag.Parse()
 	_ = noSandbox
+	// 命令行 > 环境变量 > 内置默认。改完立刻生效于所有请求；前端无从置喙。
+	serverModel = strings.TrimSpace(*modelFlag)
+	serverProvider = strings.ToLower(strings.TrimSpace(*providerFlag))
+	if serverModel == "" {
+		log.Fatal("--model 不能为空")
+	}
+
+	fileOriginEnabled = !*noFileOrigin
+	if fileOriginEnabled {
+		fileToken = strings.TrimSpace(*fileTokenFlag)
+		if fileToken == "" {
+			// 每次启动换一把。重启后要重新粘一次——这是有意的：
+			// 固定令牌迟早会被写进脚本、截图、聊天记录里。
+			buf := make([]byte, 18)
+			if _, err := rand.Read(buf); err != nil {
+				log.Fatalf("生成访问令牌失败：%v", err)
+			}
+			fileToken = base64.RawURLEncoding.EncodeToString(buf)
+		} else if len(fileToken) < 12 {
+			log.Fatal("--file-token 太短（至少 12 字符），会被轻易猜中")
+		}
+	}
 
 	/* 功能注册表。将来加接口只在这里加一行，全关判定与路由白名单自动跟着变。 */
 	features := []struct {
@@ -1255,11 +1319,18 @@ func main() {
 	fmt.Printf("hterminal modelserver %s\n", version)
 	fmt.Printf("  listening  http://%s\n", addr)
 	fmt.Printf("  features   %s\n", strings.Join(enabledPaths, " · "))
+	fmt.Printf("  model      %s / %s（前端传的 model、provider 会被忽略）\n", serverProvider, serverModel)
 	fmt.Printf("  sandbox    off 本实现未内置平台沙箱（Python 版提供 Landlock/seatbelt）\n")
 	if indexRaw != nil {
 		fmt.Printf("  index.html %d B（启动时快照）\n", len(indexRaw))
 	} else {
 		fmt.Printf("  index.html 缺失（/ 会 404）\n")
+	}
+	if fileOriginEnabled {
+		fmt.Printf("  file://    %s\n", fileToken)
+		fmt.Printf("             ↑ 双击 index.html 打开时，把它粘进页面顶部的提示条；重启会换\n")
+	} else {
+		fmt.Printf("  file://    已关闭（Origin: null 一律拒）\n")
 	}
 	fmt.Printf("  rate       chat %s · fetch %s\n",
 		rateText("/v1/chat/completions", *rpm > 0, *rpm),

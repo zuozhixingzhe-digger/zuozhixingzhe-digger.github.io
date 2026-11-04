@@ -1196,7 +1196,7 @@ python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | `GET` | `/` `/index.html` | **直接返回同目录下的 `index.html`**，于是 `python3 modelserver.py` 一条命令就能把这个终端跑在 `http://127.0.0.1:8787` |
-| `GET` | `/health` | `{"ok":true,"version":"0.0.0.5",...}`，前端启动后自动探测 |
+| `GET` | `/health` | `{"ok":true,"service":"hterminal-modelserver","version":"…"}`，前端启动后自动探测（0.0.1.22 起收敛为 `{"ok":true}`） |
 | `POST` | `/v1/chat/completions` | Chat Completions 标准格式，**模型调用只用这一种**；`--no-chat` 可关 |
 | `POST` | `/v1/fetch` | 代抓网页：`{"url":"https://…"}` → `{status, finalUrl, contentType, text}`。**只有后端模式会用到**；`--no-fetch` 可关 |
 | `OPTIONS` | `*` | CORS 预检，返回 204；**必须带 `Origin` 且通过校验**，否则 403 |
@@ -1217,8 +1217,37 @@ python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起�
 立刻拿到新正文。既不用手动强刷，也不用重下整包。CDN 上的 xterm / marked / pyodide 本来就带
 `max-age=31536000`，浏览器会自己复用，这两项加起来才是首屏的真正开销。
 
-请求头：`X-HTerm-Client: HTerMinaL`（必带，**大小写不敏感**，否则 403）、`X-HTerm-Provider: openai|anthropic|responses`。
-上游格式由它自己双向转换，包括 `tool_calls` ↔ Anthropic `tool_use` / Responses `function_call`。
+请求头：`X-HTerm-Client: HTerMinaL`（必带，**大小写不敏感**，否则 403）。
+`X-HTerm-Provider` 老前端还在发，0.0.1.21 起**后端不再读取**（见下一节）。
+
+### 统一请求格式：一份 payload，走后端和直连都一样（0.0.1.21）
+
+前端只有**一种**请求体的写法——标准 OpenAI Chat Completions：
+
+```json
+POST /v1/chat/completions
+{ "model": "随便写", "messages": [...], "tools": [...], "tool_choice": "auto" }
+```
+
+这份 payload 发给我们的后端、还是发给外部 API，**长得完全一样**，前端不用为两种
+接法各写一套代码。兼容性具体落在三点：
+
+| 字段 | 后端怎么处理 | 为什么 |
+| --- | --- | --- |
+| `Authorization: Bearer …` | **忽略**，随便填或不填都过 | 后端用环境变量里的真钥匙；前端不该有、也不需要有钥匙 |
+| `model` | **忽略**，用 `--model` / `HT_MODEL` 覆盖 | 防止把 `deepseek-chat`（Flash）改成更贵的 Pro，花你的钱 |
+| `provider` / `X-HTerm-Provider` | **忽略**，用 `--provider` / `HT_PROVIDER` | 调用方式（OpenAI / Anthropic / Responses）同样不由调用方挑 |
+
+「忽略」是**覆盖**而不是「报错」：老前端照常发 `model`、发 `X-HTerm-Provider`
+也能用，只是不起作用。`do_openai` 里再钉一次 `payload["model"] = SERVER_MODEL`，
+是防止将来有人绕过路由入口直接调这个函数（双保险）。
+
+`base_url` / `api_key` / `headers` / `proxy` 这类控制字段早在 0.0.1.20 就剥掉了，
+这里不重复。
+
+**换模型是运维动作，不是前端动作**：改 `--model` 或 `HT_MODEL` 后重启后端。
+后端不做「运行时自动换模型 / 多模型轮询 / 失败降级」——那属于复杂逻辑，
+会扩大攻击面（见 §13 零信任四条红线）。
 
 ### 安全模型
 
@@ -1229,11 +1258,13 @@ python3 modelserver.py --unsafe-no-self-restrict   # 裸机/老内核跑不起�
    挡 **DNS rebinding**——`evil.com` 解析到 `127.0.0.1` 时浏览器会把这个请求当同源，
    但 `Host` 头仍然是 `evil.com`，这一层直接拒。
 3. **Origin 白名单**：必须是 `http(s)://127.0.0.1[:port]` / `localhost` / `[::1]`。
-   **`Origin: null` 一律拒绝**——`file://` 页面、`data:` 页面、sandbox iframe 的 Origin 都是 `null`，
-   放过它等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">`
-   绕过同源策略打你的本地端口。
+   **`Origin: null` 默认一律拒绝**——`file://` 页面、`data:` 页面、sandbox iframe 的
+   Origin 都是 `null`，放过它等于任何网站都能用
+   `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` 绕过同源策略打你的本地端口。
+   **唯一例外**：0.0.1.21 起，带正确访问令牌的本地 `file://` 页面可放行（见下节）。
 4. **`Sec-Fetch-Site: cross-site` 一律拒**。这是浏览器自己打的标，页面改不了，
    等于把「公网网页 → 本地端口」这条最现实的路彻底堵死。
+   例外同上：令牌验过的本地文件页面，其请求天然是 `cross-site`。
 
 **局域网里的人能不能连？** 不能，而且是两层独立的「不能」：
 
@@ -1270,6 +1301,36 @@ CORS 头只在 Origin 通过校验后**回显该 Origin**，绝不回 `*`，也�
 沙箱里自带录音机和定位，而 `()` 会让页内的 `getUserMedia` 直接抛
 `Permissions policy violation: microphone is not allowed in this document`——
 工具做出来了也用不了。`(self)` 只对本页面开放，第三方 iframe 仍然拿不到。
+
+### 本地文件页面（`file://`）的令牌通道（0.0.1.21）
+
+有个现实需求：把 `index.html` 拷到别处、直接双击打开，也想用后端。
+但 `file://` 页面的 `Origin` 是 `null`，跟公网页里那个
+`<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` **在 HTTP 层完全一样**——
+浏览器不给任何能把两者分开的头。0.0.1.20 之前只能一律拒。
+
+0.0.1.21 的方案是「让用户手工搬一次秘密」，而不是靠 HTTP 头去猜：
+
+1. 后端启动时用 CSPRNG 生成一枚随机令牌，打印在**服务端控制台横幅**里
+   （`file://` 那一行）；也可用 `--file-token T` / `HT_FILE_TOKEN` 自己指定，
+   太短的令牌直接拒绝启动。**令牌不经过任何网络响应下发。**
+2. 用户在页面顶部的提示条把令牌粘进去，前端存进 `sessionStorage`，
+   之后每个请求带 `X-HTerm-Token`。
+3. 后端只有在 `Origin: null` **且** 令牌用常量时间比较验证通过时，
+   才放开 `null` 与 `cross-site` 这两条；否则回 403，且不提示令牌内容，
+   只说「见后端启动横幅」。
+
+关键在于：**公网页面里的 sandbox iframe 拿不到这枚令牌**。它不是从网络上发的，
+是用户看着自己机器上的控制台抄进页面的；猜也没用（短令牌拒启动、随机生成、
+重启就换）。`OPTIONS` 预检由浏览器自己发、带不了自定义头，所以预检阶段先放行
+（预检无任何副作用），真正拦人的是随后那条带令牌的实际请求。
+
+`--no-file-origin` 可以把这条通道完全关掉，退回「`null` 一律拒」。
+
+自测：`pentest-scripts/file_origin.py` 48 项（含三种后端、短令牌、大小写、
+误绑兜底），`file_origin_e2e.py` 7 项（无头 Chrome 真开 `file://` 页面：
+弹窗 → 输令牌 → 连后端 → 错令牌提示 → 真发一次 `/v1/fetch`）。
+e2e 脚本自包含，自己起后端、跑完自己关。
 
 ### 后端不相信前端的哪些话（0.0.1.20）
 
@@ -2616,6 +2677,24 @@ Node 版手写了一张 `BlockList`，也拒。三份实现各写一套，只有
 教训：**「透传」不是「信任」的同义词，但代码里很容易写成「信任」**——凡是把
 「用户给的整个对象」发给第三方之前，先问一句：这里面有没有能改变「发给谁」的字段。
 
+**70. `file://` 的 `null` 和恶意 iframe 的 `null`，在 HTTP 层没有任何区别**
+想让「双击打开的本地 index.html」也能用后端，第一反应是「放行 `Origin: null`」。
+实测把请求头打出来看：`file://` 页面和公网页里 `<iframe sandbox srcdoc="…">` 发出的请求，
+`Origin` 都是 `null`、`Sec-Fetch-Site` 都是 `cross-site`、`Referer` 都是空——
+浏览器**不提供任何可以区分两者的头**。放行 `null` 就等于给所有网站开了一扇打本地端口的门。
+**修法**：不猜身份，改为带外搬一枚秘密——后端启动时生成随机令牌打印在**服务端控制台**，
+用户手工抄进页面，请求带 `X-HTerm-Token`；令牌不经过任何网络响应，公网 iframe 无从得知。
+预检带不了自定义头，就先放行无副作用的 `OPTIONS`，真正拦人在带令牌的实际请求。
+教训：**当协议层无法证明「你是谁」，别在协议层硬凑一个判断**，换一条带外通道。
+
+**71. 端到端测试自己不起后端，失败是假的、通过也是假的**
+`file_origin_e2e.py` 写完时四次全过，隔天再跑变成 3 个「未连接」+ 1 个 `Failed to fetch`——
+脚本假设 8893 上已经有人手工起好了带令牌的后端，没人起就全灭。这类失败最烦人：
+它长得像功能回归，实际只是一次漏操作，而且会诱导人去改本来没问题的代码。
+**修法**：脚本先探测后端是否就绪，没有就自己 `Popen` 起一个、轮询 `/health` 等就绪，
+`try/finally` 里只关自己起的那个（复用别人的进程时绝不越权去关）。
+教训：**验收脚本必须自包含**；依赖「人记得先做某一步」的测试，迟早会给出不可信的结论。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -2673,7 +2752,7 @@ Node 版手写了一张 `BlockList`，也拒。三份实现各写一套，只有
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
-| 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |
+| 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |\n| 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |
 | 0.0.1.19 | 2026-11-04 | **局域网可达面复查**：①三份后端都只 `listen(127.0.0.1)`，从同网段地址直连一律 `Connection refused`；应用层 peer 校验作为第二道，即使把 `HOST` 误改成 `0.0.0.0`，非回环请求仍回 `403 仅允许本机访问`。②**修掉 Go 版一个真缺口**：`IsGlobalUnicast && !IsPrivate` 把 `100.64.0.0/10`（RFC 6598 CGNAT，Tailscale / ZeroTier 默认网段）当成公网，`/v1/fetch` 可被诱导读整个虚拟内网；改成显式网段表，与 Python `is_global`、Node `BlockList` 对齐，并补 `192.88.99/24`、`2001::/32`、`2001:2::/48`、`2001:10::/28`、`5f00::/8`、`100::/64`。③新增 `pentest-scripts/lan_access.py`：三份各 19 项 + 误绑兜底 2 项，59 项全过。④文档：§13 安全模型补「局域网能不能连」，SSRF 边界补网段清单，踩坑 68。 |
 | 0.0.1.18 | 2026-11-04 | **进程自沙箱 + 原子化改造 + 前端真机六轮**：①**平台沙箱**——Linux 用 Landlock（`ctypes` 直调 `syscall 444/445/446`，零依赖）把后端自己的文件权限收成白名单：读只放系统库 / CA / DNS 配置，写只有 `/dev/null`，网络不声明（出网照常）；macOS 用 seatbelt 禁写；Windows 明确不支持。拿不到就打印原因退化成无沙箱，绝不假装开着。`--unsafe-no-self-restrict` / `HT_NO_SELF_RESTRICT=1` 是逃生门。启动后自检「读 /etc/passwd、写 /tmp」并把结果打进横幅。②**原子化**——`/v1/fetch` 建连后校验**真实对端**（`getpeername` / `RemoteAddr` / `remoteAddress`），不再只信「解析结果」；`index.html` 启动时 `O_NOFOLLOW` + `fstat` 读进内存，请求阶段不碰磁盘；路由白名单冻结成不可变集合；3xx 禁止 `https → http` 降级。③**前端两个真 bug**——`loadSession` 覆盖刚 push 的用户消息（TUI 的 `agent("…")` 必踩，表现为「你说的话没进去，它在自我介绍」）；错误响应不关连接导致 `keep-alive` 下把残留 body 当请求行解析，冒出 HTML 400（`200→429→400→429`）。④**真机验证**——DeepSeek 真 key，无头 Chromium 打 `http://127.0.0.1:8787/`，六轮对话（含 `write_file` / `read_file` / `news` / 上下文回忆 / 算术）全部 2.9–3.9 s 通过，10 次后端调用全 200；TUI 路径从「必失败」修到 0.4 s 正确回复；限流下前端正确显示「模型请求过于频繁（上限 5 次/分），请 3 秒后再试」。⑤文档：§13 新增「进程自沙箱」「原子化」，踩坑 65–67。 |
 | 0.0.1.17 | 2026-11-03 | **速率限制 + 功能开关 + 威胁模型写进文档**：①**限流**——按路由分两个令牌桶（模型 60 次/分、抓网页 120 次/分，突发 20），超限回 429 + `Retry-After` + `X-RateLimit-*`。不用固定窗口是因为它在边界会放过两倍突发、空闲期又不攒额度。`burst` 按「一轮任务最多几次模型调用」定（实测一轮 8 次 0 个 429），不按最坏情况定——取小了先被挡住的是自己。失败不扣令牌、`OPTIONS` 不限、日志只报第 1 次和每 50 次。②**功能开关**——`--no-chat` / `--no-fetch` 分别关两条路由；关闭的接口与瞎猜的路径走**同一条分支**，状态码、头、正文逐字节一致（回「功能已关闭」等于承认这里有个接口）。`/health` 同步砍掉 `providers` 能力清单，只回 `ok`。两个都关直接 `exit 2`，端口不开——监听一个只回 403 的端口本身就是情报。判定走 `FEATURES` 表，将来加接口只加一行。③参数支持命令行与环境变量（`--rpm` / `--burst` / `--fetch-rpm`，`HT_RPM` / `HT_BURST` / `HT_FETCH_RPM`），三份后端行为一致。④**文档**——§13 新增「速率限制」「功能开关」「威胁模型：能做什么，做不到什么」（信任域四级、攻击对照表、提示词注入链、误操作清单、三条不打算改的取舍），踩坑 63–64。自测：限流 26 项、开关 27 项，全过。 |

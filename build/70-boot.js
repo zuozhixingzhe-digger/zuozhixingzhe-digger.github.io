@@ -488,18 +488,23 @@ const Drawer = {
   async checkBackend() {
     const el = $('#stBackend');
     if (!el) return;   /* 页面可能已被 document.write 拆掉 */
-    /* file:// 页面的 Origin 是 null，后端一律拒（见 README「双击打开 ≠ 能用后端」）。
-     * 这里不发起请求，直接说清楚状态，免得每次开抽屉都往控制台丢一条 CORS 错误。 */
-    if (location.protocol === 'file:') {
-      el.textContent = 'file:// 下不可用 · 请用 modelserver 打开';
-      el.style.color = 'var(--fg-mute)';
+    /* file:// 页面要先有令牌：Origin 是 null，后端与公网页里的 sandbox iframe
+     * 分不开，只能靠令牌。没令牌就别发请求，免得每次开抽屉往控制台丢一条 CORS 错误。 */
+    if (FileToken.active() && !FileToken.get()) {
+      el.textContent = '本地文件模式 · 需要令牌';
+      el.style.color = 'var(--amber)';
       return;
     }
     const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
     if (!base) { el.textContent = '未配置'; return; }
     try {
-      const r = await fetch(base + '/health', { cache:'no-store' });
+      const r = await fetch(base + '/health', { cache:'no-store', headers: FileToken.header() });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 403 && FileToken.active() && !j.ok) {
+        el.textContent = '令牌无效（重启后端会换新的）';
+        el.style.color = 'var(--red)';
+        return;
+      }
       el.textContent = r.ok ? ('在线 · ' + (j.provider || 'ready')) : ('HTTP ' + r.status);
       el.style.color = r.ok ? 'var(--green)' : 'var(--amber)';
     } catch (e) {
@@ -982,6 +987,14 @@ async function boot() {
 
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
+
+    /* 双击 index.html 打开：先把令牌要到手，否则后面每一处请求都会被后端拒。
+       只弹这一次——用户取消后不再打扰，发消息时会再问。 */
+    if (FileToken.active() && !FileToken.get()) {
+      setTimeout(() => {
+        askFileToken('这个页面是双击 index.html 打开的（file://）。');
+      }, 900);
+    }
 
     // URL 里带 ?code=... 时自动执行
     try {

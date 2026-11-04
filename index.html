@@ -5774,7 +5774,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.20';
+const HT_VERSION = '0.0.1.21';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -5953,6 +5953,62 @@ function confirmDlg(title, text, danger) {
     body: `<div style="line-height:1.75">${text}</div>`,
     buttons: [{ label:'取消', value:false }, { label:'确认', value:true, primary:!danger, danger }]
   });
+}
+
+/* ---------------------------------------------------------------- 本地文件模式
+ * 双击 index.html 打开时，页面是 file:// 源，浏览器把它的 Origin 标成 "null"——
+ * 与公网页里的 <iframe sandbox> 逐字节相同（Origin: null / Sec-Fetch-Site:
+ * cross-site / 无 Referer）。后端无法在头里区分这两者，所以要求出示令牌：
+ * 令牌由后端启动时随机生成，打印在终端横幅里，只有看着终端的人拿得到。
+ *
+ * 存 sessionStorage 而不是 localStorage：实测 file:// 的 localStorage 是
+ * 所有本地文件共享的，存在那儿等于把「双击任何一个下载的 HTML」也变成有权限。
+ * sessionStorage 是标签页级的，关掉就没了。 */
+const FileToken = {
+  KEY: 'ht.fileToken',
+  get() { try { return sessionStorage.getItem(this.KEY) || ''; } catch (e) { return ''; } },
+  set(v) {
+    try { v ? sessionStorage.setItem(this.KEY, v) : sessionStorage.removeItem(this.KEY); } catch (e) {}
+  },
+  /* 只有 file:// 才需要令牌；http://127.0.0.1:8787/ 打开是同源，不需要 */
+  active() { return location.protocol === 'file:'; },
+  header() {
+    const t = this.get();
+    return (this.active() && t) ? { 'X-HTerm-Token': t } : {};
+  },
+};
+
+function askFileToken(reason) {
+  return modal({
+    title: '本地文件模式：需要访问令牌',
+    body: `<div style="line-height:1.75">
+      <p>${esc(reason || '这个页面是双击 index.html 打开的（file://）。')}</p>
+      <p>浏览器的安全模型把它和「公网页里的沙箱 iframe」当成同一种东西——后端在请求头里
+         看不到任何区别，所以只能请你出示令牌。</p>
+      <p>在<b>启动后端的终端</b>里找 <code>file://</code> 开头那一行，把后面的字符串粘进来。
+         每次重启后端会换一个新的。</p>
+      <input id="fileTokInp" placeholder="粘贴令牌" autocomplete="off" spellcheck="false"
+             style="width:100%;padding:9px 11px;border-radius:8px;border:1px solid var(--line);
+                    background:var(--bg);color:var(--fg);font:inherit">
+      <p style="margin-top:10px;color:var(--fg-mute);font-size:12px">
+         不想每次粘贴的话，改用 <code>http://127.0.0.1:8787/</code> 打开——同源，不需要令牌。</p>
+    </div>`,
+    buttons: [
+      { label:'取消', value:null },
+      { label:'保存', primary:true, onClick: (w) => {
+          const v = (($('#fileTokInp', w) || {}).value || '').trim();
+          if (!v) return false;
+          FileToken.set(v);
+          return true;
+        } }
+    ],
+  });
+}
+
+/* 需要时弹一次输入框。返回 false 表示用户放弃——调用方据此走「说清楚为什么不行」。 */
+async function ensureFileToken(reason) {
+  if (!FileToken.active() || FileToken.get()) return true;
+  return (await askFileToken(reason)) === true;
 }
 
 /* ---------------------------------------------------------------- 路径规则
@@ -13644,14 +13700,15 @@ async function rawFetch(url) {
   const useBackend = String(Settings.get('agentMode') || 'backend') !== 'direct';
   const base = useBackend ? String(Settings.get('agentUrl') || '').replace(/\/+$/, '') : '';
   const tries = [];
-  if (base) {
+  /* file:// 页面没有令牌的话，这一档必然 403，先问一次；用户放弃就直接落到直连/代理。 */
+  if (base && await ensureFileToken('抓网页要走后端，需要一个访问令牌。')) {
     tries.push(async () => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 30000);
       try {
         const r = await fetch(base + '/v1/fetch', {
           method:'POST', signal:ctrl.signal, credentials:'omit',
-          headers:{ 'Content-Type':'application/json', 'X-HTerm-Client':'HTerMinaL' },
+          headers:{ 'Content-Type':'application/json', 'X-HTerm-Client':'HTerMinaL', ...FileToken.header() },
           body:JSON.stringify({ url })
         });
         const j = await r.json().catch(() => ({}));
@@ -14619,12 +14676,11 @@ class AgentApp {
         payload.thinking = { type: Settings.get('agentThinking') === '1' ? 'enabled' : 'disabled' };
       }
     } else {
-      /* file:// 的 Origin 是 null，后端的 null 校验会直接 403（与恶意 sandbox iframe 无法区分），
-       * 与其让用户看一条 CORS 报错，不如在这里说清楚该怎么办。 */
-      if (location.protocol === 'file:') {
-        throw new Error('这个页面是 file:// 打开的，浏览器把它的 Origin 置为 null，后端会当成跨站请求拒绝。'
-          + '请用 `python3 modelserver.py` 启动后打开 http://127.0.0.1:8787/ ，'
-          + '或在「更多 → 智能体」里勾选「直连 API」。');
+      /* file:// 页面要先拿到令牌：Origin 是 null，与公网页里的 sandbox iframe
+       * 在后端看来完全一样，只能靠令牌自证。 */
+      if (!(await ensureFileToken('发消息需要后端的访问令牌。'))) {
+        throw new Error('没有访问令牌，后端不会接受 file:// 页面的请求。'
+          + '令牌在启动后端的终端横幅里；也可以改用 http://127.0.0.1:8787/ 打开（同源，不需要令牌）。');
       }
       const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
       if (!base) throw new Error('未配置后端地址。请先启动 modelserver，并在「更多 → 智能体」里填写地址。');
@@ -14633,7 +14689,8 @@ class AgentApp {
       headers = {
         'Content-Type':'application/json',
         'X-HTerm-Provider': Settings.get('agentProvider') || 'openai',
-        'X-HTerm-Client':'HTerMinaL'
+        'X-HTerm-Client':'HTerMinaL',
+        ...FileToken.header()
       };
       payload = {
         model, provider: Settings.get('agentProvider') || 'openai',
@@ -16234,18 +16291,23 @@ const Drawer = {
   async checkBackend() {
     const el = $('#stBackend');
     if (!el) return;   /* 页面可能已被 document.write 拆掉 */
-    /* file:// 页面的 Origin 是 null，后端一律拒（见 README「双击打开 ≠ 能用后端」）。
-     * 这里不发起请求，直接说清楚状态，免得每次开抽屉都往控制台丢一条 CORS 错误。 */
-    if (location.protocol === 'file:') {
-      el.textContent = 'file:// 下不可用 · 请用 modelserver 打开';
-      el.style.color = 'var(--fg-mute)';
+    /* file:// 页面要先有令牌：Origin 是 null，后端与公网页里的 sandbox iframe
+     * 分不开，只能靠令牌。没令牌就别发请求，免得每次开抽屉往控制台丢一条 CORS 错误。 */
+    if (FileToken.active() && !FileToken.get()) {
+      el.textContent = '本地文件模式 · 需要令牌';
+      el.style.color = 'var(--amber)';
       return;
     }
     const base = String(Settings.get('agentUrl') || '').replace(/\/+$/, '');
     if (!base) { el.textContent = '未配置'; return; }
     try {
-      const r = await fetch(base + '/health', { cache:'no-store' });
+      const r = await fetch(base + '/health', { cache:'no-store', headers: FileToken.header() });
       const j = await r.json().catch(() => ({}));
+      if (r.status === 403 && FileToken.active() && !j.ok) {
+        el.textContent = '令牌无效（重启后端会换新的）';
+        el.style.color = 'var(--red)';
+        return;
+      }
       el.textContent = r.ok ? ('在线 · ' + (j.provider || 'ready')) : ('HTTP ' + r.status);
       el.style.color = r.ok ? 'var(--green)' : 'var(--amber)';
     } catch (e) {
@@ -16728,6 +16790,14 @@ async function boot() {
 
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
+
+    /* 双击 index.html 打开：先把令牌要到手，否则后面每一处请求都会被后端拒。
+       只弹这一次——用户取消后不再打扰，发消息时会再问。 */
+    if (FileToken.active() && !FileToken.get()) {
+      setTimeout(() => {
+        askFileToken('这个页面是双击 index.html 打开的（file://）。');
+      }, 900);
+    }
 
     // URL 里带 ?code=... 时自动执行
     try {
