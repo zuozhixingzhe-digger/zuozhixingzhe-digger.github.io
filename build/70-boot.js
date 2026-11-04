@@ -178,7 +178,7 @@ const RPC = {
       }
       case 'util.algos': return HASH_ALGS.slice();
       /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
-       * HSL 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+       * hsl1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
       case 'util.codec': {
         const op = String(a[0] || '');
         const d = a[1];
@@ -369,6 +369,14 @@ const Drawer = {
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 120, 1, 120));
+    /* 访问令牌：专门一栏，直接写 sessionStorage（不进 localStorage / IndexedDB）。
+     * 留空即清除；改完立刻重新探测后端，状态栏会跟着变。 */
+    const ftok = $('#setFileToken');
+    if (ftok) ftok.onchange = e => {
+      FileToken.set(e.target.value.trim());
+      toast(FileToken.get() ? '访问令牌已保存' : '访问令牌已清除');
+      try { this.checkBackend(); } catch (_) {}
+    };
 
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
     $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
@@ -409,6 +417,7 @@ const Drawer = {
     $('#setAgentProvider').value = Settings.get('agentProvider');
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
+    if ($('#setFileToken')) $('#setFileToken').value = FileToken.get();
     this.syncAgentMode();
     applyTheme();   // 顺带把「主题」那行的取值刷新成当前系统主题
     $('#stVersion').textContent = 'v' + HT_VERSION;
@@ -743,52 +752,59 @@ function installWindowAPI() {
   });
 }
 
-/* ---------------------------------------------------------------- 快捷键 */
+/* ---------------------------------------------------------------- 快捷键
+ * 规则（用户定稿）：
+ *   · 顶栏只剩 Ctrl 修饰键按钮；Alt / Shift 按钮已砍掉。
+ *   · 原来那批 Ctrl-Shift-T/B/A/F/P/E/W/M/D/Enter 全改成 Alt-T/B/A/F/…/Enter。
+ *   · Ctrl 全部保留给终端：应用不拦截、不 preventDefault（唯一例外 Ctrl-, 开设置）。
+ *   · Ctrl-Shift-C / V 是终端文本的复制 / 粘贴，不捕获。
+ *   · Ctrl-Alt 组合一律不捕获（交回浏览器 / 系统，AltGr 也走这里）。
+ *   · Alt 一律捕获（preventDefault）：已映射的执行动作，其余「直接吞掉」，
+ *     不交给终端、也不触发浏览器菜单——给以后的 Alt 功能预留键位。
+ *   · F5 / F11 / F12、Escape 关抽屉等其它行为保留。
+ */
 function installKeys() {
   window.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
-    if (/^F\d+$/.test(e.key)) return;
+    if (/^F\d+$/.test(e.key)) return;          // F 键交给浏览器 / xterm 的自定义 handler
     if (e.key === 'Escape') {
       if ($('#drawer').classList.contains('on')) { Drawer.close(); e.preventDefault(); }
       return;
     }
-    if (!e.ctrlKey || e.metaKey) return;
     const k = e.key.toLowerCase();
-    const inTerm = !!e.target.closest && !!e.target.closest('.xterm');
-    // 终端语义键不抢
-    if (inTerm && !e.shiftKey && !e.altKey && ['c', 'd', 'l', 'a', 'e', 'u', 'k', 'w', 'z', '\\', 'r'].includes(k)) return;
-    // 输入框里的编辑快捷键不抢
-    if (isTypingTarget(e.target) && !e.shiftKey && ['a', 'c', 'v', 'x', 'z', 'y'].includes(k)) return;
-    // 给开发者工具留门
-    if (e.shiftKey && ['i', 'j', 'c'].includes(k)) return;
-    if (e.shiftKey && (e.key === 'Enter')) { e.preventDefault(); toggleFullscreen(); return; }
-    if (e.shiftKey) {
-      const map = { t:'term', b:'browser', a:'agent', f:'files', p:'python', e:'editor', w:'close', m:'max', d:'desk' };
-      if (map[k]) {
-        e.preventDefault();
-        if (k === 'w') WindowManager.closeFocused();
-        else if (k === 'm') { const w = WindowManager.focused(); if (w) WindowManager.toggleMax(w.id); }
-        else if (k === 'd') { for (const w of WindowManager.windows.values()) WindowManager.minimize(w.id); }
-        else if (k === 'e') WindowManager.open({ type:'editor', path:'.home.welcome', title:'welcome' });
-        else if (k === 'p') WindowManager.open({ type:'python' });
-        else if (k === 't') WindowManager.open({ type:'shell' });
-        else if (k === 'b') WindowManager.open({ type:'browser' });
-        else if (k === 'f') WindowManager.open({ type:'files' });
-        else if (k === 'a') WindowManager.open({ type:'agent' });
-        return;
-      }
-    }
-    if (e.key === ',') { e.preventDefault(); Drawer.opened ? Drawer.close() : Drawer.open(); return; }
-    // 其余 Ctrl 组合一律接管（Win / F 键除外）
-    e.preventDefault();
-  }, true);
+    const ctrl = e.ctrlKey, alt = e.altKey, shift = e.shiftKey, meta = e.metaKey;
+    if (meta) return;                           // Cmd / Win 组合不碰
+    if (ctrl && alt) return;                    // Ctrl-Alt 一律不捕获
+    if (ctrl && shift && (k === 'c' || k === 'v')) return;   // 复制 / 粘贴终端文本
 
-  // Alt 组合：不在终端里就吞掉，避免触发浏览器菜单
-  window.addEventListener('keydown', (e) => {
-    if (!e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.target.closest && e.target.closest('.xterm')) return;
-    if (isTypingTarget(e.target)) return;
-    e.preventDefault();
+    /* Alt 组合：一律捕获。映射到动作的当场执行，其余直接吞掉。 */
+    if (alt) {
+      e.preventDefault();
+      if (k === ',') { Drawer.opened ? Drawer.close() : Drawer.open(); return; }  // Alt-, 也开设置
+      if (e.key === 'Enter') { toggleFullscreen(); return; }
+      if (!shift) {
+        const map = { t:'term', b:'browser', a:'agent', f:'files', p:'python', e:'editor', w:'close', m:'max', d:'desk' };
+        if (map[k]) {
+          if (k === 'w') WindowManager.closeFocused();
+          else if (k === 'm') { const w = WindowManager.focused(); if (w) WindowManager.toggleMax(w.id); }
+          else if (k === 'd') { for (const w of WindowManager.windows.values()) WindowManager.minimize(w.id); }
+          else if (k === 'e') WindowManager.open({ type:'editor', path:'.home.welcome', title:'welcome' });
+          else if (k === 'p') WindowManager.open({ type:'python' });
+          else if (k === 't') WindowManager.open({ type:'shell' });
+          else if (k === 'b') WindowManager.open({ type:'browser' });
+          else if (k === 'f') WindowManager.open({ type:'files' });
+          else if (k === 'a') WindowManager.open({ type:'agent' });
+          return;
+        }
+      }
+      return;                                  // 其余 Alt 组合：捕获后直接吞掉，不交给终端
+    }
+
+    /* Ctrl 全部保留给终端；唯一例外 Ctrl-, 打开 / 关闭设置（Alt-, 见上，同样支持）。 */
+    if (ctrl) {
+      if (e.key === ',') { e.preventDefault(); Drawer.opened ? Drawer.close() : Drawer.open(); }
+      return;
+    }
   }, true);
 }
 
@@ -990,12 +1006,11 @@ async function boot() {
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
 
-    /* 双击 index.html 打开：先把令牌要到手，否则后面每一处请求都会被后端拒。
-       只弹这一次——用户取消后不再打扰，发消息时会再问。 */
+    /* 双击 index.html 打开时需要令牌，但**不再一打开就弹模态框**：
+       改成一条 toast 微打扰，用户到「更多 / 设置 → 访问令牌」里填即可。
+       发消息 / 抓网页时若确实还没令牌，ensureFileToken 才会按需再问一次。 */
     if (FileToken.active() && !FileToken.get()) {
-      setTimeout(() => {
-        askFileToken('这个页面是双击 index.html 打开的（file://）。');
-      }, 900);
+      setTimeout(() => toast('本地文件模式：需要访问令牌，可在「更多 / 设置 → 访问令牌」填写'), 900);
     }
 
     // URL 里带 ?code=... 时自动执行

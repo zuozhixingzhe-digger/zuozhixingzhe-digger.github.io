@@ -36,7 +36,7 @@ readme     welcome
 2. [三十秒上手](#2-三十秒上手)
 3. [界面：顶栏 / 桌面 / 更多](#3-界面顶栏--桌面--更多)
 4. [快捷键](#4-快捷键)
-5. [JSHeL 速查](#5-jshel-速查)
+5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsl2 规划与风险](#54-hsl2-规划中的可选组件尚未实现)）
 6. [文件系统](#6-文件系统)
 7. [一切皆文件](#7-一切皆文件)
 8. [窗口与线程](#8-窗口与线程)
@@ -64,9 +64,9 @@ readme     welcome
 11. [许可证](#11-许可证)
 12. [AI 生成内容声明](#12-ai-生成内容声明)
 
-**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子，目前三条：
-**在浏览器里跑 Linux 程序**（原名 HSL，但 HSL 这三个字母现在已经是本项目的交互 shell 名字，真开工前得先改名）、
-**移植第三方程序的许可证规则**、**`sptm` 挂载要先把五件事想清楚**。
+**附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子：**移植第三方程序的许可证规则**、
+**`sptm` 挂载要先把五件事想清楚**。另：交互 shell 已由 `hsl` **全量改名 `hsl1`**（`hsl` 不再支持）；
+`hsl2` 是规划中的**可选**组件（WASM + FreeBSD + v86，有许可证风险、默认不加载），见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
 
 ---
 
@@ -114,8 +114,8 @@ readme     welcome
 2. 等启动进度条走完（首次会从 CDN 拉 xterm.js，之后走缓存）。
 3. 直接敲 JS：`1 + 1`、`document.title`、`await fetch('/')`。
 4. 敲 `help()` 看 JS 侧 API，敲 `ls('.home')` 看家目录，点顶栏 `▦` 开个窗口。
-5. 想敲 Linux 命令：敲 `hsl` 进 shell（`ls -la`、`cat readme`、`fastfetch`），`exit` 回来。
-   想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Ctrl+Shift+A` 开智能体。
+5. 想敲 Linux 命令：敲 `hsl1()` 进 shell（`ls -la`、`cat readme`、`fastfetch`），`exit` 回来。
+   想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Alt+A` 开智能体。
 
 > **双击打开 ≠ 能用后端**。`file://` 页面的 Origin 是 `null`，和恶意网页里的
 > `<iframe sandbox>` 一模一样，浏览器给不出区别（连 `Sec-Fetch-Site` 都是 `cross-site`）。
@@ -177,18 +177,19 @@ readme     welcome
 **底层终端只有一个**，永远铺在窗口下面。窗口可以拖拽移动、八向改大小、最小化 / 最大化 / 关闭；
 拖到屏幕边缘会吸附成半屏或全屏。底部 dock 列出所有窗口，点击切换。
 
-**提示符**固定是「当前路径 + `> ` + 一个空格」，没有设置项：
+**提示符有两套**，没有设置项：
 
 ```text
-.home>  1 + 1              ← JSHeL：只认 JavaScript
-.home $  ls -la            ← HSL：只认命令（提示符多一个 $）
-. $      cd /              ← 嵌套的第二层，自己记自己的目录
+JSHeL>  1 + 1              ← JSHeL：固定提示符，不显示当前目录，只认 JavaScript
+/home/user $  ls -la        ← hsl1：ext4 风格真实路径，只认命令（末尾多个 $）
+/bin $  cd /                ← 嵌套的第二层，自己记自己的目录
 ```
 
-路径里的 `@` 表示当前目录（`cd @` 原地不动、`cat @.notes` 读当前目录下的文件），
-`~` 是 `.home`，`..` 是上一级，`/` 与 `.` 在 JSHeL 里等价。
+JSHeL 里没有「当前目录」的说法，提示符就是固定的 `JSHeL> `。
+路径记号只在文件 API 的参数里用：`@` 当前目录（`cd('@')` 原地不动、`cat('@.notes')` 读当前目录下的文件），
+`~` 是 `.home`，`..` 是上一级，`/` 与 `.` 等价。
 
-在 **HSL** 里规则换成 shell 那一套：路径相对当前目录（`ls` 列 cwd、`cd ..` 上一级），
+在 **hsl1** 里规则换成 shell 那一套：路径相对当前目录（`ls` 列 cwd、`cd ..` 上一级），
 `.` 开头的点分路径仍按根解析。提示符末尾的 `$` 就是「我在 shell 里」的唯一标志。
 
 **光标**照参考项目的做法，不给任何设置项：一个 `div` 叠在 xterm 上（xterm 自己的光标设成全透明），
@@ -217,33 +218,39 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 
 ## 4. 快捷键
 
-设计原则：**凡是 Ctrl / Alt 组合都尽量抢过来**（终端和输入框的原生编辑键除外），
-**F5 / F11 / F12 有明确归属**，其余 F 键放行。
+设计原则：**Ctrl 全部保留给终端**（应用一律不抢），**Alt 是应用快捷键的引导键**，
+**F5 / F11 / F12 有明确归属**，其余 F 键放行。顶栏的修饰键按钮只剩 `⌃`（Alt / Shift 已砍掉）。
 
 | 组合 | 作用 |
 | --- | --- |
-| `Ctrl+Shift+T` | 新开一个终端窗口（和底层终端一模一样） |
-| `Ctrl+Shift+B` | 新开浏览器窗口 |
-| `Ctrl+Shift+A` | 打开智能体 |
-| `Ctrl+Shift+F` | 打开文件管理器 |
-| `Ctrl+Shift+E` | 打开编辑器（默认打开 `.home.welcome`） |
-| `Ctrl+Shift+P` | 打开 Python 窗口 |
-| `Ctrl+Shift+Enter` | 全屏 / 退出全屏 |
-| `Ctrl+Shift+W` | 关闭当前窗口 |
-| `Ctrl+Shift+M` | 当前窗口最大化 / 还原 |
-| `Ctrl+Shift+D` | 所有窗口最小化（露出桌面＝终端） |
-| `Ctrl+,` | 打开 / 关闭「更多」抽屉 |
+| `Alt+T` | 新开一个终端窗口（和底层终端一模一样） |
+| `Alt+B` | 新开浏览器窗口 |
+| `Alt+A` | 打开智能体 |
+| `Alt+F` | 打开文件管理器 |
+| `Alt+E` | 打开编辑器（默认打开 `.home.welcome`） |
+| `Alt+P` | 打开 Python 窗口 |
+| `Alt+Enter` | 全屏 / 退出全屏 |
+| `Alt+W` | 关闭当前窗口 |
+| `Alt+M` | 当前窗口最大化 / 还原 |
+| `Alt+D` | 所有窗口最小化（露出桌面＝终端） |
+| `Ctrl+,` 或 `Alt+,` | 打开 / 关闭「更多」抽屉（唯一的 Ctrl 例外） |
+| `Ctrl+Shift+C` / `V` | **复制 / 粘贴终端文本**（不捕获） |
 | `Esc` | 关闭抽屉 / 启动器 / 弹窗 |
 | `F5` | **交给浏览器**——刷新整个页面（不拦截） |
 | `F11` | **软件级接管**——`preventDefault()` 后走 `toggleFullscreen()`，与顶栏 `⛶` 同一路径 |
 | `F12` | **交给浏览器**——开发者工具（不拦截） |
 
-`F5` / `F12` 是刻意放行的：它们属于浏览器外壳，抢过来只会让用户以为键盘坏了。
-`F11` 是唯一的例外——浏览器全屏会把顶栏一起藏掉，用户就再也点不到 `⛶` 退出，
-所以由软件接管，并且**保证和按钮完全同一套行为**。
+几条硬规则：
 
-终端内部的语义键保持不抢：`Ctrl+C`（取消当前行）、`Ctrl+D`（退出）、`Ctrl+L`（清屏）、`Ctrl+A/E/U/K/W/Z/R`。
-输入框里的 `Ctrl+A/C/V/X/Z/Y` 也不抢。开发者工具留门：`Ctrl+Shift+I/J/C`、`F12`。
+- **Ctrl 全部保留给终端**：应用不拦截、不 `preventDefault`，唯一的例外是 `Ctrl+,` 打开设置
+  （`Alt+,` 同样支持）。终端内的 `Ctrl+C`（取消行）/ `Ctrl+D`（退出）/ `Ctrl+L`（清屏）等等照常工作。
+- **Ctrl+Shift+C / V 是终端文本的复制 / 粘贴**，不捕获。
+- **Ctrl+Alt 组合一律不捕获**（交回浏览器 / 系统；AltGr 也走这里）。
+- **Alt 一律捕获**：已映射的执行动作，其余「直接吞掉」——不交给终端、也不触发浏览器菜单，
+  给以后的 Alt 功能预留键位。
+- `F5` / `F12` 是刻意放行的：它们属于浏览器外壳，抢过来只会让用户以为键盘坏了。
+  `F11` 是唯一的例外——浏览器全屏会把顶栏一起藏掉，用户就再也点不到 `⛶` 退出，
+  所以由软件接管，并且**保证和按钮完全同一套行为**。
 
 **振动反馈只给摇杆**：拖动摇杆 / 连发方向键时 `navigator.vibrate(7ms)`，节流 60ms
 （小于 180ms 连发间隔，所以每次都能感到）。**键盘输入不振动**——打字时手本来就在键上，
@@ -289,15 +296,20 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 JSHeL = **JS HTML shell**。它不是一个语法，就是一个 REPL：**你敲的每一行都是 JavaScript**，
 只不过一批常用操作被预置成了同名函数，所以看起来像 shell。
 
+**提示符固定为 `JSHeL> `**，不显示「当前目录」；JSHeL 力求与真实 JS 控制台一致：
+函数名只是普通标识符，**裸敲 `ls` 只求值为函数对象，不会自动执行**，`ls()` 才是调用，
+`hsl1()` 才进 shell。以前那份 `AUTO_CALL` 白名单（裸敲 `ls` / `hsl` 自动调用）已删除——
+那等于在 JS 控制台里偷偷伪装了一个 shell。
+
 ```js
 1 + 1                       // 表达式：回显结果
 const x = await ls('.home') // 声明：提升到全局，后续可用
-help                        // 裸名字自动调用（白名单内）
-hsl                         // 同上：进 HSL 交互 shell
+help()                      // 要执行就写括号
+hsl1()                      // 进 hsl1 交互 shell
 ```
 
 > 这一层**不认 shell 语法**。`ls -la`、`cat a | grep b`、`mkdir x && cd x` 都是语法错误，
-> 请用 `hsl()` 进去敲，或者 `hsl('ls -la')`。见 [5.1](#51-hslbuild25-compatjs)。
+> 请用 `hsl1()` 进去敲，或者 `hsl1('ls -la')`。见 [5.1](#51-hsl1build25-compatjs)。
 
 | 分类 | 命令 |
 | --- | --- |
@@ -305,7 +317,8 @@ hsl                         // 同上：进 HSL 交互 shell
 | 执行 | `exec(p, ...args)` `open(p)` `run(code)` `require('pkg')` `python()` `exit()` |
 | 窗口 | `winOpen({type,title,url,code})` `spawn(code)` `winList()` `winClose(id)` `agentOpen()` |
 | 系统 | `saveFile(name, body)` `askFile()` `fetchText(url)` `openUrl(url)` `notify(msg)` `perm(name)` `ps()` `kill(pid)` `clear()` `history()` `nuke()` |
-| HSL | `hsl()` 进交互 shell、`hsl('ls -la')` 跑一行、`hsl.run(cmd)` 拿 `{code,out,err}` |
+| hsl1 | `hsl1()` 进交互 shell、`hsl1('ls -la')` 跑一行、`hsl1.run(cmd)` 拿 `{code,out,err}` |
+| hsl2 | 规划中的可选组件，`hsl2()` 看规划与风险说明（未实现、未加载，见 [5.4](#54-hsl2-规划中的可选组件尚未实现)） |
 
 几个容易误解的点：
 
@@ -318,13 +331,16 @@ hsl                         // 同上：进 HSL 交互 shell
 - **`rm` 默认不递归**，删目录要 `rm(p, {r:true})`。
 - **多行**：行尾反斜杠续行；粘贴多行文本会被识别成一次提交（括号粘贴协议）。
 
-### 5.1 HSL（`build/25-compat.js`）
+### 5.1 hsl1（`build/25-compat.js`）
 
-**HSL = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
+> **命名变更**：原命令名 `hsl` 已**全量改名为 `hsl1`**，`hsl` 不再支持。
+> 本节正文里的 `HSL` 一律指 hsl1。`hsl2` 是另一回事，见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
 
-| | JSHeL | HSL |
+**hsl1 = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
+
+| | JSHeL | hsl1 |
 | --- | --- | --- |
-| 提示符 | `.home> ` | `.home $ ` |
+| 提示符 | `JSHeL> `（固定） | `/home/user $ `（ext4 风格真实路径） |
 | 认什么 | 只认 JavaScript | 只认命令、管道、重定向、变量、通配符 |
 | `ls -la` | **语法错误**（不会执行） | 正常列目录 |
 | `1+1` | `2` | `1+1: 命令未找到` |
@@ -334,42 +350,42 @@ hsl                         // 同上：进 HSL 交互 shell
 同一行代码的结果取决于命令表里恰好有没有同名命令。现在按提示符就能确定自己在哪一层。
 
 ```js
-hsl()                    // 进交互 shell（可嵌套），返回 undefined
-hsl('ls -la | head')     // 跑一行，输出直接进终端；返回 Promise<void>，REPL 不回显
-await hsl.run('false')   // { code: 1 }——跑一行但不打印
-await hsl.run('echo hi') // { code: 0, out: "hi\n" }
+hsl1()                    // 进交互 shell（可嵌套），返回 undefined
+hsl1('ls -la | head')     // 跑一行，输出直接进终端；返回 Promise<void>，REPL 不回显
+await hsl1.run('false')   // { code: 1 }——跑一行但不打印
+await hsl1.run('echo hi') // { code: 0, out: "hi\n" }
 ```
 
-`hsl('…')` 故意返回 `Promise<void>` 而不是退出码：直接回车时 REPL 会把返回值回显出来，
-返回层数或 `{code}` 都会在屏幕上多出一行噪音；要退出码就用 `hsl.run()`。
-`hsl.run()` 的返回是 `{ code, out?, err? }`——没有输出时 `out`/`err` 这两个键**不存在**，
+`hsl1('…')` 故意返回 `Promise<void>` 而不是退出码：直接回车时 REPL 会把返回值回显出来，
+返回层数或 `{code}` 都会在屏幕上多出一行噪音；要退出码就用 `hsl1.run()`。
+`hsl1.run()` 的返回是 `{ code, out?, err? }`——没有输出时 `out`/`err` 这两个键**不存在**，
 不是空字符串，这样 `if (r.err)` 才写得对。
 
-**cwd 只有一份**：在 `hsl('cd ..')` 里 `cd` 了，回到 JSHeL 提示符也跟着变（`.> `）。
-这不是 bug——`hsl()` 只是「用 shell 语法跑一行」，不是开一个隔离的 subshell；
-要隔离就真进去 `hsl()`，那一层有自己的栈帧。
+**cwd 只有一份**：在 `hsl1('cd ..')` 里 `cd` 了，hsl1 的提示符也跟着变（ext4 路径）。
+这不是 bug——`hsl1()` 只是「用 shell 语法跑一行」，不是开一个隔离的 subshell；
+要隔离就真进去 `hsl1()`，那一层有自己的栈帧。
 
 在 JSHeL 里敲命令会得到一句指路提示，但**不会被偷偷执行**：
 
 ```text
-.home> nano readme
+JSHeL> nano readme
 ReferenceError: nano is not defined
-提示：nano 是 HSL 命令。hsl() 进 shell，或 hsl("nano readme")。
+提示：nano 是 hsl1 命令。hsl1() 进 shell，或 hsl1("nano readme")。
 ```
 
 #### 嵌套：用栈，不用开关
 
-`hsl` 可以一层层套进去，`exit` 一层层退出来：
+`hsl1` 可以一层层套进去，`exit` 一层层退出来（提示符是 ext4 风格真实路径）：
 
 ```text
-.home> hsl            → hsl · 第 1 层 · help 看命令，exit 退出这一层
-.home $ cd .bin       → 第 1 层进 .bin
-.bin $ hsl            → hsl: 第 2 层（exit 退出这一层）
-.bin $ cd ..          → 第 2 层退到根，第 1 层还在 .bin
-. $ exit              → exit: 回到第 1 层 HSL
-.bin $                → 目录回到 .bin（第 1 层自己的 cwd）
-.bin $ exit           → exit: 回到 JSHeL
-.home>                → 目录回到 .home（JSHeL 的 cwd）
+JSHeL> hsl1()          → hsl1 · 第 1 层 · help 看命令，exit 退出这一层
+/home/user $ cd .bin    → 第 1 层进 .bin
+/bin $ hsl1             → hsl1: 第 2 层（exit 退出这一层）
+/bin $ cd ..            → 第 2 层退到根，第 1 层还在 .bin
+/ $ exit                → exit: 回到第 1 层 hsl1
+/bin $                  → 目录回到 .bin（第 1 层自己的 cwd）
+/bin $ exit             → exit: 回到 JSHeL
+JSHeL>                  → 回到固定提示符
 ```
 
 **每一层记自己的 cwd 和环境变量**——退回来时你还在离开的那一层，不会被弹回 `~`。
@@ -381,17 +397,18 @@ ReferenceError: nano is not defined
 
 #### 从里面再开一个：`jshel`
 
-`hsl` 是**同一个窗口里换一层**；`jshel` 是**新开一个窗口**（新 Worker、新会话）。
+`hsl1` 是**同一个窗口里换一层**；`jshel -n` 是**新开一个窗口**（新 Worker、新会话）。
 
 ```text
-.home> jshel          → 开一个新终端窗口，落地 .home
-.home $ jshel         → HSL 里也能开；cwd 继承当前目录
-.home $ jshel .bin    → 指定落地目录
+JSHeL> jshel()        → 开一个新终端窗口，落地当前目录
+/home/user $ jshel -n  → hsl1 里也能开；cwd 继承当前目录
+/home/user $ jshel -n .bin → 指定落地目录
 ```
 
-三处入口现在**行为一致**：JSHeL 里裸敲 `jshel`、写 `jshel()`、HSL 里敲 `jshel`，都真的开窗口。
-以前 `AUTO_CALL` 名单里有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来——看上去像「没打开」；
-HSL 里更是压根没有这条命令。
+`jshel` 的语义已调整：在 hsl1 里敲 `jshel`（不带 `-n`）是**回到 JSHeL**（与 `hsl1()` 对称，弹出这一层），
+要开**独立窗口**得显式加 `-n`。这样 `hsl1()` 进得去、`jshel` 回得来，不再是「只能靠 exit」。
+
+> 注：`AUTO_CALL` 白名单已整体删除，JSHeL 里 `jshel` / `hsl1` 都要写括号才执行（和真 JS 一致）。
 
 语义是**独立会话**，不是子 shell：两个窗口各有自己的 cwd、环境变量和历史，关掉一个另一个照常；
 窗口里的 `exit` 是关窗，不是退回父层。窗口标题带落地目录（`终端 · .home`），多开时才分得清。
@@ -411,7 +428,7 @@ HSL 里更是压根没有这条命令。
 
 ```text
 cat cd clear cp curl cut date df diff dir dirname du echo env exit export false
-fastfetch find grep head help history hostname hsl kill less ll ln ls man mkdir
+fastfetch find grep head help history hostname hsl1 hsl2 kill less ll ln ls man mkdir
 more mv nano neofetch printf ps pwd rev rm rmdir sed seq sleep sort source stat
 tail tee touch tr tree true type uname uniq unlink unset vi vim wc wget which
 whoami xargs yes
@@ -442,7 +459,7 @@ whoami xargs yes
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
 ██║  ██║   ██║       Kernel     JSHeL 0.0.1.11
-╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + HSL
+╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + hsl1
 ```
 
 信息全是现场问出来的（`sys.info` + `fs.usage` + `proc.list`），
@@ -464,14 +481,16 @@ whoami xargs yes
 | --- | --- |
 | `apt` | 这里不是 Debian，装包是 `await require('lodash-es@4')` |
 | `ping` | 浏览器不发 ICMP，做不到就是做不到 |
-| `bash` / `sh` / `zsh` | 学不像就别学。zsh 本体是 MIT-like，但这里从来没打包它，只是借了个名字——现在名字也还回去了，交互层叫 HSL |
+| `bash` / `sh` / `zsh` | 学不像就别学。zsh 本体是 MIT-like，但这里从来没打包它，只是借了个名字——现在名字也还回去了，交互层叫 hsl1 |
 | `su` / `sudo` | 单用户、最高权限，没有「切换」这回事 |
 | `npm` / `pip` | 只打印一行错误提示的桩，留着只会让人以为能用 |
 | `chmod` | 见上：没有权限位可改 |
 
-> **许可证**：HSL 全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
+> **许可证**：hsl1 全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
 > GNU coreutils / busybox / bash 都是 GPL，把它们的 wasm 打进单文件会传染整个发布物，
 > 所以宁可自己重写。第三方清单见 `licenses/`。
+> **hsl2 是另一回事**：它涉及 FreeBSD（有 GPL 相关历史遗留问题），本项目【不分发】其源码或二进制，
+> 详见 [5.4](#54-hsl2-规划中的可选组件尚未实现)。
 
 ### 5.2 内建 TUI 智能体
 
@@ -544,8 +563,8 @@ emoji 更明显：ZWJ / 变体选择符被多算成 1 列，光标会一路往�
 
 | 提示符 | 模式 | 一行交给谁 |
 | --- | --- | --- |
-| `.home> ` | JSHeL | JS 求值（`ls -la` 是语法错误） |
-| `.home $ ` | HSL | shell 命令行（`1+1` 是「命令未找到」） |
+| `JSHeL> `（固定） | JSHeL | JS 求值（`ls -la` 是语法错误） |
+| `/home/user $ ` | hsl1 | shell 命令行（`1+1` 是「命令未找到」） |
 | `agent> ` | 智能体 | 整行发给模型 |
 
 函数接口仍然可用，给脚本用、不切模式：
@@ -658,6 +677,45 @@ print()                     // 真的打开打印对话框
 
 之前这几个被「设计」过：`alert` 变成一条 toast、`confirm` 变成自绘对话框、
 `open` 变成内部浏览器窗口。那是产品行为，不是浏览器行为，全部删掉了。
+
+### 5.4 hsl2：规划中的可选组件（尚未实现）
+
+> **一句话**：`hsl2` 目前**只有一个占位壳子**——敲 `hsl2()`（JSHeL）或 `hsl2`（hsl1 命令表）
+> 只会打印下面这段规划与风险说明，**不加载、不下载、不实现任何东西**。
+> 真身属于「后面再做一个大动作」，除非明确要求，本项目不会去动它。
+
+#### 打算做成什么
+
+用 **WASM + v86 + FreeBSD**：v86 是一个用 WebAssembly 写的 x86 PC 模拟器，
+在浏览器里跑一个真实的 FreeBSD 用户态，作为**第二代 Linux 风格 shell**（hsl1 之后的一层）。
+它和 hsl1 不是一回事：hsl1 是本项目自研的命令子集（纯 MIT 代码），hsl2 会引入**真正的第三方系统**。
+
+#### ⚠ 风险与合规（请务必先读）
+
+- **FreeBSD 有 GPL 相关的历史遗留问题**：其 base 与工具链历史上包含过 GPL 授权组件
+  （早期 GCC / binutils / gdb 等），虽然后续版本逐步清理、替换，但**授权谱系复杂**，
+  不能想当然地当成「纯 BSD」。这也是 GPL 审查里最容易踩坑的一类。
+- **因此 hsl2 是【可选的】**：你可以完全不用。默认功能（JSHeL / hsl1 / 全部工具）
+  不依赖它、不受它影响，不用它一切照常。
+- **本项目【不分发】其源码或二进制**：不把 FreeBSD 镜像、v86 内核、WASM 构建、
+  或任何 GPL 相关二进制**打包进 `index.html`、仓库或发布物**。
+- **用户不启动，就绝不加载**：这是本项目一贯的懒加载特性。组件只在用户**主动启动 hsl2**
+  时才经 **CDN** 拉取，并**缓存到 IndexedDB**（和现有 xterm / Pyodide 依赖同一套依赖缓存机制）。
+  不启动时既不下载、也不占空间，离线也不会莫名其妙多出一个几百 MB 的镜像。
+
+#### 当前状态与后续待办（真身实现时补齐）
+
+| 项 | 状态 |
+| --- | --- |
+| `hsl2` 命令 / 全局函数占位、风险说明文案 | ✅ 已有（本版） |
+| WASM + v86 + FreeBSD 运行时 | ⛔ 未实现、未加载、未分发 |
+| **第三方许可证**（v86、FreeBSD、WASM 依赖及可能的 GPL 组件，逐一核实并登记） | ⏳ **实现 hsl2 时必须补齐**，写入 `licenses/` 并在 `README` 补专门章节 |
+| `check-licenses.sh` 登记、`licenses/README.md` 清单 | ⏳ 实现时同步补齐 |
+| README 的实现说明 / 风险复核 / 「不分发源码或二进制」声明 | ⏳ 实现时补专门章节 |
+
+> 之所以现在**不**去补这些许可证文件：项目里此刻**没有任何 hsl2 相关组件被引入或分发**，
+> 造一份空的 / 猜的许可证清单只会误导审查。等真身落地、确定了 CDN 来源与版本，
+> 再逐一核实授权、补齐文件，才是对的做法。这也是「后面记得补相关许可证，写 readme」的含义。
 
 ## 6. 文件系统
 
@@ -961,10 +1019,11 @@ agent.open() / agent.send(text) / agent.export() / agent.clear()
 agentTui.open() / agentTui.send(t) / agentTui.queue(t) / agentTui.stop() / agentTui.close()
                             // open() 会把 REPL 切进 agent 模式（提示符变 agent>），不是只打横幅
 
-// —— HSL / 嵌套自己 ——
-hsl()                       // 进交互式 Linux 风格 shell（可嵌套）
-hsl('ls -la')               // 跑一行，输出直接进终端
-hsl.run('cat x')            // 跑一行不打印，返回 { code, out, err }
+// —— hsl1 / 嵌套自己 ——
+hsl1()                      // 进交互式 Linux 风格 shell（可嵌套）
+hsl1('ls -la')              // 跑一行，输出直接进终端
+hsl1.run('cat x')           // 跑一行不打印，返回 { code, out, err }
+hsl2()                      // 打印 hsl2 的规划与风险说明（占位，未实现、未加载）
 shell.open(cwd) / shell.here() / shell.cd(p) / shell.exec(line)
 jshel()                     // = shell.open()：在窗口里再开一个 JSHeL，可以无限套
 
@@ -2025,6 +2084,11 @@ tools / tool color         → 工具清单 / 打开某个工具
 
 # 第二部分 · 维护指南
 
+> **关于命名**：交互 shell 已由 `hsl` 全量改名为 **`hsl1`**（`hsl` 不再支持），
+> 提示符也从 `.home> ` 改成固定的 `JSHeL> `、`/home/user $ `（ext4 风格）。
+> **本部分（开发日志 / 版本记录 / 踩坑 / 操作记录）是历史事实的存档，保留当时的 `hsl` / `HSL` / `.home> ` 旧称**，
+> 未按新命名回改——改了反而不是当时的记录了。当前用法一律以第一部分为准。
+
 ## 1. 交接速览
 
 - **产物只有一个文件**：`index.html`。它由 `build.sh` 从 `build/` 分片拼装，**不要手改**。
@@ -2911,6 +2975,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.23 | 2026-11-04 | **JSHeL 纯 JS 化 + 键盘策略 + hsl1 改名 + 启动微打扰**：①JSHeL 固定提示符 `JSHeL> `、不再显示「当前目录」、删掉 `AUTO_CALL` 白名单——裸敲 `ls` 只求值为函数对象（和浏览器控制台一致），`ls()` 才真正调用。②顶栏删掉 Alt / Shift 只留 Ctrl；原 `Ctrl-Shift-*` 快捷键全改 `Alt-*`；`Ctrl` 全部留给终端（唯一例外 `Ctrl-,`，`Alt-,` 同样支持开关设置）；Alt 组合一律捕获但**直接吞掉**不交给终端，为以后的 Alt 功能预留键位；`Ctrl-Alt` 与 `Ctrl-Shift-C/V` 一律不捕获。③`hsl` 全量改名 `hsl1`（`hsl` 不再支持，颜色空间 HSL 不受影响），`hsl2` 只留壳子并写明 WASM + FreeBSD + v86 的规划与许可证风险，未实现、未加载、未分发任何组件。④启动不再弹模态框，改 toast 微打扰；设置页新增「访问令牌」专门一栏（sessionStorage，留空即清除）。⑤重建 `index.html`，Playwright 无头浏览器 23 项实测全过：提示符、裸命令、键位事件级探测、hsl1 进出、hsl2 占位、令牌存取、无 pageerror、无 WASM 组件请求。 |
 | 0.0.1.22 | 2026-11-04 | **零信任架构四条红线**：①§13 新增总纲「零信任架构：四条设计红线」（谁能请求 / 能请求啥 / 能得到啥信息 / 服务自己能做什么）＋「关于模型切换」（换模型是改参数重启的运维动作，不做运行时自动切换，避免复杂化扩大攻击面）＋「改代码前的自检」5 条，作为后续参照的约束而非功能介绍。②**按第 3 条收敛请求者可见信息**：`/health` 只回 `{"ok":true}`（删 version / service）；chat 路由**出口做白名单**（`minimize_chat` / `minimizeChat`），只放行 `choices[].message` 的必要字段，剥掉上游 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` 与转换函数自造的 `model`——这是真缺口：请求体的 model 虽已覆盖，真实模型名仍会从响应漏回去；错误体只留一句 message；Python 覆盖 `send_response` 不发 `Server` 头；所有拒绝统一回 `REJECTED`，「仅允许本机访问」「Host 只接受…」「需要令牌」等防线描述只进 stderr；内部错误不回显 URL / 异常 / 配置；429 去掉「上限 N 次/分」与 `X-RateLimit-*`，保留 `Retry-After`。三份后端一致，前端状态栏不再拼后端描述。③新增 `pentest-scripts/info_leak.py`（话特别多的假上游，84 项全过）；全量回归 9 套约 298 项全过；修掉 `lan_access.py` L26 依赖旧文案的假失败（并把 `check` 的 bytes 拼接导致的崩溃一并修）与 `file_origin_e2e.py` 自包含。④踩坑 72–73。 |
 | 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |
 | 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |

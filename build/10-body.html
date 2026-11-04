@@ -11,9 +11,8 @@
   <!-- 顶部控制栏：只有按键。品牌 / 版本 / 路径都不占位置，顶栏从 ⌃ 开始 -->
   <header class="topbar" id="topbar" data-state="ok">
     <div class="tb-mid" id="ctrlRow" role="toolbar" aria-label="终端控制键">
+      <!-- 顶栏只剩 Ctrl：Alt / Shift 修饰键按钮已砍掉（Alt 组合改由全局快捷键捕获后吞掉） -->
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
-      <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
-      <button class="k" type="button" tabindex="-1" data-mod="shift" title="Shift（短按锁定 / 长按当组合键）"><span>⇧</span></button>
 
       <!-- 方向摇杆：拖动中心圆点发方向键，按住同一方向连发 -->
       <div class="joystick" id="joystick" title="方向控制（拖动中心圆点）" role="group" aria-label="方向键摇杆">
@@ -36,7 +35,7 @@
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
-      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）" aria-label="更多"><span>≥</span></button>
+      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+, 或 Alt+,）" aria-label="更多"><span>≥</span></button>
     </div>
   </header>
 
@@ -67,12 +66,12 @@
 
 <!-- 应用启动器 -->
 <div class="launcher" id="launcher" hidden>
-  <button type="button" data-app="shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5"/><path d="M12 17h8"/></svg>终端<i>⌃⇧T</i></button>
-  <button type="button" data-app="browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.6 3.6 5.4 3.6 8S14.5 17.4 12 20c-2.5-2.6-3.6-5.4-3.6-8S9.5 6.6 12 4z"/></svg>浏览器<i>⌃⇧B</i></button>
-  <button type="button" data-app="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg>文件<i>⌃⇧F</i></button>
-  <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌃⇧E</i></button>
-  <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌃⇧P</i></button>
-  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>HarTMLes<i>⌃⇧A</i></button>
+  <button type="button" data-app="shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5"/><path d="M12 17h8"/></svg>终端<i>⌥T</i></button>
+  <button type="button" data-app="browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.6 3.6 5.4 3.6 8S14.5 17.4 12 20c-2.5-2.6-3.6-5.4-3.6-8S9.5 6.6 12 4z"/></svg>浏览器<i>⌥B</i></button>
+  <button type="button" data-app="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg>文件<i>⌥F</i></button>
+  <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌥E</i></button>
+  <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌥P</i></button>
+  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>HarTMLes<i>⌥A</i></button>
   <hr>
   <button type="button" data-app="calc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.2"/><path d="M7.5 7h9M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>计算器<i>科学</i></button>
   <button type="button" data-app="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>数据转换<i>编码/哈希</i></button>
@@ -87,7 +86,7 @@
   <button type="button" class="soon" data-app="view3d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>3D 视图<i>维护中</i></button>
   <button type="button" class="soon" data-app="audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>音频播放<i>维护中</i></button>
   <hr>
-  <button type="button" data-act="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>更多 / 设置<i>⌃,</i></button>
+  <button type="button" data-act="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>更多 / 设置<i>⌥,</i></button>
 </div>
 
 <!-- 更多 / 设置抽屉 -->
@@ -97,7 +96,7 @@
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
       <div class="drawer__uname">HTerMinaL <span class="drawer__ver" id="drVersion">—</span></div>
-      <div class="drawer__sub" id="drSub">jshel · .home</div>
+      <div class="drawer__sub" id="drSub">JSHeL · 纯 JS 控制台</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
   </div>
@@ -113,6 +112,12 @@
     </section>
 
     <section class="drawer__section">
+      <div class="drawer__title">访问令牌（本地文件模式）</div>
+      <div class="drawer__row"><span>令牌</span><input id="setFileToken" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴后端终端里的令牌"></div>
+      <div class="drawer__note">只有双击 <code>index.html</code>（<code>file://</code>）打开时才需要：后端与公网页里的 sandbox iframe 在请求头上分不开，只能靠令牌自证。令牌由后端启动时随机生成、打印在启动它的终端横幅里，<b>只存本标签页的 sessionStorage</b>，关掉标签页即失效；后端每次重启都会换新的。留空即清除。改用 <code>http://127.0.0.1:8787/</code> 打开是同源，不需要令牌。</div>
+    </section>
+
+    <section class="drawer__section">
       <div class="drawer__title">外观</div>
       <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
       <div class="drawer__row"><span>终端字号</span><input id="setFont" type="range" min="9" max="26" step="1" aria-label="终端字号"><b id="setFontVal">14</b></div>
@@ -123,13 +128,13 @@
 
     <section class="drawer__section">
       <div class="drawer__title">终端</div>
-      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">.home&gt; </b></div>
+      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">JSHeL&gt; </b></div>
       <div class="drawer__row"><span>历史条数</span><b id="stHist">—</b></div>
       <div class="drawer__grid">
         <button class="dbtn" id="btnClearHist">清空历史</button>
         <button class="dbtn" id="btnRestartTerm">重启底层终端</button>
       </div>
-      <div class="drawer__note">提示符固定为「当前路径&gt; 」，路径里的 <code>@</code> 表示当前目录。Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出；F5 刷新、F11 全屏、F12 开发者工具都交给浏览器。</div>
+      <div class="drawer__note">JSHeL 是纯 JS 求值环境：提示符固定为 <code>JSHeL&gt; </code>，不显示当前目录；裸敲函数名不会自动执行，<code>ls()</code> 这样带括号才是调用。<code>@</code> 等路径记号只在文件 API 的参数里用。Ctrl 组合全部交给终端；F5 刷新、F11 全屏、F12 开发者工具交给浏览器。</div>
     </section>
 
     <section class="drawer__section">
@@ -197,18 +202,19 @@
 
     <section class="drawer__section">
       <div class="drawer__title">快捷键</div>
-      <div class="drawer__row"><span>新终端窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">T</span></b></div>
-      <div class="drawer__row"><span>浏览器窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">B</span></b></div>
-      <div class="drawer__row"><span>智能体</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">A</span></b></div>
-      <div class="drawer__row"><span>文件管理器</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">F</span></b></div>
-      <div class="drawer__row"><span>全屏</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">Enter</span></b></div>
-      <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span></b></div>
-      <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">W</span></b></div>
-      <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">M</span></b></div>
+      <div class="drawer__row"><span>新终端窗口</span><b><span class="kbd">Alt</span> <span class="kbd">T</span></b></div>
+      <div class="drawer__row"><span>浏览器窗口</span><b><span class="kbd">Alt</span> <span class="kbd">B</span></b></div>
+      <div class="drawer__row"><span>智能体</span><b><span class="kbd">Alt</span> <span class="kbd">A</span></b></div>
+      <div class="drawer__row"><span>文件管理器</span><b><span class="kbd">Alt</span> <span class="kbd">F</span></b></div>
+      <div class="drawer__row"><span>全屏</span><b><span class="kbd">Alt</span> <span class="kbd">Enter</span></b></div>
+      <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span> 或 <span class="kbd">Alt</span> <span class="kbd">,</span></b></div>
+      <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Alt</span> <span class="kbd">W</span></b></div>
+      <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Alt</span> <span class="kbd">M</span></b></div>
+      <div class="drawer__row"><span>复制 / 粘贴终端文本</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">C</span> / <span class="kbd">V</span></b></div>
       <div class="drawer__row"><span>刷新（重载）</span><b><span class="kbd">F5</span></b></div>
       <div class="drawer__row"><span>全屏 / 退出</span><b><span class="kbd">F11</span></b></div>
       <div class="drawer__row"><span>开发者工具</span><b><span class="kbd">F12</span></b></div>
-      <div class="drawer__note"><b>F5 / F12 原样交给浏览器</b>（刷新、开发者工具），不拦也不转发给终端；<b>F11 由软件接管</b>，与顶栏 ⛶ 完全同一套行为和样式。其余 Ctrl / Alt 组合尽量接管。终端内的 Ctrl+C / Ctrl+D 仍按终端语义工作。</div>
+      <div class="drawer__note"><b>Ctrl 全部保留给终端</b>——唯一的例外是 <code>Ctrl+,</code> 打开设置（<code>Alt+,</code> 同样支持）；<b>Ctrl+Shift+C / V</b> 是终端文本的复制 / 粘贴。<b>Alt 是应用快捷键的引导键</b>：已映射的执行动作，其余一律捕获后直接吞掉，不交给终端、也不触发浏览器菜单。<b>Ctrl+Alt 组合一律不捕获</b>。F5 / F12 原样交给浏览器，F11 由软件接管（与顶栏 ⛶ 同一套行为）。</div>
     </section>
 
     <section class="drawer__section">

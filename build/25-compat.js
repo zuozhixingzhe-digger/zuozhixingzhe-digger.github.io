@@ -1,5 +1,5 @@
 /* ============================================================================
- * HTerMinaL · HSL（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
+ * HTerMinaL · hsl1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -7,11 +7,15 @@
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：JSHeL 里敲 `hsl` 进入（提示符变成 `.home $ `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里敲 `await hsl('ls -la')` 跑一行。
+ * 用法：JSHeL 里敲 `hsl1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsl1('ls -la')` 跑一行。原命令名 hsl 已不再支持。
  *
  * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
  * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
+ *
+ * hsl2 只有占位壳子（def('hsl2') 打印风险与规划说明），不加载任何组件。
+ * WASM + FreeBSD + v86 的真身属于「后面再做大动作」，除非明确要求否则不实现，
+ * 也不分发任何源码 / 二进制。
  * ==========================================================================*/
 
 const COMPAT = (function () {
@@ -92,7 +96,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return 'hsl';
+    if (name === 'SHELL') return 'hsl1';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -145,6 +149,15 @@ const COMPAT = (function () {
    *   .home.xxx 这种点分    → 绝对
    *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
    */
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 的 pwd / 提示符用。
+   * 与 20-worker.js 那份同名，但 COMPAT 是独立闭包，够不着那边，这里必须自带一份。 */
+  function dispPath(p) {
+    if (!p || p === '.') return '/';
+    if (p === '.home') return '/home/user';
+    if (p.startsWith('.home.')) return '/home/user/' + p.slice('.home.'.length).replace(/\./g, '/');
+    return '/' + p.replace(/^\./, '').replace(/\./g, '/');
+  }
+
   const ABS_DOT = /^\.[A-Za-z\u4e00-\u9fff_]/;
   async function realPath(p) {
     const s = String(p == null ? '' : p).trim();
@@ -218,7 +231,11 @@ const COMPAT = (function () {
     return { out: s };
   }, '格式化输出');
 
-  def('pwd', async () => ({ out: IO.getCwd() + '\n' }), '当前目录');
+  def('pwd', async () => {
+    /* hsl1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
+    const p = IO.getCwd();
+    return { out: (IO.state.mode === 'hsl1' ? dispPath(p) : p) + '\n' };
+  }, '当前目录');
 
   def('cd', async (a) => {
     /* 不带参数回 HOME（和真 shell 一样）；带参数走 realPath，所以 `cd ..` `cd bin`
@@ -767,7 +784,7 @@ const COMPAT = (function () {
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl1', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -913,12 +930,12 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* help 只属于 HSL。JSHeL 里的 help() 是另一个东西（列 JS API），
+  /* help 只属于 hsl1。JSHeL 里的 help() 是另一个东西（列 JS API），
    * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
   def('help', async () => {
     const names = Object.keys(CMDS).sort();
     const w = 78;
-    let s = CYAN + 'HSL 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let s = CYAN + 'hsl1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
     let line = '  ';
     for (const n of names) {
       const seg = n + '  ';
@@ -926,7 +943,7 @@ const COMPAT = (function () {
       line += seg;
     }
     s += line + '\n';
-    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl 再进一层' + R + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 看规划说明' + R + '\n';
     return { out: s };
   }, '命令表');
 
@@ -980,7 +997,7 @@ const COMPAT = (function () {
       version: IO.version || '0.0.0.0',
       engine: info.engine || 'n/a',
       os: info.os || 'n/a',
-      shell: 'JSHeL + HSL',
+      shell: 'JSHeL + hsl1',
       term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
       res: info.screen || 'n/a',
       dpr: info.dpr || 1,
@@ -1385,14 +1402,14 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  /* HSL 是一个**可嵌套**的交互层：每敲一次 hsl 压一层，exit 弹一层。
+  /* hsl1 是一个**可嵌套**的交互层：每敲一次 hsl1 压一层，exit 弹一层。
    * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
    * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
   const HSL = [];
   function hslDepth() { return HSL.length; }
   function hslPush() {
     HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
-    IO.setMode('hsl');
+    IO.setMode('hsl1');
     IO.kick();
     return HSL.length;
   }
@@ -1401,39 +1418,73 @@ const COMPAT = (function () {
     if (!f) return false;
     ENV = Object.assign(Object.create(null), f.env);
     IO.setCwd(f.cwd);
-    IO.setMode(HSL.length ? 'hsl' : 'jshel');
+    IO.setMode(HSL.length ? 'hsl1' : 'jshel');
     IO.kick();
     return true;
   }
 
-  def('hsl', async () => {
+  def('hsl1', async () => {
     const d = hslPush();
-    return { out: DIM + 'hsl: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
-  }, '再进一层 HSL（可嵌套）');
+    return { out: DIM + 'hsl1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 hsl1（可嵌套）');
 
-  /* 从 HSL 里开一个新的 JSHeL 窗口。
-   * 语义是**独立会话**：新 worker、新环境、cwd 只是拷贝一份初始值；
-   * 关掉它不影响当前窗口，当前窗口 exit 也不会带走它。
-   * 这不是「子 shell」——子 shell 的 exit 该回父层，而窗口的 exit 是关窗，
-   * 两者混在一起只会让人猜。 */
+  /* ---------------------------------------------------------------- hsl2：只有壳子
+   * 用户明确要求：现在「后面再做一个大动作」才用 WASM + FreeBSD + v86 实现 hsl2；
+   * 在此之前只保留这个占位命令，绝不实现、绝不加载、绝不分发任何组件。
+   * 风险必须讲清楚（FreeBSD 的 GPL 历史遗留、可选不用、不分发源码/二进制、
+   * 不启动就不加载、CDN + IndexedDB），见 HSL2_NOTICE。 */
+  const HSL2_NOTICE = [
+    '计划：用 WASM + v86 在浏览器里跑一个真实的 FreeBSD 用户态，作为第二代 Linux 风格 shell。',
+    '',
+    '风险与合规（请务必先读）：',
+    '  · FreeBSD 及其工具链有 GPL 相关的历史遗留问题，授权情况复杂；',
+    '  · 因此 hsl2 是【可选的】：可以完全不用，默认功能不受任何影响；',
+    '  · 本项目【不分发】FreeBSD / v86 / WASM 相关的源码或二进制；',
+    '  · 组件只在用户【主动启动 hsl2】时才经 CDN 加载，并缓存到 IndexedDB；',
+    '    用户不启动，就不会下载、不会加载，也不占用任何空间；',
+    '  · 真正实现时会补齐相关第三方许可证文件，并在 README 写专门章节。',
+    '',
+    '当前只有这段占位说明。除非明确要求，本项目不会实现或加载 hsl2。'
+  ].join('\n');
+
+  def('hsl2', async () => ({
+    out: YELLOW + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + R + '\n'
+       + DIM + HSL2_NOTICE + R + '\n'
+  }), 'hsl2 规划说明（占位，未实现；有许可证风险，可选不用）');
+
+  /* 从 hsl1 里敲 jshel：与 hsl1 对称，回到 JSHeL（弹出这一层），
+   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSL、还多出来一个窗口」的困惑，
+   * 也正是「hsl1 打不开 jshel」的根源：hsl1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
+   * 想开「独立 JSHeL 窗口」（旧语义：新 worker、新环境、exit 关窗互不牵连）时显式加 -n / --new。 */
   def('jshel', async (a) => {
+    const newWin = a.includes('-n') || a.includes('--new');
+    const dirArg = a.find(x => x !== '-n' && x !== '--new');
+    if (hslDepth() > 0 && !newWin) {
+      const d = hslDepth();
+      hslPop();
+      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsl1）' : '') + R + '\n' };
+    }
+    if (hslDepth() === 0 && !dirArg && !newWin) {
+      return { out: DIM + 'jshel: 已经是 JSHeL' + R + '\n' };
+    }
+    /* 开一个新的独立 JSHeL 窗口，cwd 继承当前目录（可带一个目录参数） */
     let cwd = IO.getCwd();
-    if (a[0]) {
-      const t = await realPath(a[0]).catch(() => null);
+    if (dirArg) {
+      const t = await realPath(dirArg).catch(() => null);
       const s = t && await IO.call('fs.stat', t).catch(() => null);
       if (s && s.kind === 'dir') cwd = s.path;
-      else return { code: 1, err: 'jshel: 不是目录: ' + a[0] + '\n' };
+      else return { code: 1, err: 'jshel: 不是目录: ' + dirArg + '\n' };
     }
     const r = await IO.call('shell.open', cwd, true);
     if (!r) return { code: 1, err: 'jshel: 打开窗口失败\n' };
     return { out: DIM + 'jshel: 新窗口 ' + (r.cwd || cwd) + '（独立会话，exit 关闭）' + R + '\n' };
-  }, '开一个新的 JSHeL 窗口（cwd 继承当前目录）');
+  }, '回到 JSHeL（与 hsl1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
 
   def('exit', async () => {
     if (hslDepth()) {
       const d = HSL.length;
       hslPop();
-      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 HSL' : 'exit: 回到 JSHeL') + R + '\n' };
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsl1' : 'exit: 回到 JSHeL') + R + '\n' };
     }
     return { exit: true };
   }, '退出这一层（最外层退出终端）');
@@ -1537,7 +1588,7 @@ const COMPAT = (function () {
   }
 
   /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
-   * 以前这里会去 IO.api[name] 找同名函数，于是 HSL 里敲 `write` 就真去写文件了，
+   * 以前这里会去 IO.api[name] 找同名函数，于是 hsl1 里敲 `write` 就真去写文件了，
    * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
   async function tryExternal(name, args) {
     for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
@@ -1575,7 +1626,7 @@ const COMPAT = (function () {
 
   return {
     attach, execLine, commands: CMDS, lex,
-    hslPush, hslPop, hslDepth,
+    hslPush, hslPop, hslDepth, hsl2Notice: () => HSL2_NOTICE,
     editor: makeEditor,
     get ENV() { return ENV; }
   };

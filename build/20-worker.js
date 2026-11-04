@@ -186,7 +186,7 @@ class LineEditor {
   reopen() {
     if (this.closed || this.raw) return;
     /* 先擦掉上一次画的块。正常提交后 _rows 已经是 0（光标停在新行行首），
-     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl 进/出层、
+     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl1 进/出层、
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
@@ -259,7 +259,7 @@ class LineEditor {
      * 开头的 \r 是保底：erase() 在 _rows=0 时什么都不做（resize 之后坐标系
      * 已经失效，旧 _rows 不能信），这时光标可能停在行中间，不回车就会
      * 把新提示符**追加**在旧内容后面——实测缩放窗口后变成
-     * 「.home> abc.home> abc」。 */
+     * 「JSHeL> abcJSHeL> abc」。 */
     let buf = '\r' + L.lines.join('\r\n');
     const back = L.lines.length - 1 - L.curRow;
     if (back > 0) buf += '\x1b[' + back + 'A';
@@ -659,10 +659,10 @@ function fmtRows(rows, long) {
 let shellCtx = null;
 
 const EXIT = Symbol('exit');
-/* 裸敲这些名字等价于调用：`ls` 和 `ls()` 一样，`jshel` 和 `jshel()` 一样。
- * 名单要「同类一致」——hsl 能裸敲而 jshel 不能，用户就会以为 jshel 坏了
- * （它只是把函数本身回显出来，看上去「没有真的打开」）。 */
-const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','jshel','nuke']);
+/* JSHeL 力求与真实 JS 执行一致：一行就是一个 JS 表达式 / 语句。
+ * 裸敲 `ls` 只是求值出那个函数对象（或未定义），**不会**自动调用、不会列出目录；
+ * 要执行就写 `ls()`。以前那份 AUTO_CALL 名单会把裸命令名偷偷调用一遍，
+ * 相当于在 JS 控制台里伪装了一个 shell，已移除。 */
 
 function makeShell(ctx) {
   const state = {
@@ -673,7 +673,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | hsl（hsl 时整行交给 COMPAT，不认 JS）
+    mode: 'jshel',          // jshel | hsl1（hsl1 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -980,7 +980,7 @@ function makeShell(ctx) {
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -1025,9 +1025,10 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
-      ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
+      ['hsl1', 'hsl1() 进交互式 Linux 风格 shell；hsl1("ls -la") 跑一行；hsl1 里 help 看命令表'],
+      ['hsl2', '规划中的可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsl2() 看完整说明'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
-      ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
+      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsl1()。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -1067,13 +1068,10 @@ function makeShell(ctx) {
     try { await prefetchDom(code); } catch (e) {}
     try {
       /* 求值只有一条路：HTScript.run（和智能体的 js 工具同一份）。
-       * 交互层这里只管「续行、DOM 预取、裸命令自动调用、打印」。 */
+       * 交互层这里只管「续行、DOM 预取、打印」。 */
       value = await HTScript.run(code);
-      // shell 习惯：裸命令名（help / ls / pwd ...）自动调用
-      const bare = code.trim();
-      if (typeof value === 'function' && /^[A-Za-z_$][\w$]*$/.test(bare) && AUTO_CALL.has(bare)) {
-        value = await value();
-      }
+      /* 不做「裸命令自动调用」：JSHeL 只按真实 JS 求值，
+       * `ls` 得到函数对象本身，`ls()` 才是调用。 */
       state.last = value;
     } catch (e) {
       if (e === EXIT) throw e;
@@ -1090,7 +1088,7 @@ function makeShell(ctx) {
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
         const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
         if (first && (gone || known)) {
-          out(ANSI.gray + '提示：' + first + ' 是 HSL 命令。hsl() 进 shell，或 hsl(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+          out(ANSI.gray + '提示：' + first + ' 是 hsl1 命令。hsl1() 进 shell，或 hsl1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
         }
       }
       if (e && e.stack) {
@@ -1991,17 +1989,29 @@ async function bootShell(init) {
   } catch (e) {}
 
   /* 三种模式并列，看提示符就知道自己在哪一层：
-   *   `.home> `          JSHeL（只当 JS 求值）
-   *   `.home $ `         HSL（只当 shell 命令行）
+   *   `JSHeL> `          JSHeL（纯 JS 求值；固定提示符，不显示当前目录）
+   *   `/home/user $ `    hsl1（只当 shell 命令行）
    *   `agent> `          智能体 TUI（整行发给智能体）
    */
   const AGENT_PROMPT = ANSI.cyan + 'agent' + ANSI.reset + '> ';
 
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 提示符用：
+   *   .            /              .home           /home/user
+   *   .home.notes  /home/user/notes              .bin            /bin
+   * 这样 hsl1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
+  function dispPath(p) {
+    if (!p || p === '.') return '/';
+    if (p === '.home') return '/home/user';
+    if (p.startsWith('.home.')) return '/home/user/' + p.slice('.home.'.length).replace(/\./g, '/');
+    return '/' + p.replace(/^\./, '').replace(/\./g, '/');
+  }
+
   const editor = new LineEditor({
     prompt: () => {
       if (api.__state.mode === 'agent') return AGENT_PROMPT;
-      if (api.__state.mode === 'hsl') return api.__state.cwd + ' $ ';
-      return api.__state.cwd + '> ';
+      if (api.__state.mode === 'hsl1') return dispPath(api.__state.cwd) + ' $ ';
+      /* JSHeL 固定提示符：不显示当前目录，力求和真的 JS 控制台一致。 */
+      return 'JSHeL> ';
     },
     /* 折行要用真实的列数/行数，不能写死 80×24 */
     cols: () => api.__state.cols,
@@ -2028,7 +2038,7 @@ async function bootShell(init) {
       if (!line.trim()) return;
       /* 三条完全分开的路，中间没有「猜一下这行是什么」：
        *   agent → 整行发给智能体（不认 JS，也不认 shell）
-       *   hsl   → 只当 shell 命令行（`1+1` 是「命令未找到」）
+       *   hsl1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
        *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
        * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
        * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
@@ -2036,7 +2046,7 @@ async function bootShell(init) {
         await agentTui.line(line);
         return;
       }
-      if (api.__state.mode === 'hsl') {
+      if (api.__state.mode === 'hsl1') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
@@ -2045,9 +2055,9 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- HSL（Linux 风格 shell）
+  /* ---------------------------------------------------------------- hsl1（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 只有 mode === 'hsl' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 只有 mode === 'hsl1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
    * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
@@ -2102,9 +2112,9 @@ async function bootShell(init) {
         return undefined;
       }
       this.on = true;
-      /* 记住从哪一层进来的：HSL 里进来就回 HSL，否则回 JSHeL。
+      /* 记住从哪一层进来的：hsl1 里进来就回 hsl1，否则回 JSHeL。
        * 只记一个值而不是布尔——布尔表达不了「原来在第几层」。 */
-      this._back = api.__state.mode === 'hsl' ? 'hsl' : 'jshel';
+      this._back = api.__state.mode === 'hsl1' ? 'hsl1' : 'jshel';
       api.__state.mode = 'agent';
       editor.promptStr = AGENT_PROMPT;
 
@@ -2259,9 +2269,9 @@ async function bootShell(init) {
       this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
       this._stopSpin();
       this._busy = false;
-      /* 回原来那一层：HSL 进的就回 HSL，否则回 JSHeL。
+      /* 回原来那一层：hsl1 进的就回 hsl1，否则回 JSHeL。
        * 提示符由 promptText() 重算，调用方（submit 的 finally / onCtrlD）负责补上。 */
-      api.__state.mode = this._back === 'hsl' ? 'hsl' : 'jshel';
+      api.__state.mode = this._back === 'hsl1' ? 'hsl1' : 'jshel';
       editor.promptStr = editor.promptText();
       out(ANSI.gray + '已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）' + ANSI.reset + '\r\n');
       return true;
@@ -2283,27 +2293,33 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
-  /* hsl —— JSHeL 里唯一通往 Linux 风格命令的入口。
+  /* hsl1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl，已全量改名；hsl 不再支持）。
    *
-   *   hsl()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
-   *   hsl('ls -la')    跑一行，输出直接进终端，返回退出码
-   *   await hsl.run(x) 跑一行但不打印，返回 { code, out, err }
+   *   hsl1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsl1('ls -la')    跑一行，输出直接进终端
+   *   await hsl1.run(x) 跑一行但不打印，返回 { code, out, err }
    *
-   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell，
-   * 也不会因为你写了 `mkdir("a")` 就被当成命令。 */
-  function hsl(cmd) {
+   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell。
+   * 注意：必须写 hsl1()；裸敲 hsl1 只会被当成普通 JS 标识符求值。 */
+  function hsl1(cmd) {
     if (cmd === undefined || cmd === null) {
-      /* 只打印横幅，不返回值：`hsl` 单独一行时不该在下面多出一个 "1" */
+      /* 只打印横幅，不返回值：hsl1() 不该在下面多出一个 "1" */
       const d = COMPAT.hslPush();
-      out(ANSI.gray + 'hsl · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      out(ANSI.gray + 'hsl1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
       return undefined;
     }
-    /* 返回 undefined：输出已经直接进终端了，再回显一个退出码只是噪音。
-     * 要退出码用 `(await hsl.run('…')).code`。 */
     return COMPAT.execLine(String(cmd)).then(() => undefined);
   }
-  hsl.run = (cmd) => COMPAT.execLine(String(cmd));
-  globalThis.hsl = hsl;
+  hsl1.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsl1 = hsl1;
+
+  /* hsl2 —— 只有壳子：打印规划与风险说明，不实现、不加载、不分发任何组件。
+   * 真身（WASM + FreeBSD + v86）属于「后面再做大动作」，除非用户明确要求，否则不动。 */
+  globalThis.hsl2 = () => {
+    out(ANSI.yellow + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + ANSI.reset + '\r\n');
+    out(ANSI.gray + COMPAT.hsl2Notice() + ANSI.reset + '\r\n');
+    return undefined;
+  };
 
   COMPAT.attach({
     out: (t) => out(t),
@@ -2321,7 +2337,7 @@ async function bootShell(init) {
     setMode: (m) => { api.__state.mode = m; },
     /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复。
      * 这里**不要**手动把 _rows 清零——reopen() 靠它判断屏上还有没有旧块，
-     * 清了就擦不掉，于是 hsl 进出层时会出现两个提示符并排。 */
+     * 清了就擦不掉，于是 hsl1 进出层时会出现两个提示符并排。 */
     kick: () => { editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
@@ -2332,7 +2348,7 @@ async function bootShell(init) {
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
     out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl()。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl1()；hsl2() 看规划说明。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 
@@ -2490,7 +2506,7 @@ self.onmessage = async (ev) => {
       /* 尺寸一变，xterm 会把内容 reflow，旧块的坐标全失效。
        * 不能拿旧 _rows 去上移擦除——那样只会擦错行。
        * 但也不能什么都不清就重画：旧提示符还在这一行上，新的一画就变成
-       * 「.home> abc.home> abc」。清掉光标所在这一行再重画，单行输入正好
+       * 「JSHeL> abcJSHeL> abc」。清掉光标所在这一行再重画，单行输入正好
        * 对齐；折行的输入最坏留一行残影，也好过两个提示符并排。
        * 正在等输出（agent 回答、命令执行）时屏上没有输入块，画出来只会插在
        * 输出中间——那时只归零坐标，等结束时的 reopen() 补提示符。 */

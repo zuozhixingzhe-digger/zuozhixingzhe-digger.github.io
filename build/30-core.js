@@ -268,10 +268,21 @@ function normPath(p, cwd) {
   let base, rest;
   if (s === '~' || s.startsWith('~/') || s.startsWith('~.')) {
     base = []; rest = 'home/' + s.replace(/^~[\/.]?/, '');
-  } else if (s === '@') {
-    return cwd.toLowerCase();
   } else if (s.startsWith('@')) {
-    base = cwdSegs.slice(); rest = s.slice(1);
+    /* @ 方言（JSHeL 路径简写，用户要求）：
+     *   开头连续 @ 的个数决定「上溯几层」：1 个=当前目录，2 个=父目录，3 个=祖父目录……
+     *   其余部分按 / 或 . 当作分隔符接在后面。
+     *   @        = 当前目录          @a      = 当前目录下的 a
+     *   @@       = 父目录            @a.b    = 当前目录/a/b
+     *   @@@      = 祖父目录          @@a     = 父目录下的 a
+     * 旧实现把第二个 @ 当成“路径中间的 @=当前目录锚点”，导致 @@ 被解析成当前目录，不符预期。 */
+    let n = 0;
+    while (s[n] === '@') n++;
+    const tail = s.slice(n);
+    const segs = cwdSegs.slice();
+    for (let i = 0; i < n - 1; i++) segs.pop();
+    base = segs;
+    rest = tail;
   } else if (s.startsWith('/')) {
     base = []; rest = s.slice(1);
   } else if (s.startsWith('..')) {
@@ -431,18 +442,19 @@ const SEED_FILES = {
   > python()          // 在当前终端开一个 Python
   > winOpen({type:'browser', url:'https://example.com'})
   > agentOpen()       // 轻量智能体（需要本地后端）
-  > hsl()             // 进 HSL：Linux 风格的交互 shell
+  > hsl1()            // 进 hsl1：Linux 风格的交互 shell
 
-这一层是 JS 控制台，不是 shell：ls -la 这种写法不会执行，会报语法错误。
-要敲 Linux 命令，用 hsl() 进去，或者 hsl('ls -la') 跑一行。
-两边是彻底分开的：JSHeL 只认 JS，HSL 只认命令。
+这一层是纯 JS 控制台（提示符固定为 JSHeL> ，没有「当前目录」），不是 shell：
+函数名只是普通 JS 标识符，裸敲 ls 求值为函数对象，ls() 才是调用；ls -la 会报语法错误。
+要敲 Linux 命令，用 hsl1() 进去，或者 hsl1('ls -la') 跑一行。
+两边是彻底分开的：JSHeL 只认 JS，hsl1 只认命令。
 
 路径用点分隔，根是 "."。例如：
   .home.notes       根下的 home 目录里的 notes
   .bin.hello        一个可执行函数
   .localstorage.x   浏览器 localStorage 里的 x
 
-输入 help() 看 JS 侧的 API；进 HSL 之后 help 看命令表。`
+输入 help() 看 JS 侧的 API；进 hsl1 之后 help 看命令表。`
   },
   '.home.readme': {
     kind:'file', mime:'text/plain',
@@ -486,9 +498,9 @@ spotfs 只有六个原子操作（其余命令都是它们的组合）：
   > await ls('.bin')
   > await exec('.bin.hello')
   > cat('.home.readme')
-  > hsl()                 然后   ls -la | head      或者   fastfetch
+  > hsl1()                然后   ls -la | head      或者   fastfetch
 
-HSL 可以嵌套：再敲一次 hsl 就是下一层，exit 回到上一层，
+hsl1 可以嵌套：再敲一次 hsl1 就是下一层，exit 回到上一层，
 每一层的当前目录互不影响（和真的子 shell 一样）。`
   },
   '.bin.hello': {

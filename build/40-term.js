@@ -158,6 +158,7 @@ function getWorkerURL() {
 }
 
 /* ---------------------------------------------------------------- 顶栏控制键
+ * 顶栏只剩 Ctrl 一个修饰键（Alt / Shift 按钮已按需求砍掉）。
  * 规则抄自参考项目 draw-http-terminal，手感一致：
  *   · 按住期间修饰键立刻生效（可与随后输入组合）；
  *   · 松手时：按住期间有输入 → 解锁；按住 ≥0.8s → 解锁；否则（短按无输入）→ 切换锁定；
@@ -165,12 +166,12 @@ function getWorkerURL() {
  */
 const MOD_HOLD_MS = 800;
 const Keys = {
-  sticky: { ctrl:false, alt:false, shift:false },
-  held:   { ctrl:false, alt:false, shift:false },
-  typed:  { ctrl:false, alt:false, shift:false },
+  sticky: { ctrl:false },
+  held:   { ctrl:false },
+  typed:  { ctrl:false },
 
   active(m) { return this.sticky[m] || this.held[m]; },
-  anyActive() { return this.active('ctrl') || this.active('alt') || this.active('shift'); },
+  anyActive() { return this.active('ctrl'); },
 
   refresh() {
     $$('#ctrlRow [data-mod]').forEach(b => {
@@ -179,30 +180,26 @@ const Keys = {
       b.classList.toggle('k--pressing', !!this.held[m]);
     });
   },
-  markInput() {
-    for (const m of ['ctrl', 'alt', 'shift']) if (this.held[m]) this.typed[m] = true;
-  },
+  markInput() { if (this.held.ctrl) this.typed.ctrl = true; },
   reset() {
-    this.sticky = { ctrl:false, alt:false, shift:false };
-    this.held = { ctrl:false, alt:false, shift:false };
+    this.sticky = { ctrl:false };
+    this.held = { ctrl:false };
     this.refresh();
   },
 
-  /** 按当前修饰键改写终端输入（标准终端键编码）。Shift 只影响字符大小写，不改写。 */
+  /** 顶栏只剩 Ctrl：把字母改写成标准控制字符。
+   * Alt / Shift 按钮已砍掉，不再改写、不再往终端发 `ESC` 前缀
+   * （Alt 组合改由全局快捷键捕获后直接吞掉，见 installKeys）。 */
   shape(str) {
     this.markInput();
-    const c = this.active('ctrl'), a = this.active('alt');
-    if (!c && !a) return str;
+    if (!this.active('ctrl')) return str;
     let out = '';
     for (const ch of String(str)) {
       const code = ch.codePointAt(0);
       let ctl = null;
-      // 只对拉丁字母做 Ctrl 改写；控制字符（Enter=13、Backspace=127、Esc=27）原样送出，
-      // 否则修饰键会把回车/退格一起吃掉，表现为「按了没反应」。
+      // 只对拉丁字母做 Ctrl 改写；控制字符（Enter=13、Backspace=127、Esc=27）原样送出。
       if ((code >= 64 && code <= 90) || (code >= 97 && code <= 122)) ctl = code <= 90 ? code - 64 : code - 96;
-      if (c && !a) out += ctl != null ? String.fromCharCode(ctl) : ch;
-      else if (a && !c) out += '\x1b' + ch;
-      else out += ctl != null ? '\x1b' + String.fromCharCode(ctl) : '\x1b' + ch;
+      out += ctl != null ? String.fromCharCode(ctl) : ch;
     }
     return out;
   },
@@ -331,11 +328,11 @@ function initTopbarKeys() {
     joyEl.addEventListener('contextmenu', e => e.preventDefault());
   }
 
-  // 实体键盘按住 Ctrl/Alt/Shift：只做浅色提示（组合键本身由浏览器/终端原生处理）
-  const physOf = (k) => k === 'Control' ? 'ctrl' : k === 'Alt' ? 'alt' : k === 'Shift' ? 'shift' : null;
+  // 实体键盘按住 Ctrl：只做浅色提示（组合键本身由浏览器/终端原生处理）
+  const physOf = (k) => k === 'Control' ? 'ctrl' : null;
   window.addEventListener('keydown', e => { const m = physOf(e.key); if (m) { Keys.held[m] = true; Keys.refresh(); } }, true);
   window.addEventListener('keyup',   e => { const m = physOf(e.key); if (m) { Keys.held[m] = false; Keys.refresh(); } }, true);
-  window.addEventListener('blur', () => { Keys.held = { ctrl:false, alt:false, shift:false }; Keys.refresh(); });
+  window.addEventListener('blur', () => { Keys.held = { ctrl:false }; Keys.refresh(); });
 }
 
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
@@ -438,11 +435,16 @@ class TerminalSession {
       if (e.key === 'F5' || e.key === 'F12') return false;
       /* F11：软件级接管，和顶栏 ⛶ 完全同一套行为（同一个 toggleFullscreen）。 */
       if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return false; }
-      // Ctrl+Shift+C/V 走浏览器复制粘贴；其余交给全局快捷键。
+      // Ctrl+Shift+C/V 走浏览器复制粘贴（终端文本），不捕获。
       if (e.ctrlKey && e.shiftKey) {
         const k = e.key.toLowerCase();
         if (k === 'c' || k === 'v') return false;
       }
+      // Ctrl-Alt 一律不捕获：xterm / 浏览器按默认处理。
+      if (e.ctrlKey && e.altKey) return true;
+      // Alt 组合：应用全局快捷键接管 / 直接吞掉，不交给终端（不发 ESC 前缀）。
+      if (e.altKey && !e.metaKey) { e.preventDefault(); return false; }
+      // 其余 Ctrl 组合一律保留给终端，xterm 正常处理。
       return true;
     });
     this.term.open(this.container);

@@ -1101,9 +1101,8 @@ body.drag-internal .br-shield{display:block}
   <!-- 顶部控制栏：只有按键。品牌 / 版本 / 路径都不占位置，顶栏从 ⌃ 开始 -->
   <header class="topbar" id="topbar" data-state="ok">
     <div class="tb-mid" id="ctrlRow" role="toolbar" aria-label="终端控制键">
+      <!-- 顶栏只剩 Ctrl：Alt / Shift 修饰键按钮已砍掉（Alt 组合改由全局快捷键捕获后吞掉） -->
       <button class="k" type="button" tabindex="-1" data-mod="ctrl"  title="Ctrl（短按锁定 / 长按当组合键）"><span>⌃</span></button>
-      <button class="k" type="button" tabindex="-1" data-mod="alt"   title="Alt（短按锁定 / 长按当组合键）"><span>⌥</span></button>
-      <button class="k" type="button" tabindex="-1" data-mod="shift" title="Shift（短按锁定 / 长按当组合键）"><span>⇧</span></button>
 
       <!-- 方向摇杆：拖动中心圆点发方向键，按住同一方向连发 -->
       <div class="joystick" id="joystick" title="方向控制（拖动中心圆点）" role="group" aria-label="方向键摇杆">
@@ -1126,7 +1125,7 @@ body.drag-internal .br-shield{display:block}
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
-      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+,）" aria-label="更多"><span>≥</span></button>
+      <button class="k" type="button" data-act="more" title="更多 / 设置（Ctrl+, 或 Alt+,）" aria-label="更多"><span>≥</span></button>
     </div>
   </header>
 
@@ -1157,12 +1156,12 @@ body.drag-internal .br-shield{display:block}
 
 <!-- 应用启动器 -->
 <div class="launcher" id="launcher" hidden>
-  <button type="button" data-app="shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5"/><path d="M12 17h8"/></svg>终端<i>⌃⇧T</i></button>
-  <button type="button" data-app="browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.6 3.6 5.4 3.6 8S14.5 17.4 12 20c-2.5-2.6-3.6-5.4-3.6-8S9.5 6.6 12 4z"/></svg>浏览器<i>⌃⇧B</i></button>
-  <button type="button" data-app="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg>文件<i>⌃⇧F</i></button>
-  <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌃⇧E</i></button>
-  <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌃⇧P</i></button>
-  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>HarTMLes<i>⌃⇧A</i></button>
+  <button type="button" data-app="shell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l5 5-5 5"/><path d="M12 17h8"/></svg>终端<i>⌥T</i></button>
+  <button type="button" data-app="browser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.6 3.6 5.4 3.6 8S14.5 17.4 12 20c-2.5-2.6-3.6-5.4-3.6-8S9.5 6.6 12 4z"/></svg>浏览器<i>⌥B</i></button>
+  <button type="button" data-app="files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5h6l2 2h9v9.5a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19V7.5z"/><path d="M3.5 7.5V5.8A1.3 1.3 0 0 1 4.8 4.5h4l2 2"/></svg>文件<i>⌥F</i></button>
+  <button type="button" data-app="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h9l5 5v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-13A2 2 0 0 1 5 4.5z"/><path d="M14 4.5v5h5"/></svg>编辑器<i>⌥E</i></button>
+  <button type="button" data-app="python"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><circle cx="18.5" cy="18" r="2.4"/></svg>Python<i>⌥P</i></button>
+  <button type="button" data-app="agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.7 5.1 5.1 1.7-5.1 1.7L12 17.1l-1.7-5.1-5.1-1.7 5.1-1.7L12 3.5z"/><path d="M18.5 15.5l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1z"/></svg>HarTMLes<i>⌥A</i></button>
   <hr>
   <button type="button" data-app="calc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.2"/><path d="M7.5 7h9M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/></svg>计算器<i>科学</i></button>
   <button type="button" data-app="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>数据转换<i>编码/哈希</i></button>
@@ -1177,7 +1176,7 @@ body.drag-internal .br-shield{display:block}
   <button type="button" class="soon" data-app="view3d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>3D 视图<i>维护中</i></button>
   <button type="button" class="soon" data-app="audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>音频播放<i>维护中</i></button>
   <hr>
-  <button type="button" data-act="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>更多 / 设置<i>⌃,</i></button>
+  <button type="button" data-act="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>更多 / 设置<i>⌥,</i></button>
 </div>
 
 <!-- 更多 / 设置抽屉 -->
@@ -1187,7 +1186,7 @@ body.drag-internal .br-shield{display:block}
     <div class="drawer__avatar" aria-hidden="true">&gt;_</div>
     <div class="drawer__meta">
       <div class="drawer__uname">HTerMinaL <span class="drawer__ver" id="drVersion">—</span></div>
-      <div class="drawer__sub" id="drSub">jshel · .home</div>
+      <div class="drawer__sub" id="drSub">JSHeL · 纯 JS 控制台</div>
     </div>
     <button class="drawer__close" id="drawerClose" type="button" title="关闭（Esc）">✕</button>
   </div>
@@ -1203,6 +1202,12 @@ body.drag-internal .br-shield{display:block}
     </section>
 
     <section class="drawer__section">
+      <div class="drawer__title">访问令牌（本地文件模式）</div>
+      <div class="drawer__row"><span>令牌</span><input id="setFileToken" type="text" autocomplete="off" spellcheck="false" placeholder="粘贴后端终端里的令牌"></div>
+      <div class="drawer__note">只有双击 <code>index.html</code>（<code>file://</code>）打开时才需要：后端与公网页里的 sandbox iframe 在请求头上分不开，只能靠令牌自证。令牌由后端启动时随机生成、打印在启动它的终端横幅里，<b>只存本标签页的 sessionStorage</b>，关掉标签页即失效；后端每次重启都会换新的。留空即清除。改用 <code>http://127.0.0.1:8787/</code> 打开是同源，不需要令牌。</div>
+    </section>
+
+    <section class="drawer__section">
       <div class="drawer__title">外观</div>
       <div class="drawer__row"><span>主题</span><b id="stTheme">深色</b></div>
       <div class="drawer__row"><span>终端字号</span><input id="setFont" type="range" min="9" max="26" step="1" aria-label="终端字号"><b id="setFontVal">14</b></div>
@@ -1213,13 +1218,13 @@ body.drag-internal .br-shield{display:block}
 
     <section class="drawer__section">
       <div class="drawer__title">终端</div>
-      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">.home&gt; </b></div>
+      <div class="drawer__row"><span>提示符</span><b class="drawer__mono" id="stPrompt">JSHeL&gt; </b></div>
       <div class="drawer__row"><span>历史条数</span><b id="stHist">—</b></div>
       <div class="drawer__grid">
         <button class="dbtn" id="btnClearHist">清空历史</button>
         <button class="dbtn" id="btnRestartTerm">重启底层终端</button>
       </div>
-      <div class="drawer__note">提示符固定为「当前路径&gt; 」，路径里的 <code>@</code> 表示当前目录。Ctrl+L 清屏，Ctrl+C 取消当前行，Ctrl+D 退出；F5 刷新、F11 全屏、F12 开发者工具都交给浏览器。</div>
+      <div class="drawer__note">JSHeL 是纯 JS 求值环境：提示符固定为 <code>JSHeL&gt; </code>，不显示当前目录；裸敲函数名不会自动执行，<code>ls()</code> 这样带括号才是调用。<code>@</code> 等路径记号只在文件 API 的参数里用。Ctrl 组合全部交给终端；F5 刷新、F11 全屏、F12 开发者工具交给浏览器。</div>
     </section>
 
     <section class="drawer__section">
@@ -1287,18 +1292,19 @@ body.drag-internal .br-shield{display:block}
 
     <section class="drawer__section">
       <div class="drawer__title">快捷键</div>
-      <div class="drawer__row"><span>新终端窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">T</span></b></div>
-      <div class="drawer__row"><span>浏览器窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">B</span></b></div>
-      <div class="drawer__row"><span>智能体</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">A</span></b></div>
-      <div class="drawer__row"><span>文件管理器</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">F</span></b></div>
-      <div class="drawer__row"><span>全屏</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">Enter</span></b></div>
-      <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span></b></div>
-      <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">W</span></b></div>
-      <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">M</span></b></div>
+      <div class="drawer__row"><span>新终端窗口</span><b><span class="kbd">Alt</span> <span class="kbd">T</span></b></div>
+      <div class="drawer__row"><span>浏览器窗口</span><b><span class="kbd">Alt</span> <span class="kbd">B</span></b></div>
+      <div class="drawer__row"><span>智能体</span><b><span class="kbd">Alt</span> <span class="kbd">A</span></b></div>
+      <div class="drawer__row"><span>文件管理器</span><b><span class="kbd">Alt</span> <span class="kbd">F</span></b></div>
+      <div class="drawer__row"><span>全屏</span><b><span class="kbd">Alt</span> <span class="kbd">Enter</span></b></div>
+      <div class="drawer__row"><span>更多 / 设置</span><b><span class="kbd">Ctrl</span> <span class="kbd">,</span> 或 <span class="kbd">Alt</span> <span class="kbd">,</span></b></div>
+      <div class="drawer__row"><span>关闭当前窗口</span><b><span class="kbd">Alt</span> <span class="kbd">W</span></b></div>
+      <div class="drawer__row"><span>最大化当前窗口</span><b><span class="kbd">Alt</span> <span class="kbd">M</span></b></div>
+      <div class="drawer__row"><span>复制 / 粘贴终端文本</span><b><span class="kbd">Ctrl</span> <span class="kbd">Shift</span> <span class="kbd">C</span> / <span class="kbd">V</span></b></div>
       <div class="drawer__row"><span>刷新（重载）</span><b><span class="kbd">F5</span></b></div>
       <div class="drawer__row"><span>全屏 / 退出</span><b><span class="kbd">F11</span></b></div>
       <div class="drawer__row"><span>开发者工具</span><b><span class="kbd">F12</span></b></div>
-      <div class="drawer__note"><b>F5 / F12 原样交给浏览器</b>（刷新、开发者工具），不拦也不转发给终端；<b>F11 由软件接管</b>，与顶栏 ⛶ 完全同一套行为和样式。其余 Ctrl / Alt 组合尽量接管。终端内的 Ctrl+C / Ctrl+D 仍按终端语义工作。</div>
+      <div class="drawer__note"><b>Ctrl 全部保留给终端</b>——唯一的例外是 <code>Ctrl+,</code> 打开设置（<code>Alt+,</code> 同样支持）；<b>Ctrl+Shift+C / V</b> 是终端文本的复制 / 粘贴。<b>Alt 是应用快捷键的引导键</b>：已映射的执行动作，其余一律捕获后直接吞掉，不交给终端、也不触发浏览器菜单。<b>Ctrl+Alt 组合一律不捕获</b>。F5 / F12 原样交给浏览器，F11 由软件接管（与顶栏 ⛶ 同一套行为）。</div>
     </section>
 
     <section class="drawer__section">
@@ -1526,7 +1532,7 @@ class LineEditor {
   reopen() {
     if (this.closed || this.raw) return;
     /* 先擦掉上一次画的块。正常提交后 _rows 已经是 0（光标停在新行行首），
-     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl 进/出层、
+     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl1 进/出层、
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
@@ -1599,7 +1605,7 @@ class LineEditor {
      * 开头的 \r 是保底：erase() 在 _rows=0 时什么都不做（resize 之后坐标系
      * 已经失效，旧 _rows 不能信），这时光标可能停在行中间，不回车就会
      * 把新提示符**追加**在旧内容后面——实测缩放窗口后变成
-     * 「.home> abc.home> abc」。 */
+     * 「JSHeL> abcJSHeL> abc」。 */
     let buf = '\r' + L.lines.join('\r\n');
     const back = L.lines.length - 1 - L.curRow;
     if (back > 0) buf += '\x1b[' + back + 'A';
@@ -1999,10 +2005,10 @@ function fmtRows(rows, long) {
 let shellCtx = null;
 
 const EXIT = Symbol('exit');
-/* 裸敲这些名字等价于调用：`ls` 和 `ls()` 一样，`jshel` 和 `jshel()` 一样。
- * 名单要「同类一致」——hsl 能裸敲而 jshel 不能，用户就会以为 jshel 坏了
- * （它只是把函数本身回显出来，看上去「没有真的打开」）。 */
-const AUTO_CALL = new Set(['help','ls','ll','pwd','clear','df','mount','ps','whoami','uname','date','env','history','exit','python','py','hsl','jshel','nuke']);
+/* JSHeL 力求与真实 JS 执行一致：一行就是一个 JS 表达式 / 语句。
+ * 裸敲 `ls` 只是求值出那个函数对象（或未定义），**不会**自动调用、不会列出目录；
+ * 要执行就写 `ls()`。以前那份 AUTO_CALL 名单会把裸命令名偷偷调用一遍，
+ * 相当于在 JS 控制台里伪装了一个 shell，已移除。 */
 
 function makeShell(ctx) {
   const state = {
@@ -2013,7 +2019,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | hsl（hsl 时整行交给 COMPAT，不认 JS）
+    mode: 'jshel',          // jshel | hsl1（hsl1 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -2320,7 +2326,7 @@ function makeShell(ctx) {
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -2365,9 +2371,10 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
-      ['HSL', 'hsl() 进交互式 Linux 风格 shell；hsl("ls -la") 跑一行；HSL 里 help 看命令表'],
+      ['hsl1', 'hsl1() 进交互式 Linux 风格 shell；hsl1("ls -la") 跑一行；hsl1 里 help 看命令表'],
+      ['hsl2', '规划中的可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsl2() 看完整说明'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
-      ['提示', '这里是 JS 控制台，不是 shell：`ls -la` 这种写法不会执行，请用 hsl()。表达式直接回车；Ctrl+C 取消行；Ctrl+D 退出。'],
+      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsl1()。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -2407,13 +2414,10 @@ function makeShell(ctx) {
     try { await prefetchDom(code); } catch (e) {}
     try {
       /* 求值只有一条路：HTScript.run（和智能体的 js 工具同一份）。
-       * 交互层这里只管「续行、DOM 预取、裸命令自动调用、打印」。 */
+       * 交互层这里只管「续行、DOM 预取、打印」。 */
       value = await HTScript.run(code);
-      // shell 习惯：裸命令名（help / ls / pwd ...）自动调用
-      const bare = code.trim();
-      if (typeof value === 'function' && /^[A-Za-z_$][\w$]*$/.test(bare) && AUTO_CALL.has(bare)) {
-        value = await value();
-      }
+      /* 不做「裸命令自动调用」：JSHeL 只按真实 JS 求值，
+       * `ls` 得到函数对象本身，`ls()` 才是调用。 */
       state.last = value;
     } catch (e) {
       if (e === EXIT) throw e;
@@ -2430,7 +2434,7 @@ function makeShell(ctx) {
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
         const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
         if (first && (gone || known)) {
-          out(ANSI.gray + '提示：' + first + ' 是 HSL 命令。hsl() 进 shell，或 hsl(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+          out(ANSI.gray + '提示：' + first + ' 是 hsl1 命令。hsl1() 进 shell，或 hsl1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
         }
       }
       if (e && e.stack) {
@@ -3331,17 +3335,29 @@ async function bootShell(init) {
   } catch (e) {}
 
   /* 三种模式并列，看提示符就知道自己在哪一层：
-   *   `.home> `          JSHeL（只当 JS 求值）
-   *   `.home $ `         HSL（只当 shell 命令行）
+   *   `JSHeL> `          JSHeL（纯 JS 求值；固定提示符，不显示当前目录）
+   *   `/home/user $ `    hsl1（只当 shell 命令行）
    *   `agent> `          智能体 TUI（整行发给智能体）
    */
   const AGENT_PROMPT = ANSI.cyan + 'agent' + ANSI.reset + '> ';
 
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 提示符用：
+   *   .            /              .home           /home/user
+   *   .home.notes  /home/user/notes              .bin            /bin
+   * 这样 hsl1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
+  function dispPath(p) {
+    if (!p || p === '.') return '/';
+    if (p === '.home') return '/home/user';
+    if (p.startsWith('.home.')) return '/home/user/' + p.slice('.home.'.length).replace(/\./g, '/');
+    return '/' + p.replace(/^\./, '').replace(/\./g, '/');
+  }
+
   const editor = new LineEditor({
     prompt: () => {
       if (api.__state.mode === 'agent') return AGENT_PROMPT;
-      if (api.__state.mode === 'hsl') return api.__state.cwd + ' $ ';
-      return api.__state.cwd + '> ';
+      if (api.__state.mode === 'hsl1') return dispPath(api.__state.cwd) + ' $ ';
+      /* JSHeL 固定提示符：不显示当前目录，力求和真的 JS 控制台一致。 */
+      return 'JSHeL> ';
     },
     /* 折行要用真实的列数/行数，不能写死 80×24 */
     cols: () => api.__state.cols,
@@ -3368,7 +3384,7 @@ async function bootShell(init) {
       if (!line.trim()) return;
       /* 三条完全分开的路，中间没有「猜一下这行是什么」：
        *   agent → 整行发给智能体（不认 JS，也不认 shell）
-       *   hsl   → 只当 shell 命令行（`1+1` 是「命令未找到」）
+       *   hsl1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
        *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
        * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
        * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
@@ -3376,7 +3392,7 @@ async function bootShell(init) {
         await agentTui.line(line);
         return;
       }
-      if (api.__state.mode === 'hsl') {
+      if (api.__state.mode === 'hsl1') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
@@ -3385,9 +3401,9 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- HSL（Linux 风格 shell）
+  /* ---------------------------------------------------------------- hsl1（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 只有 mode === 'hsl' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 只有 mode === 'hsl1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
    * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
@@ -3442,9 +3458,9 @@ async function bootShell(init) {
         return undefined;
       }
       this.on = true;
-      /* 记住从哪一层进来的：HSL 里进来就回 HSL，否则回 JSHeL。
+      /* 记住从哪一层进来的：hsl1 里进来就回 hsl1，否则回 JSHeL。
        * 只记一个值而不是布尔——布尔表达不了「原来在第几层」。 */
-      this._back = api.__state.mode === 'hsl' ? 'hsl' : 'jshel';
+      this._back = api.__state.mode === 'hsl1' ? 'hsl1' : 'jshel';
       api.__state.mode = 'agent';
       editor.promptStr = AGENT_PROMPT;
 
@@ -3599,9 +3615,9 @@ async function bootShell(init) {
       this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
       this._stopSpin();
       this._busy = false;
-      /* 回原来那一层：HSL 进的就回 HSL，否则回 JSHeL。
+      /* 回原来那一层：hsl1 进的就回 hsl1，否则回 JSHeL。
        * 提示符由 promptText() 重算，调用方（submit 的 finally / onCtrlD）负责补上。 */
-      api.__state.mode = this._back === 'hsl' ? 'hsl' : 'jshel';
+      api.__state.mode = this._back === 'hsl1' ? 'hsl1' : 'jshel';
       editor.promptStr = editor.promptText();
       out(ANSI.gray + '已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）' + ANSI.reset + '\r\n');
       return true;
@@ -3623,27 +3639,33 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
-  /* hsl —— JSHeL 里唯一通往 Linux 风格命令的入口。
+  /* hsl1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl，已全量改名；hsl 不再支持）。
    *
-   *   hsl()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
-   *   hsl('ls -la')    跑一行，输出直接进终端，返回退出码
-   *   await hsl.run(x) 跑一行但不打印，返回 { code, out, err }
+   *   hsl1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsl1('ls -la')    跑一行，输出直接进终端
+   *   await hsl1.run(x) 跑一行但不打印，返回 { code, out, err }
    *
-   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell，
-   * 也不会因为你写了 `mkdir("a")` 就被当成命令。 */
-  function hsl(cmd) {
+   * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell。
+   * 注意：必须写 hsl1()；裸敲 hsl1 只会被当成普通 JS 标识符求值。 */
+  function hsl1(cmd) {
     if (cmd === undefined || cmd === null) {
-      /* 只打印横幅，不返回值：`hsl` 单独一行时不该在下面多出一个 "1" */
+      /* 只打印横幅，不返回值：hsl1() 不该在下面多出一个 "1" */
       const d = COMPAT.hslPush();
-      out(ANSI.gray + 'hsl · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      out(ANSI.gray + 'hsl1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
       return undefined;
     }
-    /* 返回 undefined：输出已经直接进终端了，再回显一个退出码只是噪音。
-     * 要退出码用 `(await hsl.run('…')).code`。 */
     return COMPAT.execLine(String(cmd)).then(() => undefined);
   }
-  hsl.run = (cmd) => COMPAT.execLine(String(cmd));
-  globalThis.hsl = hsl;
+  hsl1.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsl1 = hsl1;
+
+  /* hsl2 —— 只有壳子：打印规划与风险说明，不实现、不加载、不分发任何组件。
+   * 真身（WASM + FreeBSD + v86）属于「后面再做大动作」，除非用户明确要求，否则不动。 */
+  globalThis.hsl2 = () => {
+    out(ANSI.yellow + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + ANSI.reset + '\r\n');
+    out(ANSI.gray + COMPAT.hsl2Notice() + ANSI.reset + '\r\n');
+    return undefined;
+  };
 
   COMPAT.attach({
     out: (t) => out(t),
@@ -3661,7 +3683,7 @@ async function bootShell(init) {
     setMode: (m) => { api.__state.mode = m; },
     /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复。
      * 这里**不要**手动把 _rows 清零——reopen() 靠它判断屏上还有没有旧块，
-     * 清了就擦不掉，于是 hsl 进出层时会出现两个提示符并排。 */
+     * 清了就擦不掉，于是 hsl1 进出层时会出现两个提示符并排。 */
     kick: () => { editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
@@ -3672,7 +3694,7 @@ async function bootShell(init) {
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
     out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl()。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl1()；hsl2() 看规划说明。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 
@@ -3830,7 +3852,7 @@ self.onmessage = async (ev) => {
       /* 尺寸一变，xterm 会把内容 reflow，旧块的坐标全失效。
        * 不能拿旧 _rows 去上移擦除——那样只会擦错行。
        * 但也不能什么都不清就重画：旧提示符还在这一行上，新的一画就变成
-       * 「.home> abc.home> abc」。清掉光标所在这一行再重画，单行输入正好
+       * 「JSHeL> abcJSHeL> abc」。清掉光标所在这一行再重画，单行输入正好
        * 对齐；折行的输入最坏留一行残影，也好过两个提示符并排。
        * 正在等输出（agent 回答、命令执行）时屏上没有输入块，画出来只会插在
        * 输出中间——那时只归零坐标，等结束时的 reopen() 补提示符。 */
@@ -4021,7 +4043,7 @@ const HTScript = (() => {
 
 
 /* ============================================================================
- * HTerMinaL · HSL（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
+ * HTerMinaL · hsl1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -4029,11 +4051,15 @@ const HTScript = (() => {
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：JSHeL 里敲 `hsl` 进入（提示符变成 `.home $ `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里敲 `await hsl('ls -la')` 跑一行。
+ * 用法：JSHeL 里敲 `hsl1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsl1('ls -la')` 跑一行。原命令名 hsl 已不再支持。
  *
  * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
  * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
+ *
+ * hsl2 只有占位壳子（def('hsl2') 打印风险与规划说明），不加载任何组件。
+ * WASM + FreeBSD + v86 的真身属于「后面再做大动作」，除非明确要求否则不实现，
+ * 也不分发任何源码 / 二进制。
  * ==========================================================================*/
 
 const COMPAT = (function () {
@@ -4114,7 +4140,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return 'hsl';
+    if (name === 'SHELL') return 'hsl1';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -4167,6 +4193,15 @@ const COMPAT = (function () {
    *   .home.xxx 这种点分    → 绝对
    *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
    */
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 的 pwd / 提示符用。
+   * 与 20-worker.js 那份同名，但 COMPAT 是独立闭包，够不着那边，这里必须自带一份。 */
+  function dispPath(p) {
+    if (!p || p === '.') return '/';
+    if (p === '.home') return '/home/user';
+    if (p.startsWith('.home.')) return '/home/user/' + p.slice('.home.'.length).replace(/\./g, '/');
+    return '/' + p.replace(/^\./, '').replace(/\./g, '/');
+  }
+
   const ABS_DOT = /^\.[A-Za-z\u4e00-\u9fff_]/;
   async function realPath(p) {
     const s = String(p == null ? '' : p).trim();
@@ -4240,7 +4275,11 @@ const COMPAT = (function () {
     return { out: s };
   }, '格式化输出');
 
-  def('pwd', async () => ({ out: IO.getCwd() + '\n' }), '当前目录');
+  def('pwd', async () => {
+    /* hsl1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
+    const p = IO.getCwd();
+    return { out: (IO.state.mode === 'hsl1' ? dispPath(p) : p) + '\n' };
+  }, '当前目录');
 
   def('cd', async (a) => {
     /* 不带参数回 HOME（和真 shell 一样）；带参数走 realPath，所以 `cd ..` `cd bin`
@@ -4789,7 +4828,7 @@ const COMPAT = (function () {
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl1', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -4935,12 +4974,12 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* help 只属于 HSL。JSHeL 里的 help() 是另一个东西（列 JS API），
+  /* help 只属于 hsl1。JSHeL 里的 help() 是另一个东西（列 JS API），
    * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
   def('help', async () => {
     const names = Object.keys(CMDS).sort();
     const w = 78;
-    let s = CYAN + 'HSL 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let s = CYAN + 'hsl1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
     let line = '  ';
     for (const n of names) {
       const seg = n + '  ';
@@ -4948,7 +4987,7 @@ const COMPAT = (function () {
       line += seg;
     }
     s += line + '\n';
-    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl 再进一层' + R + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 看规划说明' + R + '\n';
     return { out: s };
   }, '命令表');
 
@@ -5002,7 +5041,7 @@ const COMPAT = (function () {
       version: IO.version || '0.0.0.0',
       engine: info.engine || 'n/a',
       os: info.os || 'n/a',
-      shell: 'JSHeL + HSL',
+      shell: 'JSHeL + hsl1',
       term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
       res: info.screen || 'n/a',
       dpr: info.dpr || 1,
@@ -5407,14 +5446,14 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  /* HSL 是一个**可嵌套**的交互层：每敲一次 hsl 压一层，exit 弹一层。
+  /* hsl1 是一个**可嵌套**的交互层：每敲一次 hsl1 压一层，exit 弹一层。
    * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
    * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
   const HSL = [];
   function hslDepth() { return HSL.length; }
   function hslPush() {
     HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
-    IO.setMode('hsl');
+    IO.setMode('hsl1');
     IO.kick();
     return HSL.length;
   }
@@ -5423,39 +5462,73 @@ const COMPAT = (function () {
     if (!f) return false;
     ENV = Object.assign(Object.create(null), f.env);
     IO.setCwd(f.cwd);
-    IO.setMode(HSL.length ? 'hsl' : 'jshel');
+    IO.setMode(HSL.length ? 'hsl1' : 'jshel');
     IO.kick();
     return true;
   }
 
-  def('hsl', async () => {
+  def('hsl1', async () => {
     const d = hslPush();
-    return { out: DIM + 'hsl: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
-  }, '再进一层 HSL（可嵌套）');
+    return { out: DIM + 'hsl1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 hsl1（可嵌套）');
 
-  /* 从 HSL 里开一个新的 JSHeL 窗口。
-   * 语义是**独立会话**：新 worker、新环境、cwd 只是拷贝一份初始值；
-   * 关掉它不影响当前窗口，当前窗口 exit 也不会带走它。
-   * 这不是「子 shell」——子 shell 的 exit 该回父层，而窗口的 exit 是关窗，
-   * 两者混在一起只会让人猜。 */
+  /* ---------------------------------------------------------------- hsl2：只有壳子
+   * 用户明确要求：现在「后面再做一个大动作」才用 WASM + FreeBSD + v86 实现 hsl2；
+   * 在此之前只保留这个占位命令，绝不实现、绝不加载、绝不分发任何组件。
+   * 风险必须讲清楚（FreeBSD 的 GPL 历史遗留、可选不用、不分发源码/二进制、
+   * 不启动就不加载、CDN + IndexedDB），见 HSL2_NOTICE。 */
+  const HSL2_NOTICE = [
+    '计划：用 WASM + v86 在浏览器里跑一个真实的 FreeBSD 用户态，作为第二代 Linux 风格 shell。',
+    '',
+    '风险与合规（请务必先读）：',
+    '  · FreeBSD 及其工具链有 GPL 相关的历史遗留问题，授权情况复杂；',
+    '  · 因此 hsl2 是【可选的】：可以完全不用，默认功能不受任何影响；',
+    '  · 本项目【不分发】FreeBSD / v86 / WASM 相关的源码或二进制；',
+    '  · 组件只在用户【主动启动 hsl2】时才经 CDN 加载，并缓存到 IndexedDB；',
+    '    用户不启动，就不会下载、不会加载，也不占用任何空间；',
+    '  · 真正实现时会补齐相关第三方许可证文件，并在 README 写专门章节。',
+    '',
+    '当前只有这段占位说明。除非明确要求，本项目不会实现或加载 hsl2。'
+  ].join('\n');
+
+  def('hsl2', async () => ({
+    out: YELLOW + '⚠ hsl2 · 规划中（尚未实现，未加载任何组件）' + R + '\n'
+       + DIM + HSL2_NOTICE + R + '\n'
+  }), 'hsl2 规划说明（占位，未实现；有许可证风险，可选不用）');
+
+  /* 从 hsl1 里敲 jshel：与 hsl1 对称，回到 JSHeL（弹出这一层），
+   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSL、还多出来一个窗口」的困惑，
+   * 也正是「hsl1 打不开 jshel」的根源：hsl1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
+   * 想开「独立 JSHeL 窗口」（旧语义：新 worker、新环境、exit 关窗互不牵连）时显式加 -n / --new。 */
   def('jshel', async (a) => {
+    const newWin = a.includes('-n') || a.includes('--new');
+    const dirArg = a.find(x => x !== '-n' && x !== '--new');
+    if (hslDepth() > 0 && !newWin) {
+      const d = hslDepth();
+      hslPop();
+      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsl1）' : '') + R + '\n' };
+    }
+    if (hslDepth() === 0 && !dirArg && !newWin) {
+      return { out: DIM + 'jshel: 已经是 JSHeL' + R + '\n' };
+    }
+    /* 开一个新的独立 JSHeL 窗口，cwd 继承当前目录（可带一个目录参数） */
     let cwd = IO.getCwd();
-    if (a[0]) {
-      const t = await realPath(a[0]).catch(() => null);
+    if (dirArg) {
+      const t = await realPath(dirArg).catch(() => null);
       const s = t && await IO.call('fs.stat', t).catch(() => null);
       if (s && s.kind === 'dir') cwd = s.path;
-      else return { code: 1, err: 'jshel: 不是目录: ' + a[0] + '\n' };
+      else return { code: 1, err: 'jshel: 不是目录: ' + dirArg + '\n' };
     }
     const r = await IO.call('shell.open', cwd, true);
     if (!r) return { code: 1, err: 'jshel: 打开窗口失败\n' };
     return { out: DIM + 'jshel: 新窗口 ' + (r.cwd || cwd) + '（独立会话，exit 关闭）' + R + '\n' };
-  }, '开一个新的 JSHeL 窗口（cwd 继承当前目录）');
+  }, '回到 JSHeL（与 hsl1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
 
   def('exit', async () => {
     if (hslDepth()) {
       const d = HSL.length;
       hslPop();
-      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 HSL' : 'exit: 回到 JSHeL') + R + '\n' };
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsl1' : 'exit: 回到 JSHeL') + R + '\n' };
     }
     return { exit: true };
   }, '退出这一层（最外层退出终端）');
@@ -5559,7 +5632,7 @@ const COMPAT = (function () {
   }
 
   /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
-   * 以前这里会去 IO.api[name] 找同名函数，于是 HSL 里敲 `write` 就真去写文件了，
+   * 以前这里会去 IO.api[name] 找同名函数，于是 hsl1 里敲 `write` 就真去写文件了，
    * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
   async function tryExternal(name, args) {
     for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
@@ -5597,7 +5670,7 @@ const COMPAT = (function () {
 
   return {
     attach, execLine, commands: CMDS, lex,
-    hslPush, hslPop, hslDepth,
+    hslPush, hslPop, hslDepth, hsl2Notice: () => HSL2_NOTICE,
     editor: makeEditor,
     get ENV() { return ENV; }
   };
@@ -6037,10 +6110,21 @@ function normPath(p, cwd) {
   let base, rest;
   if (s === '~' || s.startsWith('~/') || s.startsWith('~.')) {
     base = []; rest = 'home/' + s.replace(/^~[\/.]?/, '');
-  } else if (s === '@') {
-    return cwd.toLowerCase();
   } else if (s.startsWith('@')) {
-    base = cwdSegs.slice(); rest = s.slice(1);
+    /* @ 方言（JSHeL 路径简写，用户要求）：
+     *   开头连续 @ 的个数决定「上溯几层」：1 个=当前目录，2 个=父目录，3 个=祖父目录……
+     *   其余部分按 / 或 . 当作分隔符接在后面。
+     *   @        = 当前目录          @a      = 当前目录下的 a
+     *   @@       = 父目录            @a.b    = 当前目录/a/b
+     *   @@@      = 祖父目录          @@a     = 父目录下的 a
+     * 旧实现把第二个 @ 当成“路径中间的 @=当前目录锚点”，导致 @@ 被解析成当前目录，不符预期。 */
+    let n = 0;
+    while (s[n] === '@') n++;
+    const tail = s.slice(n);
+    const segs = cwdSegs.slice();
+    for (let i = 0; i < n - 1; i++) segs.pop();
+    base = segs;
+    rest = tail;
   } else if (s.startsWith('/')) {
     base = []; rest = s.slice(1);
   } else if (s.startsWith('..')) {
@@ -6200,18 +6284,19 @@ const SEED_FILES = {
   > python()          // 在当前终端开一个 Python
   > winOpen({type:'browser', url:'https://example.com'})
   > agentOpen()       // 轻量智能体（需要本地后端）
-  > hsl()             // 进 HSL：Linux 风格的交互 shell
+  > hsl1()            // 进 hsl1：Linux 风格的交互 shell
 
-这一层是 JS 控制台，不是 shell：ls -la 这种写法不会执行，会报语法错误。
-要敲 Linux 命令，用 hsl() 进去，或者 hsl('ls -la') 跑一行。
-两边是彻底分开的：JSHeL 只认 JS，HSL 只认命令。
+这一层是纯 JS 控制台（提示符固定为 JSHeL> ，没有「当前目录」），不是 shell：
+函数名只是普通 JS 标识符，裸敲 ls 求值为函数对象，ls() 才是调用；ls -la 会报语法错误。
+要敲 Linux 命令，用 hsl1() 进去，或者 hsl1('ls -la') 跑一行。
+两边是彻底分开的：JSHeL 只认 JS，hsl1 只认命令。
 
 路径用点分隔，根是 "."。例如：
   .home.notes       根下的 home 目录里的 notes
   .bin.hello        一个可执行函数
   .localstorage.x   浏览器 localStorage 里的 x
 
-输入 help() 看 JS 侧的 API；进 HSL 之后 help 看命令表。`
+输入 help() 看 JS 侧的 API；进 hsl1 之后 help 看命令表。`
   },
   '.home.readme': {
     kind:'file', mime:'text/plain',
@@ -6255,9 +6340,9 @@ spotfs 只有六个原子操作（其余命令都是它们的组合）：
   > await ls('.bin')
   > await exec('.bin.hello')
   > cat('.home.readme')
-  > hsl()                 然后   ls -la | head      或者   fastfetch
+  > hsl1()                然后   ls -la | head      或者   fastfetch
 
-HSL 可以嵌套：再敲一次 hsl 就是下一层，exit 回到上一层，
+hsl1 可以嵌套：再敲一次 hsl1 就是下一层，exit 回到上一层，
 每一层的当前目录互不影响（和真的子 shell 一样）。`
   },
   '.bin.hello': {
@@ -7493,6 +7578,7 @@ function getWorkerURL() {
 }
 
 /* ---------------------------------------------------------------- 顶栏控制键
+ * 顶栏只剩 Ctrl 一个修饰键（Alt / Shift 按钮已按需求砍掉）。
  * 规则抄自参考项目 draw-http-terminal，手感一致：
  *   · 按住期间修饰键立刻生效（可与随后输入组合）；
  *   · 松手时：按住期间有输入 → 解锁；按住 ≥0.8s → 解锁；否则（短按无输入）→ 切换锁定；
@@ -7500,12 +7586,12 @@ function getWorkerURL() {
  */
 const MOD_HOLD_MS = 800;
 const Keys = {
-  sticky: { ctrl:false, alt:false, shift:false },
-  held:   { ctrl:false, alt:false, shift:false },
-  typed:  { ctrl:false, alt:false, shift:false },
+  sticky: { ctrl:false },
+  held:   { ctrl:false },
+  typed:  { ctrl:false },
 
   active(m) { return this.sticky[m] || this.held[m]; },
-  anyActive() { return this.active('ctrl') || this.active('alt') || this.active('shift'); },
+  anyActive() { return this.active('ctrl'); },
 
   refresh() {
     $$('#ctrlRow [data-mod]').forEach(b => {
@@ -7514,30 +7600,26 @@ const Keys = {
       b.classList.toggle('k--pressing', !!this.held[m]);
     });
   },
-  markInput() {
-    for (const m of ['ctrl', 'alt', 'shift']) if (this.held[m]) this.typed[m] = true;
-  },
+  markInput() { if (this.held.ctrl) this.typed.ctrl = true; },
   reset() {
-    this.sticky = { ctrl:false, alt:false, shift:false };
-    this.held = { ctrl:false, alt:false, shift:false };
+    this.sticky = { ctrl:false };
+    this.held = { ctrl:false };
     this.refresh();
   },
 
-  /** 按当前修饰键改写终端输入（标准终端键编码）。Shift 只影响字符大小写，不改写。 */
+  /** 顶栏只剩 Ctrl：把字母改写成标准控制字符。
+   * Alt / Shift 按钮已砍掉，不再改写、不再往终端发 `ESC` 前缀
+   * （Alt 组合改由全局快捷键捕获后直接吞掉，见 installKeys）。 */
   shape(str) {
     this.markInput();
-    const c = this.active('ctrl'), a = this.active('alt');
-    if (!c && !a) return str;
+    if (!this.active('ctrl')) return str;
     let out = '';
     for (const ch of String(str)) {
       const code = ch.codePointAt(0);
       let ctl = null;
-      // 只对拉丁字母做 Ctrl 改写；控制字符（Enter=13、Backspace=127、Esc=27）原样送出，
-      // 否则修饰键会把回车/退格一起吃掉，表现为「按了没反应」。
+      // 只对拉丁字母做 Ctrl 改写；控制字符（Enter=13、Backspace=127、Esc=27）原样送出。
       if ((code >= 64 && code <= 90) || (code >= 97 && code <= 122)) ctl = code <= 90 ? code - 64 : code - 96;
-      if (c && !a) out += ctl != null ? String.fromCharCode(ctl) : ch;
-      else if (a && !c) out += '\x1b' + ch;
-      else out += ctl != null ? '\x1b' + String.fromCharCode(ctl) : '\x1b' + ch;
+      out += ctl != null ? String.fromCharCode(ctl) : ch;
     }
     return out;
   },
@@ -7666,11 +7748,11 @@ function initTopbarKeys() {
     joyEl.addEventListener('contextmenu', e => e.preventDefault());
   }
 
-  // 实体键盘按住 Ctrl/Alt/Shift：只做浅色提示（组合键本身由浏览器/终端原生处理）
-  const physOf = (k) => k === 'Control' ? 'ctrl' : k === 'Alt' ? 'alt' : k === 'Shift' ? 'shift' : null;
+  // 实体键盘按住 Ctrl：只做浅色提示（组合键本身由浏览器/终端原生处理）
+  const physOf = (k) => k === 'Control' ? 'ctrl' : null;
   window.addEventListener('keydown', e => { const m = physOf(e.key); if (m) { Keys.held[m] = true; Keys.refresh(); } }, true);
   window.addEventListener('keyup',   e => { const m = physOf(e.key); if (m) { Keys.held[m] = false; Keys.refresh(); } }, true);
-  window.addEventListener('blur', () => { Keys.held = { ctrl:false, alt:false, shift:false }; Keys.refresh(); });
+  window.addEventListener('blur', () => { Keys.held = { ctrl:false }; Keys.refresh(); });
 }
 
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
@@ -7773,11 +7855,16 @@ class TerminalSession {
       if (e.key === 'F5' || e.key === 'F12') return false;
       /* F11：软件级接管，和顶栏 ⛶ 完全同一套行为（同一个 toggleFullscreen）。 */
       if (e.key === 'F11') { e.preventDefault(); toggleFullscreen(); return false; }
-      // Ctrl+Shift+C/V 走浏览器复制粘贴；其余交给全局快捷键。
+      // Ctrl+Shift+C/V 走浏览器复制粘贴（终端文本），不捕获。
       if (e.ctrlKey && e.shiftKey) {
         const k = e.key.toLowerCase();
         if (k === 'c' || k === 'v') return false;
       }
+      // Ctrl-Alt 一律不捕获：xterm / 浏览器按默认处理。
+      if (e.ctrlKey && e.altKey) return true;
+      // Alt 组合：应用全局快捷键接管 / 直接吞掉，不交给终端（不发 ESC 前缀）。
+      if (e.altKey && !e.metaKey) { e.preventDefault(); return false; }
+      // 其余 Ctrl 组合一律保留给终端，xterm 正常处理。
       return true;
     });
     this.term.open(this.container);
@@ -15981,7 +16068,7 @@ const RPC = {
       }
       case 'util.algos': return HASH_ALGS.slice();
       /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
-       * HSL 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+       * hsl1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
       case 'util.codec': {
         const op = String(a[0] || '');
         const d = a[1];
@@ -16172,6 +16259,14 @@ const Drawer = {
     $('#setAgentProvider').onchange = e => { Settings.set('agentProvider', e.target.value); this.refreshAgentLabel(); };
     $('#setAgentModel').onchange = e => { Settings.set('agentModel', e.target.value.trim()); this.refreshAgentLabel(); };
     $('#setAgentSteps').onchange = e => Settings.set('agentSteps', clamp(Number(e.target.value) || 120, 1, 120));
+    /* 访问令牌：专门一栏，直接写 sessionStorage（不进 localStorage / IndexedDB）。
+     * 留空即清除；改完立刻重新探测后端，状态栏会跟着变。 */
+    const ftok = $('#setFileToken');
+    if (ftok) ftok.onchange = e => {
+      FileToken.set(e.target.value.trim());
+      toast(FileToken.get() ? '访问令牌已保存' : '访问令牌已清除');
+      try { this.checkBackend(); } catch (_) {}
+    };
 
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
     $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
@@ -16212,6 +16307,7 @@ const Drawer = {
     $('#setAgentProvider').value = Settings.get('agentProvider');
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
+    if ($('#setFileToken')) $('#setFileToken').value = FileToken.get();
     this.syncAgentMode();
     applyTheme();   // 顺带把「主题」那行的取值刷新成当前系统主题
     $('#stVersion').textContent = 'v' + HT_VERSION;
@@ -16546,52 +16642,59 @@ function installWindowAPI() {
   });
 }
 
-/* ---------------------------------------------------------------- 快捷键 */
+/* ---------------------------------------------------------------- 快捷键
+ * 规则（用户定稿）：
+ *   · 顶栏只剩 Ctrl 修饰键按钮；Alt / Shift 按钮已砍掉。
+ *   · 原来那批 Ctrl-Shift-T/B/A/F/P/E/W/M/D/Enter 全改成 Alt-T/B/A/F/…/Enter。
+ *   · Ctrl 全部保留给终端：应用不拦截、不 preventDefault（唯一例外 Ctrl-, 开设置）。
+ *   · Ctrl-Shift-C / V 是终端文本的复制 / 粘贴，不捕获。
+ *   · Ctrl-Alt 组合一律不捕获（交回浏览器 / 系统，AltGr 也走这里）。
+ *   · Alt 一律捕获（preventDefault）：已映射的执行动作，其余「直接吞掉」，
+ *     不交给终端、也不触发浏览器菜单——给以后的 Alt 功能预留键位。
+ *   · F5 / F11 / F12、Escape 关抽屉等其它行为保留。
+ */
 function installKeys() {
   window.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
-    if (/^F\d+$/.test(e.key)) return;
+    if (/^F\d+$/.test(e.key)) return;          // F 键交给浏览器 / xterm 的自定义 handler
     if (e.key === 'Escape') {
       if ($('#drawer').classList.contains('on')) { Drawer.close(); e.preventDefault(); }
       return;
     }
-    if (!e.ctrlKey || e.metaKey) return;
     const k = e.key.toLowerCase();
-    const inTerm = !!e.target.closest && !!e.target.closest('.xterm');
-    // 终端语义键不抢
-    if (inTerm && !e.shiftKey && !e.altKey && ['c', 'd', 'l', 'a', 'e', 'u', 'k', 'w', 'z', '\\', 'r'].includes(k)) return;
-    // 输入框里的编辑快捷键不抢
-    if (isTypingTarget(e.target) && !e.shiftKey && ['a', 'c', 'v', 'x', 'z', 'y'].includes(k)) return;
-    // 给开发者工具留门
-    if (e.shiftKey && ['i', 'j', 'c'].includes(k)) return;
-    if (e.shiftKey && (e.key === 'Enter')) { e.preventDefault(); toggleFullscreen(); return; }
-    if (e.shiftKey) {
-      const map = { t:'term', b:'browser', a:'agent', f:'files', p:'python', e:'editor', w:'close', m:'max', d:'desk' };
-      if (map[k]) {
-        e.preventDefault();
-        if (k === 'w') WindowManager.closeFocused();
-        else if (k === 'm') { const w = WindowManager.focused(); if (w) WindowManager.toggleMax(w.id); }
-        else if (k === 'd') { for (const w of WindowManager.windows.values()) WindowManager.minimize(w.id); }
-        else if (k === 'e') WindowManager.open({ type:'editor', path:'.home.welcome', title:'welcome' });
-        else if (k === 'p') WindowManager.open({ type:'python' });
-        else if (k === 't') WindowManager.open({ type:'shell' });
-        else if (k === 'b') WindowManager.open({ type:'browser' });
-        else if (k === 'f') WindowManager.open({ type:'files' });
-        else if (k === 'a') WindowManager.open({ type:'agent' });
-        return;
-      }
-    }
-    if (e.key === ',') { e.preventDefault(); Drawer.opened ? Drawer.close() : Drawer.open(); return; }
-    // 其余 Ctrl 组合一律接管（Win / F 键除外）
-    e.preventDefault();
-  }, true);
+    const ctrl = e.ctrlKey, alt = e.altKey, shift = e.shiftKey, meta = e.metaKey;
+    if (meta) return;                           // Cmd / Win 组合不碰
+    if (ctrl && alt) return;                    // Ctrl-Alt 一律不捕获
+    if (ctrl && shift && (k === 'c' || k === 'v')) return;   // 复制 / 粘贴终端文本
 
-  // Alt 组合：不在终端里就吞掉，避免触发浏览器菜单
-  window.addEventListener('keydown', (e) => {
-    if (!e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.target.closest && e.target.closest('.xterm')) return;
-    if (isTypingTarget(e.target)) return;
-    e.preventDefault();
+    /* Alt 组合：一律捕获。映射到动作的当场执行，其余直接吞掉。 */
+    if (alt) {
+      e.preventDefault();
+      if (k === ',') { Drawer.opened ? Drawer.close() : Drawer.open(); return; }  // Alt-, 也开设置
+      if (e.key === 'Enter') { toggleFullscreen(); return; }
+      if (!shift) {
+        const map = { t:'term', b:'browser', a:'agent', f:'files', p:'python', e:'editor', w:'close', m:'max', d:'desk' };
+        if (map[k]) {
+          if (k === 'w') WindowManager.closeFocused();
+          else if (k === 'm') { const w = WindowManager.focused(); if (w) WindowManager.toggleMax(w.id); }
+          else if (k === 'd') { for (const w of WindowManager.windows.values()) WindowManager.minimize(w.id); }
+          else if (k === 'e') WindowManager.open({ type:'editor', path:'.home.welcome', title:'welcome' });
+          else if (k === 'p') WindowManager.open({ type:'python' });
+          else if (k === 't') WindowManager.open({ type:'shell' });
+          else if (k === 'b') WindowManager.open({ type:'browser' });
+          else if (k === 'f') WindowManager.open({ type:'files' });
+          else if (k === 'a') WindowManager.open({ type:'agent' });
+          return;
+        }
+      }
+      return;                                  // 其余 Alt 组合：捕获后直接吞掉，不交给终端
+    }
+
+    /* Ctrl 全部保留给终端；唯一例外 Ctrl-, 打开 / 关闭设置（Alt-, 见上，同样支持）。 */
+    if (ctrl) {
+      if (e.key === ',') { e.preventDefault(); Drawer.opened ? Drawer.close() : Drawer.open(); }
+      return;
+    }
   }, true);
 }
 
@@ -16793,12 +16896,11 @@ async function boot() {
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
 
-    /* 双击 index.html 打开：先把令牌要到手，否则后面每一处请求都会被后端拒。
-       只弹这一次——用户取消后不再打扰，发消息时会再问。 */
+    /* 双击 index.html 打开时需要令牌，但**不再一打开就弹模态框**：
+       改成一条 toast 微打扰，用户到「更多 / 设置 → 访问令牌」里填即可。
+       发消息 / 抓网页时若确实还没令牌，ensureFileToken 才会按需再问一次。 */
     if (FileToken.active() && !FileToken.get()) {
-      setTimeout(() => {
-        askFileToken('这个页面是双击 index.html 打开的（file://）。');
-      }, 900);
+      setTimeout(() => toast('本地文件模式：需要访问令牌，可在「更多 / 设置 → 访问令牌」填写'), 900);
     }
 
     // URL 里带 ?code=... 时自动执行
