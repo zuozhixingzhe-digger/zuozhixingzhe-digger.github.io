@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.19"
+const version = "0.0.1.20"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -242,12 +242,35 @@ func upstream(rawURL string, payload any, headers map[string]string) (int, map[s
 }
 
 /* ---------------------------------------------------------------- OpenAI / custom */
+/*
+controlFields：请求体里「不属于 OpenAI 接口、但能改变上游行为」的字段。
+
+前端（或本机任何脚本）可以往 body 里塞 base_url / api_key / headers；有些
+聚合网关会认这些字段，用它们覆盖上游地址或鉴权头。后端已经从环境变量决定
+用哪个上游、哪把钥匙，就不能让请求体把决定权拿回去。只剥这几个控制字段，
+不做白名单——白名单会挡住上游以后加的新参数。
+*/
+// 不做白名单——白名单会挡住上游以后加的新参数。比对前归一化：
+// Base_Url / API-KEY / apiKey 都得算同一个东西，否则换个大小写就钻过去了。
+var controlFields = map[string]bool{
+	"provider": true, "url": true,
+	"base_url": true, "baseurl": true, "api_base": true, "apibase": true, "endpoint": true,
+	"api_key": true, "apikey": true, "key": true, "authorization": true,
+	"headers": true, "proxy": true,
+}
+
+func isControlField(k string) bool {
+	return controlFields[strings.ToLower(strings.TrimSpace(strings.ReplaceAll(k, "-", "_")))]
+}
+
 func doOpenAI(body map[string]any) (int, map[string]any) {
 	payload := map[string]any{}
 	for k, v := range body {
+		if isControlField(k) {
+			continue
+		}
 		payload[k] = v
 	}
-	delete(payload, "provider")
 	if asStr(payload["model"]) == "" {
 		payload["model"] = defaultModel
 	}

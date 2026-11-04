@@ -71,7 +71,7 @@ MAX_BODY = 8 * 1024 * 1024
 RPM = env_int("HT_RPM", 60)
 BURST = env_int("HT_BURST", 20)
 FETCH_RPM = env_int("HT_FETCH_RPM", 120)
-VERSION = "0.0.1.19"
+VERSION = "0.0.1.20"
 # 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
 # (argparse 里的开关名, 路由, 中文名)
 FEATURES = (
@@ -553,6 +553,24 @@ def sandbox_selftest():
 
 
 # ------------------------------------------------------------------ OpenAI / custom
+# 前端可以往 body 里塞任何东西。下面这些字段对 OpenAI 接口没有语义，但有些
+# 聚合网关会认（`base_url` 覆盖上游、`api_key` 覆盖 Authorization）——
+# 后端既然已经从环境变量决定「用哪个上游、哪把钥匙」，就不能让请求体
+# 再把决定权拿回去。这里不做白名单（会挡住上游以后加的新参数），只剥控制字段。
+# 比对前先归一化：`Base_Url`、`API-KEY`、`apiKey` 都得算同一个东西——
+# 否则换个大小写就能从缝里钻过去。
+_CONTROL_FIELDS = frozenset((
+    "provider", "url",
+    "base_url", "baseurl", "api_base", "apibase", "endpoint",
+    "api_key", "apikey", "key", "authorization",
+    "headers", "proxy",
+))
+
+
+def _is_control_field(key):
+    return str(key).strip().lower().replace("-", "_") in _CONTROL_FIELDS
+
+
 def _reject_const(name):
     """RFC 8259 不认 NaN / Infinity / -Infinity。
 
@@ -564,8 +582,9 @@ def _reject_const(name):
 
 def do_openai(body, base, key):
     url = join_url(base, "/chat/completions")
-    payload = dict(body)
-    payload.pop("provider", None)
+    # 只带走「属于 OpenAI 请求」的字段；控制字段（base_url / api_key / headers…）
+    # 一个都不许跟着走。上游是哪个、用哪把钥匙，只由本进程的环境变量决定。
+    payload = {k: v for k, v in body.items() if not _is_control_field(k)}
     if not payload.get("model"):
         payload["model"] = DEFAULT_MODEL
     headers = {"Content-Type": "application/json"}

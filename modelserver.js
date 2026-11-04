@@ -108,7 +108,7 @@ const MAX_BODY = 8 * 1024 * 1024;
 const FETCH_MAX = 3 * 1024 * 1024;
 const FETCH_TIMEOUT = Number(process.env.HT_FETCH_TIMEOUT || 20);
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const VERSION = '0.0.1.19';
+const VERSION = '0.0.1.20';
 
 /* 启动时把 index.html 读成一份不可变快照。
  *
@@ -204,9 +204,24 @@ async function upstream(url, payload, headers) {
 }
 
 /* ---------------------------------------------------------------- OpenAI / custom */
+/* 前端可以往 body 里塞任何东西。下面这些字段对 OpenAI 接口没有语义，但有些
+ * 聚合网关会认（base_url 覆盖上游、api_key 覆盖 Authorization）——后端既然
+ * 已经从环境变量决定「用哪个上游、哪把钥匙」，就不能让请求体再把决定权拿回去。
+ * 不做白名单（会挡住上游以后加的新参数），只剥控制字段。比对前归一化：
+ * `Base_Url`、`API-KEY`、`apiKey` 都得算同一个东西，否则换个大小写就钻过去了。 */
+const CONTROL_FIELDS = new Set([
+  'provider', 'url',
+  'base_url', 'baseurl', 'api_base', 'apibase', 'endpoint',
+  'api_key', 'apikey', 'key', 'authorization',
+  'headers', 'proxy',
+]);
+const isControlField = (k) => CONTROL_FIELDS.has(String(k).trim().toLowerCase().replace(/-/g, '_'));
+
 async function doOpenAI(body) {
-  const payload = Object.assign({}, body);
-  delete payload.provider;
+  const payload = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (!isControlField(k)) payload[k] = v;
+  }
   if (!payload.model) payload.model = DEFAULT_MODEL;
   const headers = { 'Content-Type': 'application/json' };
   if (OPENAI_KEY) headers.Authorization = 'Bearer ' + OPENAI_KEY;
