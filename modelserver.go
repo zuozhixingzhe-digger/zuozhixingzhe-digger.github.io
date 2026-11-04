@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const version = "0.0.1.18"
+const version = "0.0.1.19"
 
 var (
 	port             = envInt("HT_PORT", 8787)
@@ -896,9 +896,60 @@ var fetchTimeout = time.Duration(envInt("HT_FETCH_TIMEOUT", 20)) * time.Second
 
 const browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
+/*
+nonPublicNets：标准库判断不够用的那些段。
+
+net.IP.IsGlobalUnicast() 只排除「不是单播」的地址，它把 100.64.0.0/10、
+198.18.0.0/15、192.0.2.0/24 这些**保留段**都算成全球单播；IsPrivate() 又只管
+RFC 1918 与 fc00::/7，管不到它们。Python 的 ipaddress.is_global 按 IANA 特殊
+用途注册表逐段判，JS 版也有一张显式表——只有 Go 版在这里漏了，三份对不上。
+
+100.64.0.0/10 最要紧：RFC 6598 的运营商级 NAT 段，Tailscale / ZeroTier 这类
+虚拟局域网默认就拿它当内网地址。漏掉它，装了 Tailscale 的机器上 /v1/fetch
+就能被诱导去读整个虚拟内网（NAS、路由器、同事的机器），响应原样带回前端——
+这正是「局域网越权」在单机服务上最常见的一种形态。
+*/
+var nonPublicNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, s := range []string{
+		"100.64.0.0/10",   // RFC 6598 CGNAT / Tailscale / ZeroTier
+		"192.0.0.0/24",    // IETF 协议分配
+		"192.0.2.0/24",    // TEST-NET-1
+		"192.88.99.0/24",  // 6to4 中继（已废弃）
+		"198.18.0.0/15",   // 基准测试
+		"198.51.100.0/24", // TEST-NET-2
+		"203.0.113.0/24",  // TEST-NET-3
+		"2001:db8::/32",   // 文档
+		"2001::/32",       // Teredo（内嵌 IPv4）
+		"2001:2::/48",     // 基准测试
+		"2001:10::/28",    // ORCHID
+		"64:ff9b::/96",    // NAT64（内嵌 IPv4 可能是内网）
+		"100::/64",        // 丢弃前缀
+		"5f00::/8",        // SRv6 SID
+	} {
+		if _, n, err := net.ParseCIDR(s); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}()
+
 func ipPublic(ip net.IP) bool {
-	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
-		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsUnspecified()
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	// IPv4-mapped（::ffff:1.2.3.4）先摊平成 IPv4 再查表，
+	// 否则 100.64/10 这种只写在 v4 表里的段会被漏过去。
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	for _, n := range nonPublicNets {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 /*
