@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HTerMinaL · 红点 = 退出程序 / 关闭窗口
+  ─────────────────────────────────────────────────────────────────────
+  原稿：docs/thoughts 的红.svg —— 三段直边围成一个右侧开口的框 + 一笔向右下甩出的曲面
+  保留：框只留三边、开口朝右的构图；右向箭头保留「逸出」方向
+  修掉：甩出的曲面在 14px 下糊成一片，改为等粗箭杆 + 实心箭头，方向不变、语义更硬
+  ─────────────────────────────────────────────────────────────────────
+  复用：<g id="glyph"> 是 24×24 栅格上的字形，可直接投到任意尺寸
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
+     role="img" aria-labelledby="t d">
+  <title id="t">关闭</title>
+  <desc id="d">红色圆点，内为右侧开口的窗口轮廓与一支向右逸出的箭头。</desc>
+  <defs>
+    <radialGradient id="redGloss" cx=".36" cy=".26" r=".78">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".36"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity=".05"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="16" cy="16" r="14.5" fill="#FF4A3D"/>
+  <circle cx="16" cy="16" r="14" fill="url(#redGloss)"/>
+
+  <!-- 字形：24×24，中心 (12,12) -->
+  <g id="glyph" transform="translate(7.8 7.8) scale(.68)"
+     fill="none" stroke="#000" stroke-opacity=".58" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <!-- 框：上、左、下三边，右边整条留空 -->
+    <path d="M 13.2 5.4 H 8.4 Q 5.4 5.4 5.4 8.4 V 15.6 Q 5.4 18.6 8.4 18.6 H 13.2"/>
+    <!-- 箭：穿过开口向右 -->
+    <path d="M 12.4 12 H 20"/>
+    <path d="M 17.2 9.2 L 20.2 12 L 17.2 14.8"/>
+  </g>
+</svg>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HTerMinaL · 绿点 = 最大化
+  ─────────────────────────────────────────────────────────────────────
+  原稿：docs/thoughts 的绿.svg —— 一条双头缎带，两端各向对角甩开，中间收细
+  保留：双向对角扩张的动势，以及「两头张」的月牙轮廓（没有改成四角括号，也没用加号）
+  修掉：月牙在 14px 下只剩两道细线，像「旋转/交换」，不像「撑开」。
+        改成对角实心楔形，但把斜边做成向外微鼓的曲线 —— 既有分量，也留着原稿那笔弧
+  ─────────────────────────────────────────────────────────────────────
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
+     role="img" aria-labelledby="t d">
+  <title id="t">最大化</title>
+  <desc id="d">绿色圆点，内为两枚对角楔形，分别朝右上与左下张开。</desc>
+  <defs>
+    <radialGradient id="grnGloss" cx=".36" cy=".26" r=".78">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".36"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity=".05"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="16" cy="16" r="14.5" fill="#2FD158"/>
+  <circle cx="16" cy="16" r="14" fill="url(#grnGloss)"/>
+
+  <!-- 同色描边 + 圆角连接：给楔形的尖角磨出半径，和另外三枚的圆头笔画同一种手感 -->
+  <g id="glyph" transform="translate(7.8 7.8) scale(.68)"
+     fill="#000" fill-opacity=".58" stroke="#000" stroke-opacity=".58" stroke-width="1.2"
+     stroke-linejoin="round" stroke-linecap="round">
+    <!-- 右上楔形：顶点在角上，斜边向外微鼓 -->
+    <path d="M 20.4 3.6 V 11.8 Q 17.2 8.4 12.2 3.6 Z"/>
+    <!-- 左下楔形（镜像） -->
+    <path d="M 3.6 12.2 Q 6.8 15.6 11.8 20.4 L 3.6 20.4 Z"/>
+  </g>
+</svg>

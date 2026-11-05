@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HTerMinaL · 窗口 chrome 主图（静止态）
+  ─────────────────────────────────────────────────────────────────────
+  设计来源：docs/thoughts/window.svg 原稿（Inkscape 手绘）
+  图形语言：一块「画面」+ 中央一条抬起的「提手」+ 四枚浮在肩部的色点
+  三条硬规则：
+    1. 提手与色点在画面【之外】或【之上】，绝不改变画面尺寸 —— 标题零布局影响
+    2. 提手宽度固定，标题塞不下时中间截断，不许把提手撑大
+    3. 除画面外全部透明：提手是玻璃，色点是实心，窗口外完全透出桌面
+
+  本图标题是短的，能完整放下；塞不下的情形见 window-fullscreen.svg
+  （那里故意用了长标题，演示「中间截断、提手不变宽」）
+  坐标：viewBox 768×600，画面 720×460，提手 312×48，色点 ⌀14
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="768" height="600" viewBox="0 0 768 600"
+     fill="none" role="img" aria-labelledby="t d">
+  <title id="t">HTerMinaL 窗口</title>
+  <desc id="d">深色画面浮在透明背景上，顶部中央抬出一条梯形提手，提手两侧各两枚色点：左红黄、右绿蓝。</desc>
+
+  <defs>
+    <!-- 画面底色：不是纯黑，留一点冷调，和终端配色一致 -->
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#131820"/>
+      <stop offset=".55" stop-color="#0d1117"/>
+      <stop offset="1"   stop-color="#0a0d12"/>
+    </linearGradient>
+
+    <!-- 提手玻璃：上亮下淡，且【必须淡到 0】——
+         提手和画面是同一条轮廓，底边没有分界线，玻璃若在 y=104 处突然收住，
+         就会在提手根部露出一条横线。这是原稿没有、但落到真实窗口上一定会出现的问题。 -->
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".095"/>
+      <stop offset=".5"  stop-color="#ffffff" stop-opacity=".052"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- 色点球面高光 -->
+    <radialGradient id="gloss" cx=".36" cy=".26" r=".78">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".34"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity=".05"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 窗口外投影：只在画面下方拖出一点点，不做厚边框 -->
+    <filter id="cast" x="-12%" y="-6%" width="124%" height="126%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity=".55"/>
+    </filter>
+
+    <!-- 提手顶部 1px 内高光，让玻璃立起来 -->
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".14"/>
+      <stop offset=".5"  stop-color="#ffffff" stop-opacity=".30"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity=".14"/>
+    </linearGradient>
+
+    <!-- 整体轮廓：画面 + 提手连成一条闭合路径（原稿这里是两条线，接缝处出现双线，已修） -->
+    <path id="silhouette"
+          d="M 44 104 H 228 L 284 56 Q 290 52 298 52 H 470 Q 478 52 484 56 L 540 104
+             H 724 Q 744 104 744 124 V 544 Q 744 564 724 564 H 44 Q 24 564 24 544 V 124
+             Q 24 104 44 104 Z"/>
+
+    <clipPath id="clipScreen"><use href="#silhouette"/></clipPath>
+  </defs>
+
+  <g filter="url(#cast)">
+    <!-- 画面（唯一实体） -->
+    <path d="M 24 124 Q 24 104 44 104 H 228 L 284 56 Q 290 52 298 52 H 470 Q 478 52 484 56
+             L 540 104 H 724 Q 744 104 744 124 V 544 Q 744 564 724 564 H 44 Q 24 564 24 544 Z"
+          fill="url(#screen)"/>
+
+    <!-- 提手：玻璃，铺在画面之上但不遮住画面顶部的内容 -->
+    <path d="M 228 104 L 284 56 Q 290 52 298 52 H 470 Q 478 52 484 56 L 540 104 Z" fill="url(#glass)"/>
+
+    <g clip-path="url(#clipScreen)">
+      <!-- 内容示意：只放三行，别抢戏 -->
+      <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13"
+         letter-spacing=".2" xml:space="preserve">
+        <text x="52" y="156" fill="#5eead4">JSHeL&gt; <tspan fill="#cbd5e1">hsl2()</tspan></text>
+        <text x="52" y="180" fill="#5b6b7f">  · 已缓存 6 项组件 · FreeBSD 12.0 运行中</text>
+        <text x="52" y="212" fill="#7c8ea3">root@nyu:~ # <tspan fill="#cbd5e1">uname -a</tspan></text>
+        <text x="52" y="236" fill="#8fa3b8">FreeBSD nyu 12.0-RELEASE r341666 GENERIC  i386</text>
+        <text x="52" y="268" fill="#7c8ea3">root@nyu:~ # <tspan fill="#7c8ea3">▍</tspan></text>
+      </g>
+    </g>
+
+    <!-- 轮廓：1px 细边，只勾外缘 -->
+    <use href="#silhouette" fill="none" stroke="#ffffff" stroke-opacity=".13" stroke-width="1"/>
+
+    <!-- 提手顶边高光（只画上沿那一段，不闭合） -->
+    <path d="M 284 56 Q 290 52 298 52 H 470 Q 478 52 484 56"
+          fill="none" stroke="url(#edge)" stroke-width="1"/>
+  </g>
+
+  <!-- ── 四枚色点：浮在提手肩部，与提手同一水平带（cy=80 = 56..104 的中点）
+       左组「离开」：红=关闭  黄=最小化
+       右组「展开」：绿=最大化 蓝=置底
+       组内 62，组间 332 —— 内两枚正好贴住提手两只脚 -->
+  <g>
+    <g>
+      <circle cx="156" cy="80" r="7" fill="#FF4A3D"/>
+      <circle cx="156" cy="80" r="6.9" fill="url(#gloss)"/>
+    </g>
+    <g>
+      <circle cx="218" cy="80" r="7" fill="#FFCC00"/>
+      <circle cx="218" cy="80" r="6.9" fill="url(#gloss)"/>
+    </g>
+    <g>
+      <circle cx="550" cy="80" r="7" fill="#2FD158"/>
+      <circle cx="550" cy="80" r="6.9" fill="url(#gloss)"/>
+    </g>
+    <g>
+      <circle cx="612" cy="80" r="7" fill="#35C5F2"/>
+      <circle cx="612" cy="80" r="6.9" fill="url(#gloss)"/>
+    </g>
+  </g>
+
+  <!-- 标题：静置在提手下沿，与色点光学同高；塞不下时中间截断（见 window-fullscreen.svg 示例） -->
+  <text x="384" y="88" text-anchor="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif"
+        font-size="15" font-weight="500" letter-spacing=".3"
+        fill="#e8eef6" fill-opacity=".92">hsl2 · FreeBSD 12.0 (v86)</text>
+</svg>

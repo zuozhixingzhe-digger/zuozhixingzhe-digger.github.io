@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HTerMinaL · 蓝点 = 置于所有窗口最下面（露出次级窗口）
+  ─────────────────────────────────────────────────────────────────────
+  原稿：docs/thoughts 的蓝.svg —— 两个互相咬合的阶梯形，画的是「一扇窗压在另一扇后面」
+  保留：原稿最聪明的一点 —— 它没有画两个重叠的矩形，而是只画【露出来的那部分】，
+        用阶梯缺口表达遮挡。这里照这个思路：前景画完整轮廓，后景只画露出的 L 形
+  修掉：两稿的间距太窄，缩到 14px 会拼成一个「复制」图标，看不出前后关系。
+        拉开到 3.6 个单位，并把后景的线减细、压淡 —— 近实远虚，遮挡才读得出来
+  ─────────────────────────────────────────────────────────────────────
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
+     role="img" aria-labelledby="t d">
+  <title id="t">置于最底层</title>
+  <desc id="d">蓝色圆点，内为一扇清晰的窗口轮廓，其后右下方露出一扇更淡的窗口的 L 形边缘。</desc>
+  <defs>
+    <radialGradient id="bluGloss" cx=".36" cy=".26" r=".78">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".42"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity=".06"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <circle cx="16" cy="16" r="14.5" fill="#35C5F2"/>
+  <circle cx="16" cy="16" r="14" fill="url(#bluGloss)"/>
+
+  <g id="glyph" transform="translate(7.8 7.8) scale(.68)"
+     fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 前景：被送下去的那扇窗，完整、实 -->
+    <rect x="4.4" y="4.4" width="12" height="9.6" rx="2.2"
+          stroke="#000" stroke-opacity=".58" stroke-width="2"/>
+    <!-- 后景：已在下层的窗，只留露出的 L，细一点、淡一点 -->
+    <path d="M 9.6 14 V 17.8 Q 9.6 20 11.8 20 H 17.8 Q 20 20 20 17.8 V 12.6 Q 20 10.4 17.8 10.4 H 16.4"
+          stroke="#000" stroke-opacity=".40" stroke-width="1.7"/>
+  </g>
+</svg>
