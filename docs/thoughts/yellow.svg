@@ -2,33 +2,25 @@
 <!--
   HTerMinaL · 黄点 = 最小化
   ─────────────────────────────────────────────────────────────────────
-  原稿：docs/thoughts 的黄.svg —— 顶部一条横带 + 一笔向下兜回的曲面（像布/帘往下折）
-  保留：「整体向下沉」的动势，以及底部那条承接的横线
-  修掉：原稿只有一块折下的面，没有落点，看不出「去哪儿」；补一条托盘横线，动势有了终点
+  基准 = original/yellow.svg（手绘原稿）。
+  原稿是一块「折角」：上边平、右边直，底边一条弧从右上角一路兜回左上角。
+  路径数据原样搬过来，一个控制点都没改 —— 这条 path 本来就是干净的。
+
+  只动一处：白描边去掉（原稿 stroke:#fff 是画在白纸上的做法，落到黄底上等于没有），
+  填充换深墨，这样黄点上才看得见字。
+
+  缩放：原稿 bbox 129.452 × 135.370 → 26px 高，居中放进 ⌀40 的圆点。
   ─────────────────────────────────────────────────────────────────────
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"
      role="img" aria-labelledby="t d">
   <title id="t">最小化</title>
-  <desc id="d">黄色圆点，内为一支向下的箭头落向一条托盘横线。</desc>
-  <defs>
-    <radialGradient id="yelGloss" cx=".36" cy=".26" r=".78">
-      <stop offset="0"   stop-color="#ffffff" stop-opacity=".46"/>
-      <stop offset=".55" stop-color="#ffffff" stop-opacity=".07"/>
-      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
+  <desc id="d">黄色圆点，内为一块折角：上边平直、右边垂直，底边由一条长弧兜回左上。</desc>
 
-  <circle cx="16" cy="16" r="14.5" fill="#FFCC00"/>
-  <circle cx="16" cy="16" r="14" fill="url(#yelGloss)"/>
+  <circle cx="20" cy="20" r="20" fill="#ffcc00"/>
 
-  <g id="glyph" transform="translate(7.8 7.8) scale(.68)"
-     fill="none" stroke="#000" stroke-opacity=".58" stroke-width="2"
-     stroke-linecap="round" stroke-linejoin="round">
-    <!-- 落点：托盘 -->
-    <path d="M 5.4 19 H 18.6"/>
-    <!-- 下沉的箭 -->
-    <path d="M 12 5.2 V 15.4"/>
-    <path d="M 8.9 12.3 L 12 15.5 L 15.1 12.3"/>
+  <g transform="translate(-.102 -7.278) scale(.19206)" fill="#000" opacity=".58">
+    <path d="M 39.945204 74.342465 H 169.39726 V 209.71233
+             c 0,0 7.76712,-87.28767 -129.452056,-135.369865 z"/>
   </g>
 </svg>

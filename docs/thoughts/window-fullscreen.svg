@@ -1,26 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  HTerMinaL · 全屏态（window.svg 的唯一变体）
+  HTerMinaL · 窗口 chrome 全屏态
   ─────────────────────────────────────────────────────────────────────
-  全屏时窗口不再「浮着」：它铺满视口。于是两件在普通态靠「透明」解决的问题失效了 ——
+  原稿没有全屏图。这一张是按原稿的规则推出来的：
+    「普通态靠透明藏起来的地方，全屏时一律换成毛玻璃。」
 
-    · 四个圆角把画面切出四个缺口，普通态这里露出桌面，全屏时没有桌面可露；
-    · 提手原本抬在画面【外面】，全屏时外面就是屏幕边缘，它无处可站。
+  普通态有两个"缺口"是透明的：
+    a. 提手底部与画面顶边之间的两个阴角（x 29.219~73.973 和 143.137~189.370，y 64.171~80.260）
+    b. 提手本身凸在画面之外
+  全屏时没有桌面可露，这两块一起填成一条毛玻璃带 —— 画面顶边因此变得平直。
 
-  规则：凡是普通态「本该透明、露出背后」的地方，全屏时一律改成毛玻璃。
-        · 四角缺口 → 毛玻璃
-        · 提手翻进画面内，变成一个向下的梯形凹槽 → 毛玻璃
-
-  这样全屏既不会露出背后的桌面，也不会有「窗口被裁掉一块」的感觉。
-
-  本图同时演示标题截断：提手宽度固定，标题塞不下就中间截断 →
-  hsl2 · FreeBSD 12.0 (v86)  →  hsl2 · FreeS…12.0 (v86)
+  几何全部沿用 window.svg，一个数值没改：
+    · 提手带 y 64.171 ~ 80.260（高 16.089）
+    · 色点 cy 72.216，x 58.395 / 72.195 / 146.395 / 160.195
+    · 标题基线 y 77.35
+  变的只有：画面顶边从 80.260 上移到 64.171，多出来的一条是毛玻璃。
   ─────────────────────────────────────────────────────────────────────
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="768" height="600" viewBox="0 0 768 600"
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="580" viewBox="24 57 170 145"
      fill="none" role="img" aria-labelledby="t d">
-  <title id="t">HTerMinaL 窗口（全屏态）</title>
-  <desc id="d">窗口铺满视口，顶部中央是一个向下凹的梯形毛玻璃凹槽，四角缺口同样填毛玻璃，标题在凹槽内被中间截断。</desc>
+  <title id="t">HTerMinaL 窗口 · 全屏</title>
+  <desc id="d">画面向上扩到提手顶端，原来的缺口填成一条毛玻璃带，标题与四枚色点仍在原位置。</desc>
 
   <defs>
     <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
@@ -29,113 +29,77 @@
       <stop offset="1"   stop-color="#0a0d12"/>
     </linearGradient>
 
-    <!-- 背后的桌面：没有它就看不出毛玻璃在磨什么 -->
-    <linearGradient id="desk" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0"   stop-color="#1b2b47"/>
-      <stop offset=".5"  stop-color="#2a1f3d"/>
-      <stop offset="1"   stop-color="#102a33"/>
+    <!-- 毛玻璃带：顶部略亮，向下淡出，接到画面本体 -->
+    <linearGradient id="frost" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffffff" stop-opacity=".10"/>
+      <stop offset=".72" stop-color="#ffffff" stop-opacity=".045"/>
+      <stop offset="1"   stop-color="#ffffff" stop-opacity=".012"/>
     </linearGradient>
 
-    <!-- 玻璃的雾：上亮下暗，模拟斜上方来光 -->
-    <linearGradient id="haze" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0"  stop-color="#ffffff" stop-opacity=".115"/>
-      <stop offset=".7" stop-color="#ffffff" stop-opacity=".055"/>
-      <stop offset="1"  stop-color="#ffffff" stop-opacity=".030"/>
-    </linearGradient>
-
-    <radialGradient id="gloss" cx=".36" cy=".26" r=".78">
-      <stop offset="0"   stop-color="#ffffff" stop-opacity=".34"/>
-      <stop offset=".55" stop-color="#ffffff" stop-opacity=".05"/>
-      <stop offset="1"   stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- 磨砂颗粒：去色的分形噪声压到很低不透明度，只提供「沙」 -->
-    <filter id="grain" x="0" y="0" width="1" height="1">
-      <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="3" seed="17" result="n"/>
-      <feColorMatrix in="n" type="saturate" values="0" result="g"/>
-      <feComponentTransfer in="g"><feFuncA type="linear" slope=".20" intercept="0"/></feComponentTransfer>
+    <!-- 细颗粒：玻璃不是纯色，加一层噪点才有厚度 -->
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.15" numOctaves="2" seed="7" result="n"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".055"/></feComponentTransfer>
     </filter>
 
-    <filter id="blurBig" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="11"/>
+    <filter id="cast" x="-12%" y="-8%" width="124%" height="126%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="4.5" flood-color="#000" flood-opacity=".6"/>
     </filter>
 
-    <!-- 四角缺口 = 视口矩形 挖掉 圆角矩形（evenodd） -->
-    <path id="cornerGaps" fill-rule="evenodd"
-          d="M 0 0 H 768 V 600 H 0 Z
-             M 14 0 H 754 Q 768 0 768 14 V 586 Q 768 600 754 600 H 14 Q 0 600 0 586 V 14 Q 0 0 14 0 Z"/>
-
-    <!-- 提手凹槽：普通态提手的镜像（上宽 312，下窄 200，深 48） -->
-    <path id="notch" d="M 228 0 H 540 L 484 48 Q 478 52 470 52 H 298 Q 290 52 284 48 Z"/>
-
-    <!-- 画面轮廓 -->
-    <path id="frame" d="M 14 0 H 754 Q 768 0 768 14 V 586 Q 768 600 754 600 H 14 Q 0 600 0 586 V 14 Q 0 0 14 0 Z"/>
-
-    <clipPath id="clipGaps"><use href="#cornerGaps"/></clipPath>
-    <clipPath id="clipNotch"><use href="#notch"/></clipPath>
+    <clipPath id="clipAll">
+      <rect x="29.219" y="64.171" width="160.151" height="126.678" rx="3"/>
+    </clipPath>
   </defs>
 
-  <!-- 桌面（仅作背景参照）：一个被模糊处理的渐变，模拟「背后有东西」 -->
-  <g>
-    <rect width="768" height="600" fill="url(#desk)"/>
-    <g filter="url(#blurBig)" opacity=".75">
-      <circle cx="140" cy="130" r="140" fill="#3b82f6" opacity=".45"/>
-      <circle cx="670" cy="480" r="160" fill="#a855f7" opacity=".40"/>
-      <circle cx="420" cy="40"  r="90"  fill="#22d3ee" opacity=".35"/>
+  <g filter="url(#cast)">
+    <!-- 画面：顶边上移到提手顶端，左右与底边不变 -->
+    <rect x="29.219" y="64.171" width="160.151" height="126.678" rx="3" fill="url(#screen)"/>
+
+    <!-- 缺口填平：毛玻璃带（雾层 + 颗粒） -->
+    <g clip-path="url(#clipAll)">
+      <rect x="29.219" y="64.171" width="160.151" height="16.089" fill="url(#frost)"/>
+      <rect x="29.219" y="64.171" width="160.151" height="16.089" filter="url(#grain)"/>
+
+      <!-- 原提手轮廓留在带子里，只是一道极淡的凸起：位置还在，边界已经不属于画面 -->
+      <path d="M 73.973 80.260 L 88.027 65.171 Q 88.027 64.171 89.027 64.171 L 129.562 64.171 Q 130.562 64.171 130.562 65.171 L 143.137 80.260 Z"
+            fill="#ffffff" fill-opacity=".035"/>
+      <path d="M 73.973 80.260 L 88.027 65.171 Q 88.027 64.171 89.027 64.171 H 129.562 Q 130.562 64.171 130.562 65.171 L 143.137 80.260"
+            fill="none" stroke="#ffffff" stroke-opacity=".08" stroke-width=".3"/>
+
+      <!-- 带的底缘：一道 1px 的厚度高光，说明玻璃压在画面上 -->
+      <path d="M 29.219 80.260 H 189.370" stroke="#ffffff" stroke-opacity=".09" stroke-width=".3"/>
     </g>
+
+    <g clip-path="url(#clipAll)">
+      <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+         font-size="3.2" letter-spacing=".02" xml:space="preserve">
+        <text x="35.2" y="90.2" fill="#5eead4">JSHeL&gt; <tspan fill="#cbd5e1">hsl2()</tspan></text>
+        <text x="35.2" y="95.2" fill="#5b6b7f">  · 已缓存 6 项组件 · FreeBSD 12.0 运行中</text>
+        <text x="35.2" y="102.2" fill="#7c8ea3">root@nyu:~ # <tspan fill="#cbd5e1">uname -a</tspan></text>
+        <text x="35.2" y="107.2" fill="#8fa3b8">FreeBSD nyu 12.0-RELEASE r341666 GENERIC  i386</text>
+        <text x="35.2" y="114.2" fill="#7c8ea3">root@nyu:~ # <tspan fill="#8fa3b8">▍</tspan></text>
+      </g>
+    </g>
+
+    <!-- 轮廓：整块矩形，顶边平直（缺口已经填平） -->
+    <rect x="29.219" y="64.171" width="160.151" height="126.678" rx="3"
+          stroke="#ffffff" stroke-opacity=".13" stroke-width=".3"/>
   </g>
 
-  <!-- ── 毛玻璃 A：四角缺口 ── -->
-  <g clip-path="url(#clipGaps)">
-    <rect width="768" height="600" fill="url(#haze)"/>
-    <rect width="768" height="600" filter="url(#grain)"/>
-  </g>
-
-  <!-- ── 画面：铺满视口，圆角 14 ── -->
-  <use href="#frame" fill="url(#screen)"/>
-
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-     font-size="13" letter-spacing=".2" xml:space="preserve">
-    <text x="52" y="132" fill="#5eead4">JSHeL&gt; <tspan fill="#cbd5e1">hsl2()</tspan></text>
-    <text x="52" y="156" fill="#5b6b7f">  · 已缓存 6 项组件 · FreeBSD 12.0 运行中</text>
-    <text x="52" y="188" fill="#7c8ea3">root@nyu:~ # <tspan fill="#cbd5e1">df -h</tspan></text>
-    <text x="52" y="212" fill="#8fa3b8">Filesystem   Size  Used  Avail  Capacity  Mounted on</text>
-    <text x="52" y="236" fill="#8fa3b8">/dev/ada0p2  1.9G  412M   1.4G       23%  /</text>
-    <text x="52" y="268" fill="#7c8ea3">root@nyu:~ # <tspan fill="#7c8ea3">▍</tspan></text>
-  </g>
-
-  <!-- ── 毛玻璃 B：提手凹槽 ──
-       凹槽里的画面本身就是暗的，所以这里要的不是「亮」，而是
-       雾层 + 颗粒 + 一条槽底高光，把凹槽读成一块有厚度的玻璃 -->
-  <g clip-path="url(#clipNotch)">
-    <use href="#frame" fill="url(#screen)"/>
-    <rect width="768" height="600" fill="url(#haze)"/>
-    <rect width="768" height="600" filter="url(#grain)"/>
-  </g>
-  <use href="#notch" fill="none" stroke="#ffffff" stroke-opacity=".16" stroke-width="1"/>
-  <path d="M 284 48 Q 290 52 298 52 H 470 Q 478 52 484 48"
-        stroke="#ffffff" stroke-opacity=".24" stroke-width="1"/>
-
-  <!-- 画面外缘 1px -->
-  <use href="#frame" stroke="#ffffff" stroke-opacity=".14" stroke-width="1"/>
-  <path d="M 228 0 H 540" stroke="#ffffff" stroke-opacity=".20" stroke-width="1"/>
-
-  <!-- 四枚色点：与普通态同一套相对位置（距中心 ±228 / ±166），cy 落在凹槽带中间 -->
+  <!-- 色点：位置与普通态完全一致 -->
   <g>
-    <circle cx="156" cy="24" r="7" fill="#FF4A3D"/><circle cx="156" cy="24" r="6.9" fill="url(#gloss)"/>
-    <circle cx="218" cy="24" r="7" fill="#FFCC00"/><circle cx="218" cy="24" r="6.9" fill="url(#gloss)"/>
-    <circle cx="550" cy="24" r="7" fill="#2FD158"/><circle cx="550" cy="24" r="6.9" fill="url(#gloss)"/>
-    <circle cx="612" cy="24" r="7" fill="#35C5F2"/><circle cx="612" cy="24" r="6.9" fill="url(#gloss)"/>
+    <circle cx="58.395" cy="72.216" r="5" fill="#ff0000" stroke="#ffffff" stroke-opacity=".22" stroke-width=".25"/>
+    <circle cx="72.195" cy="72.216" r="5" fill="#ffcc00" stroke="#ffffff" stroke-opacity=".22" stroke-width=".25"/>
+    <circle cx="146.395" cy="72.216" r="5" fill="#00ff00" stroke="#ffffff" stroke-opacity=".22" stroke-width=".25"/>
+    <circle cx="160.195" cy="72.216" r="5" fill="#00ffff" stroke="#ffffff" stroke-opacity=".22" stroke-width=".25"/>
   </g>
 
-  <!-- 标题：塞不下 → 中间截断，提手宽度不变 -->
-  <!-- 真实标题（塞不下，故意留长以便演示规则）：
-       hsl2 · FreeBSD 12.0-RELEASE r341666 · 第 1 层
-       中间截断后保留头（身份）与尾（状态），提手宽度一个像素都不变。
-       注意：截断的长度必须以【凹槽在文字底线处的宽度】为准，不能只按视觉估，
-       否则字会压到斜边上（这一版就是这么错的，已按实测宽度收紧）。 -->
-  <text x="384" y="34" text-anchor="middle"
+  <!-- 长标题：这里演示"塞不下就中间截断，绝不撑大提手"。
+       可用宽 = 标题基线处提手的宽度（提手在该高度的半宽 32.17 − 左右各 2 的呼吸）≈ 60mm ≈ 241px。
+       完整标题 45 字符要 320px，所以砍中间，保留头（身份）+ 尾（状态）。 -->
+  <text x="109.295" y="77.35" text-anchor="middle"
         font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif"
-        font-size="15" font-weight="500" letter-spacing=".3"
-        fill="#e8eef6" fill-opacity=".95">hsl2 · FreeBSD 12.0…第 1 层</text>
+        font-size="4.2" font-weight="500" letter-spacing=".04"
+        fill="#e8eef6" fill-opacity=".92">hsl2 · FreeBSD 12.0…第 1 层</text>
 </svg>
