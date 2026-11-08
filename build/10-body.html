@@ -32,6 +32,12 @@
       <button class="k" type="button" tabindex="-1" data-key="Tab" title="Tab 补全"><span>⇥</span></button>
     </div>
 
+    <!-- 隐藏式最大化的还原胶囊：窗口把自己标题条收起来之后，这里是唯一入口 -->
+    <button class="chip" id="hidChip" type="button" title="隐藏式最大化">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></svg>
+      <b>窗口</b>
+    </button>
+
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
@@ -44,24 +50,45 @@
     <div id="term-view"><div id="term" aria-label="HTerMinaL 终端"></div></div>
     <div id="window-layer"></div>
     <div class="win-snap" id="winSnap"></div>
-    <div id="dock" hidden></div>
+    <!-- Dock：上面那根小把手负责折叠，折叠后只剩底部一颗药丸 -->
+    <div id="dockWrap" hidden>
+      <button class="dock-fold" id="dockFold" type="button" title="收起 Dock" aria-label="收起 Dock">⌄</button>
+      <div id="dock"></div>
+    </div>
+    <button id="dockPill" hidden type="button" title="展开 Dock" aria-label="展开 Dock">
+      <b>▴</b><em>Dock</em><span id="dockPillN">0</span>
+    </button>
   </main>
 
   <!-- 启动屏 -->
   <div id="boot">
+    <div class="boot-grid" aria-hidden="true"></div>
+    <div class="boot-glow" aria-hidden="true"></div>
     <div class="boot-inner">
-      <div class="boot-logo">  _   _ _____
+      <div class="boot-mark" aria-hidden="true"><pre>  _   _ _____
  | | | |_   _|__ _ _ _ __ _ _ __
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
-        js in the browser · everything is a file</div>
-      <div class="boot-title">HTerMinaL <span id="bootVer">—</span></div>
-      <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
-      <div class="boot-bar"><i id="bootBar"></i></div>
-      <div class="boot-log" id="bootLog">init</div>
+        js in the browser · everything is a file</pre></div>
+      <div class="boot-head">
+        <div class="boot-title">HTerMinaL <span id="bootVer">—</span></div>
+        <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
+      </div>
+      <div class="boot-bar-wrap">
+        <div class="boot-bar"><i id="bootBar"></i></div>
+        <div class="boot-meta"><span id="bootStage">准备中</span><span id="bootPct">0%</span></div>
+      </div>
+      <div class="boot-console" id="bootLog" role="log" aria-live="polite" aria-label="启动日志"></div>
       <div class="boot-err" id="bootErr" hidden></div>
     </div>
   </div>
+
+  <!-- 彻底全屏时的退出悬浮球：可拖、不能出画布、点一下退出 -->
+  <button id="imBall" type="button" title="点击退出全屏（可拖动）" aria-label="退出全屏">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 4H4v5M15 20h5v-5M20 9V4h-5M4 15v5h5"/>
+    </svg>
+  </button>
 </div>
 
 <!-- 应用启动器 -->

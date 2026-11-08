@@ -354,9 +354,16 @@ function initTopbarKeys() {
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
 function deskBox() {
   const d = document.getElementById('desk');
-  if (!d) return { w: window.innerWidth, h: window.innerHeight };
+  if (!d) return { x:0, y:0, left:0, top:0, w: window.innerWidth, h: window.innerHeight };
   const r = d.getBoundingClientRect();
-  return { w: Math.max(120, Math.round(r.width)), h: Math.max(120, Math.round(r.height)) };
+  /* left / top 也要给：拖动吸附判断的是「指针相对桌面」的坐标，
+   * 少了这两个值 px/py 会算成 NaN，四个边缘一个都命中不了。 */
+  return {
+    x: Math.round(r.left), y: Math.round(r.top),
+    left: Math.round(r.left), top: Math.round(r.top),
+    w: Math.max(120, Math.round(r.width)),
+    h: Math.max(120, Math.round(r.height))
+  };
 }
 
 /* ---------------------------------------------------------------- 终端实例 */
@@ -896,6 +903,68 @@ const WindowManager = {
 
   init() {
     document.getElementById('window-layer').addEventListener('pointerdown', () => {}, { passive:true });
+    this._initModeChrome();
+  },
+
+  /* 顶栏胶囊与全屏悬浮球：两个挂件的共同点是「点了就还原 / 退出」，
+   * 区别是胶囊还带窗口操作（右键、长按弹四个动作）。 */
+  _initModeChrome() {
+    const chip = document.getElementById('hidChip');
+    if (chip) {
+      let timer = 0, sx = 0, sy = 0, longPressed = false;
+      const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+      chip.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        longPressed = false; sx = e.clientX; sy = e.clientY;
+        clear();
+        timer = setTimeout(() => { timer = 0; longPressed = true; ChipMenu.open(chip, chip.dataset.win); }, 500);
+      });
+      chip.addEventListener('pointermove', e => {
+        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => chip.addEventListener(t, clear));
+      chip.addEventListener('contextmenu', e => {
+        e.preventDefault(); clear();
+        ChipMenu.open(chip, chip.dataset.win);
+      });
+      chip.addEventListener('click', () => {
+        if (longPressed) { longPressed = false; return; }
+        const id = chip.dataset.win;
+        if (id) WindowManager.maxMode(id, 'normal');
+      });
+    }
+
+    const ball = document.getElementById('imBall');
+    if (!ball) return;
+    let drag = null, moved = false;
+    ball.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      drag = { x:e.clientX, y:e.clientY, l:parseFloat(ball.style.left) || 0, t:parseFloat(ball.style.top) || 0 };
+      moved = false;
+      try { ball.setPointerCapture(e.pointerId); } catch (_) {}
+      ball.classList.add('dragging');
+    });
+    ball.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      const r = ball.getBoundingClientRect(), pad = 8;
+      ball.style.left = clamp(drag.l + dx, pad, Math.max(pad, innerWidth - r.width - pad)) + 'px';
+      ball.style.top = clamp(drag.t + dy, pad, Math.max(pad, innerHeight - r.height - pad)) + 'px';
+    });
+    const up = (e) => {
+      if (!drag) return;
+      drag = null;
+      ball.classList.remove('dragging');
+      try { ball.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (!moved) WindowManager.exitImmersive();
+    };
+    ball.addEventListener('pointerup', up);
+    ball.addEventListener('pointercancel', () => { drag = null; ball.classList.remove('dragging'); });
+    addEventListener('resize', () => {
+      if (ball.style.display !== 'none') WindowManager._placeImBall(ball);
+    });
   },
 
   open(opts) {
@@ -932,7 +1001,7 @@ const WindowManager = {
     const defW = Math.min(opts.w || base[0], vw - 24);
     /* 高度含顶部提手：调用方给的 w/h 一直指"画面"尺寸，提手另外加，
      * 否则窗口内容会比以前矮 44~74px。 */
-    const hh0 = clamp(Math.round(defW * 0.1), 44, 74);
+    const hh0 = clamp(Math.round(defW * 0.1), 38, 86);
     const defH = Math.min((opts.h || base[1]) + hh0, vh - 16);
     const n = this.cascade++ % 6;
     // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
@@ -943,7 +1012,8 @@ const WindowManager = {
     el.className = 'win focus';
     el.dataset.id = id;
     el.style.cssText = `left:${x}px;top:${y}px;width:${defW}px;height:${defH}px;z-index:${++this.z}`;
-    el.innerHTML = `<svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
+    el.innerHTML = `<div class="win-tie"></div>
+      <svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
         <defs><linearGradient id="htHandleHi" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#fff" stop-opacity=".055"/>
           <stop offset=".55" stop-color="#fff" stop-opacity=".022"/>
@@ -1001,13 +1071,15 @@ const WindowManager = {
         if (a === 'close') this.close(id);
         else if (a === 'min') this.minimize(id);
         else if (a === 'max') this.toggleMax(id);
-        else if (a === 'back') this.sendDown(id);
+        /* 蓝点：直接压到最底（用户定的默认语义）。只下移一层的选项在右键菜单里。 */
+        else if (a === 'back') this.sendToBack(id);
       });
       this._bindDotMenu(dot, id);
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
     bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+    this._bindTitleTip(win);
 
     /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
      * 不是几档断点。ResizeObserver 盯 el 的宽度（最大化、拖边框都会触发）。 */
@@ -1064,6 +1136,12 @@ const WindowManager = {
     const dbox = document.getElementById('desk').getBoundingClientRect();
     if (icon) {
       const r = icon.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
+    }
+    /* Dock 折叠时没有图标可落，收到药丸上 */
+    const pill = document.getElementById('dockPill');
+    if (pill && !pill.hidden) {
+      const r = pill.getBoundingClientRect();
       return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
     }
     return { x: dbox.width / 2, y: dbox.height + 24 };
@@ -1167,7 +1245,7 @@ const WindowManager = {
     const oy = Number.isFinite(st) ? st : r.top - box0.top;
     const w0 = r.width, h0 = r.height;
 
-    let moved = false, snap = null, raf = 0, last = null;
+    let moved = false, snapPos = null, raf = 0, last = null;
     const snapEl = document.getElementById('winSnap');
     document.body.classList.add('win-drag');
 
@@ -1185,15 +1263,24 @@ const WindowManager = {
       win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
 
+      /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一。
+       * 角优先于边——不然在左上角永远只能拿到「左半屏」。 */
       const px = ev.clientX - box0.left, py = ev.clientY - box0.top;
-      if (py <= 8) snap = { x:0, y:0, w:box.w, h:box.h };
-      else if (px <= 8) snap = { x:0, y:0, w:Math.round(box.w / 2), h:box.h };
-      else if (px >= box.w - 8) snap = { x:Math.round(box.w / 2), y:0, w:Math.round(box.w / 2), h:box.h };
-      else snap = null;
-      if (snap) {
+      const EDGE = 10, CORNER = 110;
+      if (py <= EDGE && px <= CORNER) snapPos = 'tl';
+      else if (py <= EDGE && px >= box.w - CORNER) snapPos = 'tr';
+      else if (py <= EDGE) snapPos = 'full';
+      else if (px <= EDGE && py >= box.h - CORNER) snapPos = 'bl';
+      else if (px >= box.w - EDGE && py >= box.h - CORNER) snapPos = 'br';
+      else if (px <= EDGE) snapPos = 'left';
+      else if (px >= box.w - EDGE) snapPos = 'right';
+      else snapPos = null;
+      const rect = snapPos ? this._snapRect(snapPos) : null;
+      if (rect) {
         snapEl.style.display = 'block';
-        snapEl.style.left = snap.x + 'px'; snapEl.style.top = snap.y + 'px';
-        snapEl.style.width = snap.w + 'px'; snapEl.style.height = snap.h + 'px';
+        snapEl.style.left = rect.x + 'px'; snapEl.style.top = rect.y + 'px';
+        snapEl.style.width = rect.w + 'px'; snapEl.style.height = rect.h + 'px';
+        snapEl.dataset.pos = snapPos;
       } else snapEl.style.display = 'none';
     };
     const move = (ev) => {
@@ -1211,14 +1298,15 @@ const WindowManager = {
       document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
       if (snapEl) snapEl.style.display = 'none';
-      if (snap) {
-        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:w0, h:h0 };
-        win.el.style.left = snap.x + 'px'; win.el.style.top = snap.y + 'px';
-        win.el.style.width = snap.w + 'px'; win.el.style.height = snap.h + 'px';
-        const box = deskBox();
-        win.maximized = snap.w === box.w && snap.h === box.h;
-        win.el.classList.toggle('max', win.maximized);
-        win.content && win.content.onResize && win.content.onResize();
+      if (snapPos) {
+        /* 还原尺寸必须是「拖动前」的位置：此刻窗口已经跟着指针跑到边缘了，
+         * 不先把旧坐标塞回去，snap() 会把边缘位置记成原始位置。 */
+        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:Math.round(w0), h:Math.round(h0) };
+        win.mode = 'normal'; win.maximized = false;
+        win.el.classList.remove('max', 'hidemax', 'immersive');
+        win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
+        win.el.style.width = w0 + 'px'; win.el.style.height = h0 + 'px';
+        this.snap(win.id, snapPos);
       }
     };
     bar.addEventListener('pointermove', move);
@@ -1314,6 +1402,7 @@ const WindowManager = {
     /* 先算 Dock 位置再藏：_syncDock 之后图标位置才准，
      * 但 .min 会被 display:none 掉，所以顺序是 同步 Dock → 取点 → 动画 → 加 .min */
     this._syncDock();
+    this._syncModeChrome();
     if (w.content && w.content.onHide) w.content.onHide();
     this._animMin(w, () => { w.el.classList.add('min'); });
   },
@@ -1323,6 +1412,7 @@ const WindowManager = {
     w.minimized = false;
     const wasMin = w.el.classList.contains('min');
     w.el.classList.remove('min');
+    this._syncModeChrome();
     this.focus(id);
     if (w.content && w.content.onShow) w.content.onShow();
     if (!wasMin) return;
@@ -1348,31 +1438,111 @@ const WindowManager = {
     else if (w.el.classList.contains('focus')) this.minimize(id);
     else this.focus(id);
   },
+  /* 绿色按钮单击 = 常规最大化 / 还原。
+   * 另外三种（布局、隐藏式、彻底全屏）在它的右键菜单里。 */
   toggleMax(id) {
     const w = this.windows.get(id);
     if (!w) return;
-    /* 加 .tween 让 left/top/width/height 插值过渡（外扩 / 内缩），
-     * 过渡结束立刻摘掉，避免以后拖拽时窗口"追不上"鼠标。 */
-    w.el.classList.add('tween');
-    clearTimeout(w._tweenT);
-    w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 300);
-    if (w.maximized) {
-      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
-      w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px';
-      w.el.style.width = r.w + 'px'; w.el.style.height = r.h + 'px';
-      w.maximized = false;
-      w.el.classList.remove('max');
-    } else {
-      const rect = w.el.getBoundingClientRect();
-      const dbox = document.getElementById('desk').getBoundingClientRect();
-      w.restoreRect = { x:rect.left - dbox.left, y:rect.top - dbox.top, w:rect.width, h:rect.height };
-      w.el.style.left = '0px'; w.el.style.top = '0px';
-      w.el.style.width = '100%'; w.el.style.height = '100%';
-      w.maximized = true;
-      w.el.classList.add('max');
+    if (w.mode && w.mode !== 'normal') { this.maxMode(id, 'normal'); return; }
+    this.maxMode(id, w.maximized ? 'normal' : 'max');
+  },
+
+  /* 窗口的四种形态，统一从一个口子进出，避免「最大化标记」和「DOM 类」打架。
+   *   normal    普通窗口（可拖可缩）
+   *   max       常规最大化：占满桌面，提手翻成倒梯形，标题带还在
+   *   hidden    隐藏式最大化：占满桌面但把提手/标题条全收掉，顶栏留一个胶囊还原
+   *   immersive 彻底全屏：连顶栏和 Dock 一起盖住，只留一个可拖的悬浮球退出
+   */
+  maxMode(id, mode) {
+    const w = this.windows.get(id);
+    if (!w) return;
+    mode = mode || 'normal';
+    const el = w.el;
+    const from = w.mode || (w.maximized ? 'max' : 'normal');
+    if (mode === from) return;
+
+    /* 只在「从普通窗口离开」时记还原尺寸；模式之间互转沿用同一份，
+     * 否则 全屏 → 隐藏式 → 还原 会把全屏尺寸当成原始尺寸存下来。 */
+    if (from === 'normal') {
+      const r = el.getBoundingClientRect();
+      const db = document.getElementById('desk').getBoundingClientRect();
+      w.restoreRect = { x:Math.round(r.left - db.left), y:Math.round(r.top - db.top), w:Math.round(r.width), h:Math.round(r.height) };
     }
+
+    el.classList.remove('max', 'hidemax', 'immersive');
+    w.maximized = false;
+
+    if (mode === 'normal') {
+      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
+      el.classList.add('tween');
+      clearTimeout(w._tweenT);
+      w._tweenT = setTimeout(() => el.classList.remove('tween'), 320);
+      el.style.left = r.x + 'px'; el.style.top = r.y + 'px';
+      el.style.width = r.w + 'px'; el.style.height = r.h + 'px';
+      w.mode = 'normal';
+    } else {
+      el.classList.add('tween');
+      clearTimeout(w._tweenT);
+      w._tweenT = setTimeout(() => el.classList.remove('tween'), 320);
+      el.style.left = '0px'; el.style.top = '0px';
+      el.style.width = '100%'; el.style.height = '100%';
+      w.mode = mode;
+      if (mode === 'max') { el.classList.add('max'); w.maximized = true; }
+      else if (mode === 'hidden') el.classList.add('hidemax');
+      else if (mode === 'immersive') el.classList.add('immersive');
+    }
+
+    /* 同一个桌面只留一个隐藏式 / 全屏窗口：新的进来，旧的就退回常规最大化 */
+    if (mode === 'hidden' || mode === 'immersive') {
+      for (const o of this.windows.values()) {
+        if (o.id !== id && (o.mode === 'hidden' || o.mode === 'immersive')) this.maxMode(o.id, 'max');
+      }
+    }
+    this._syncModeChrome();
     this.focus(id);
-    setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 40);
+    setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 60);
+  },
+
+  /* 顶栏胶囊 + 全屏悬浮球，都只服务「当前那一扇」特殊窗口 */
+  _syncModeChrome() {
+    const hidden = [...this.windows.values()].find(w => w.mode === 'hidden' && !w.minimized);
+    const im = [...this.windows.values()].find(w => w.mode === 'immersive' && !w.minimized);
+    document.body.classList.toggle('immersive', !!im);
+    const chip = document.getElementById('hidChip');
+    if (chip) {
+      chip.classList.toggle('on', !!hidden);
+      chip.dataset.win = hidden ? hidden.id : '';
+      const b = chip.querySelector('b');
+      if (b) b.textContent = hidden ? hidden.title : '';
+      chip.title = hidden ? ('隐藏式最大化：' + hidden.title + '（点击还原；右键 / 长按看窗口操作）') : '';
+    }
+    const ball = document.getElementById('imBall');
+    if (ball) {
+      ball.style.display = im ? 'grid' : 'none';
+      if (im) this._placeImBall(ball);
+    }
+    this._imWin = im ? im.id : null;
+  },
+
+  /* 悬浮球只允许待在画布内：拖动时按尺寸夹住，窗口变化 / 旋转屏后重夹一次 */
+  _placeImBall(ball) {
+    if (!ball) return;
+    const b = ball.getBoundingClientRect();
+    const pad = 8;
+    let x = parseFloat(ball.style.left), y = parseFloat(ball.style.top);
+    if (!Number.isFinite(x)) x = innerWidth - b.width - 18;
+    if (!Number.isFinite(y)) y = innerHeight - b.height - 18;
+    x = clamp(x, pad, Math.max(pad, innerWidth - b.width - pad));
+    y = clamp(y, pad, Math.max(pad, innerHeight - b.height - pad));
+    ball.style.left = x + 'px';
+    ball.style.top = y + 'px';
+  },
+
+  /* 退出当前特殊形态（供 chip / 悬浮球 / 键盘调用） */
+  exitImmersive() {
+    const id = this._imWin || [...this.windows.values()].find(w => w.mode === 'immersive')?.id;
+    if (id) this.maxMode(id, 'normal');
+    else { document.body.classList.remove('immersive'); this._syncModeChrome(); }
   },
   close(id) {
     const w = this.windows.get(id);
@@ -1384,6 +1554,8 @@ const WindowManager = {
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
     if (w._ro) { try { w._ro.disconnect(); } catch (e) {} }
     this.windows.delete(id);
+    if (w.mode === 'hidden' || w.mode === 'immersive') w.mode = 'normal';
+    this._syncModeChrome();
     this._syncDock();
     this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
   },
@@ -1421,6 +1593,51 @@ const WindowManager = {
     });
   },
 
+  /* 标题被中间截断时，完整标题得有个地方看：
+   * 桌面悬停 500ms、触屏长按 500ms、右键，三条路都通向同一个气泡。 */
+  _bindTitleTip(win) {
+    const bar = $('.win-bar', win.el);
+    const t = $('.win-title', win.el);
+    if (!bar || !t) return;
+    const truncated = () => t.textContent !== (win.title || '');
+    let timer = 0, sx = 0, sy = 0, longPressed = false, inside = false;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+    /* 标题本身 pointer-events:none（不然会挡住拖动），所以不能靠 e.target 判断，
+     * 只能拿坐标和标题实际矩形比。 */
+    const overTitle = (e) => {
+      const r = t.getBoundingClientRect();
+      return r.width > 0 && e.clientX >= r.left && e.clientX <= r.right &&
+             e.clientY >= r.top && e.clientY <= r.bottom;
+    };
+    const arm = (e) => {
+      clear();
+      if (!truncated()) return;
+      sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(() => { timer = 0; longPressed = true; TitleTip.show(win, t); }, 500);
+    };
+    const leave = () => { inside = false; clear(); TitleTip.hide(); };
+
+    bar.addEventListener('pointermove', e => {
+      const now = overTitle(e);
+      if (now && !inside) { inside = true; arm(e); }
+      else if (!now && inside) leave();
+      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+    });
+    bar.addEventListener('pointerdown', e => {
+      if (!overTitle(e)) return;
+      longPressed = false;
+      arm(e);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t2 =>
+      bar.addEventListener(t2, () => { clear(); if (t2 === 'pointerleave') leave(); }));
+    bar.addEventListener('contextmenu', e => {
+      if (!overTitle(e)) return;
+      e.preventDefault();
+      TitleTip.show(win, t);
+    });
+    bar.addEventListener('click', () => { if (longPressed) { longPressed = false; TitleTip.hide(); } });
+  },
+
   /* 红色：关掉所有同类型窗口（「相关应用」按 type 算，不碰别的类型）。
    * hsb2 的 dispose 会顺带停掉 v86，不需要单独处理。 */
   closeType(type) {
@@ -1456,16 +1673,24 @@ const WindowManager = {
 
   /* 绿色：把窗口吸到桌面的一半 / 四分之一。full 仍走 maximized 标记，
    * 这样再点绿点能还原回原来的位置。 */
-  snap(id, pos) {
-    const w = this.windows.get(id);
-    if (!w) return;
+  /* 吸附目标的几何：屏幕坐标系（相对 #desk），拖动预览与真吸附共用一份 */
+  _snapRect(pos) {
     const d = deskBox();
     const hw = Math.round(d.w / 2), hh = Math.round(d.h / 2);
     const map = {
-      full:[0,0,d.w,d.h], left:[0,0,hw,d.h], right:[hw,0,hw,d.h],
-      tl:[0,0,hw,hh], tr:[hw,0,hw,hh], bl:[0,hh,hw,hh], br:[hw,hh,hw,hh]
+      full:{ x:0, y:0, w:d.w, h:d.h },
+      left:{ x:0, y:0, w:hw, h:d.h },
+      right:{ x:hw, y:0, w:hw, h:d.h },
+      tl:{ x:0, y:0, w:hw, h:hh }, tr:{ x:hw, y:0, w:hw, h:hh },
+      bl:{ x:0, y:hh, w:hw, h:hh }, br:{ x:hw, y:hh, w:hw, h:hh }
     };
-    const r = map[pos];
+    return map[pos] || null;
+  },
+
+  snap(id, pos) {
+    const w = this.windows.get(id);
+    if (!w) return;
+    const r = this._snapRect(pos);
     if (!r) return;
     if (!w.restoreRect) {
       const rr = w.el.getBoundingClientRect();
@@ -1475,12 +1700,16 @@ const WindowManager = {
     w.el.classList.add('tween');
     clearTimeout(w._tweenT);
     w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 320);
-    w.el.style.left = r[0] + 'px';
-    w.el.style.top = r[1] + 'px';
-    w.el.style.width = r[2] + 'px';
-    w.el.style.height = r[3] + 'px';
+    w.el.style.left = r.x + 'px';
+    w.el.style.top = r.y + 'px';
+    w.el.style.width = r.w + 'px';
+    w.el.style.height = r.h + 'px';
+    /* 吸附到全屏 = 常规最大化，走 modes 同一套类，绿点菜单和拖拽才不会各说各话 */
+    w.el.classList.remove('hidemax', 'immersive');
     w.maximized = (pos === 'full');
+    w.mode = pos === 'full' ? 'max' : 'normal';
     w.el.classList.toggle('max', pos === 'full');
+    this._syncModeChrome();
     this.focus(id);
     setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 60);
   },
@@ -1495,9 +1724,12 @@ const WindowManager = {
     const el = win.el;
     if (!el || !el.isConnected) return;
     const W = el.clientWidth || 640;
-    const dot = clamp(Math.round(W * 0.0625), 16, 40);
-    const hh  = clamp(Math.round(W * 0.1), 44, 74);
-    const hw  = clamp(Math.round(W * 0.433), 190, 380);
+    /* 严格按窗口宽度成比例：窗口 240–736 这一段完全线性（也正是绝大多数窗口的宽度），
+     * 超出这段才用上下限收住——1920 宽的窗口若还按 6.25% 算，色点会有 120px，
+     * 直接盖住半条标题。上下限只兜极值，不参与常规尺寸。 */
+    const dot = clamp(Math.round(W * 0.0625), 14, 46);
+    const hh  = clamp(Math.round(W * 0.1), 38, 86);
+    const hw  = clamp(Math.round(W * 0.433), 150, 430);
     let offOut = hw * 0.735, offIn = hw * 0.536;
     /* 窄窗：四个点不能跑出窗口。按可用半宽整体等比收，别只夹外点——
      * 只夹外点会让内外两对挤在一起，看着像两个点。 */
@@ -1552,13 +1784,30 @@ const WindowManager = {
   _syncDock() {
     const dock = document.getElementById('dock');
     if (!dock) return;
+    const wrap = document.getElementById('dockWrap');
+    const pill = document.getElementById('dockPill');
     /* Dock 是否显示由设置决定；这里只管类，避免每次开窗都读一遍 localStorage */
     const off = !!Number(Settings.get('dockHidden'));
+    const folded = !off && !!Number(Settings.get('dockFold'));
     document.body.classList.toggle('dock-off', off);
+    document.body.classList.toggle('dock-folded', folded);
     const wins = [...this.windows.values()];
     const focused = this.focused();
-    if (!wins.length) { dock.hidden = true; dock.innerHTML = ''; this._syncWinList(); return; }
-    dock.hidden = false;
+    if (!wins.length) {
+      dock.innerHTML = '';
+      if (wrap) wrap.hidden = true;
+      if (pill) pill.hidden = true;
+      this._syncWinList();
+      return;
+    }
+    /* 折叠后连把手一起收走，只留底部药丸 */
+    if (wrap) wrap.hidden = folded;
+    dock.hidden = folded;
+    if (pill) {
+      pill.hidden = !folded;
+      const n = document.getElementById('dockPillN');
+      if (n) n.textContent = String(wins.length);
+    }
     const iconOf = (t) => svgIcon(t === 'browser' ? 'browser' : t === 'agent' ? 'agent' : t === 'files' ? 'files' : t === 'python' ? 'python' : t === 'editor' ? 'editor' : 'term');
     dock.innerHTML = `<button class="dock-item ${!focused ? 'focus' : ''}" data-desk="1" title="桌面终端">${svgIcon('term')}<b>desktop</b><span>jshel</span></button><div class="dock-sep"></div>` +
       wins.map(w => `<button class="dock-item ${w.minimized ? 'min' : ''} ${focused && focused.id === w.id ? 'focus' : ''}" data-win="${esc(w.id)}" title="${esc(w.title)}">
@@ -1566,8 +1815,67 @@ const WindowManager = {
     $$('[data-win]', dock).forEach(b => b.onclick = () => this.toggleMin(b.dataset.win));
     const d = $('[data-desk]', dock);
     if (d) d.onclick = () => { for (const w of wins) this.minimize(w.id); };
+    this._bindDockFold();
     this._syncWinList();
     this._syncAppList();
+  },
+
+  /* 折叠 / 展开：把手点一下、Dock 往下拖、药丸往上滑、药丸点一下 —— 四条路都通 */
+  setFold(on) {
+    on = !!on;
+    if (!!Number(Settings.get('dockFold')) === on) return;
+    Settings.set('dockFold', on ? 1 : 0);
+    this._syncDock();
+    if (on) {
+      const p = document.getElementById('dockPill');
+      if (p) { p.classList.remove('pulse'); void p.offsetWidth; p.classList.add('pulse'); }
+    }
+  },
+
+  _bindDockFold() {
+    if (this.__foldBound) return;
+    this.__foldBound = true;
+    const dock = document.getElementById('dock');
+    const fold = document.getElementById('dockFold');
+    const pill = document.getElementById('dockPill');
+    if (fold) fold.onclick = (e) => { e.stopPropagation(); this.setFold(true); };
+    if (pill) {
+      pill.onclick = () => this.setFold(false);
+      let py = 0, pOn = false;
+      pill.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        pOn = true; py = e.clientY;
+      }, { passive: true });
+      pill.addEventListener('pointermove', (e) => {
+        if (!pOn) return;
+        if (py - e.clientY > 22) { pOn = false; this.setFold(false); }
+      }, { passive: true });
+      pill.addEventListener('pointerup', () => { pOn = false; }, { passive: true });
+    }
+    if (dock) {
+      let sy = 0, on = false, moved = false;
+      dock.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.target.closest('#dock')) { on = true; moved = false; sy = e.clientY; }
+      }, { passive: true });
+      dock.addEventListener('pointermove', (e) => {
+        if (!on) return;
+        const dy = e.clientY - sy;
+        if (dy > 26) { on = false; moved = true; this.setFold(true); }
+        else if (dy < -26) on = false;
+      }, { passive: true });
+      dock.addEventListener('pointerup', () => {
+        if (moved) {
+          /* 拖完别再顺手触发「最小化这个窗口」 */
+          dock.__swallow = true;
+          setTimeout(() => { dock.__swallow = false; }, 0);
+        }
+        on = false;
+      }, { passive: true });
+      dock.addEventListener('click', (e) => {
+        if (dock.__swallow) { e.stopPropagation(); e.preventDefault(); }
+      }, true);
+    }
   },
 
   /* 「所有应用」窗口开着时，窗口开合要让它把「打开 / 切换」重新算一遍 */
@@ -1614,6 +1922,8 @@ const WinMenu = {
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-snap]');
       if (b) { WindowManager.snap(id, b.dataset.snap); this.close(); return; }
+      const md = e.target.closest('[data-mode]');
+      if (md) { this.close(); WindowManager.maxMode(id, md.dataset.mode); return; }
       const c = e.target.closest('[data-cmd]');
       if (!c) return;
       const cmd = c.dataset.cmd;
@@ -1622,6 +1932,7 @@ const WinMenu = {
       else if (cmd === 'close-one') WindowManager.close(id);
       else if (cmd === 'down') WindowManager.sendDown(id);
       else if (cmd === 'bottom') WindowManager.sendToBack(id);
+      else if (cmd === 'mintype') WindowManager.minimize(id);
     });
 
     this.el = m;
@@ -1646,7 +1957,14 @@ const WinMenu = {
         <button data-cmd="noop">知道了</button>`;
     }
     if (act === 'max') {
-      return `<div class="winmenu__title">绿色 · 选择位置布局</div>
+      const cur = w.mode || (w.maximized ? 'max' : 'normal');
+      const che = (k) => cur === k ? ' on' : '';
+      return `<div class="winmenu__title">绿色 · 窗口形态</div>
+        <button class="stack${che('max')}" data-mode="max"><span>常规最大化</span><em>占满桌面，提手翻成倒梯形，标题条保留</em></button>
+        <button class="stack${che('hidden')}" data-mode="hidden"><span>隐藏式最大化</span><em>收起标题条，顶栏胶囊里的工具栏可还原</em></button>
+        <button class="stack${che('immersive')}" data-mode="immersive"><span>彻底全屏</span><em>盖住顶栏与 Dock，留一个可拖的半透明球退出</em></button>
+        <div class="winmenu__sep"></div>
+        <div class="winmenu__label">吸附到…</div>
         <div class="winmenu__grid">
           <button class="winmenu__snap" data-snap="tl" title="左上四分之一"><i></i></button>
           <button class="winmenu__snap" data-snap="full" title="全屏"><i></i></button>
@@ -1655,11 +1973,12 @@ const WinMenu = {
           <button class="winmenu__snap" data-snap="right" title="右半屏"><i></i></button>
           <button class="winmenu__snap" data-snap="bl" title="左下四分之一"><i></i></button>
           <button class="winmenu__snap" data-snap="br" title="右下四分之一"><i></i></button>
-        </div>`;
+        </div>
+        ${cur !== 'normal' ? '<button class="stack" data-mode="normal"><span>还原窗口</span><em>回到最大化之前的位置和大小</em></button>' : ''}`;
     }
     return `<div class="winmenu__title">蓝色 · 层叠</div>
-      <button data-cmd="down">仅下移一层</button>
-      <button data-cmd="bottom">压到最底层</button>`;
+      <button class="stack" data-cmd="bottom"><span>压到最底层</span><em>蓝点单击就是这个（默认行为）</em></button>
+      <button class="stack" data-cmd="down"><span>仅下移一层</span><em>只和紧挨着的那扇窗换个位置</em></button>`;
   },
   _outside(e) {
     if (WinMenu.el && !WinMenu.el.contains(e.target) && !(WinMenu._dot && WinMenu._dot.contains(e.target))) WinMenu.close();
@@ -1671,6 +1990,95 @@ const WinMenu = {
     this.el = null;
     this.winId = null;
     this._dot = null;
+    document.removeEventListener('pointerdown', this._outside, true);
+    document.removeEventListener('keydown', this._esc, true);
+  }
+};
+
+/* ---------------------------------------------------------------- 标题气泡
+ * 只做一件事：把被 middleEllipsis 截断的标题原样显示出来。
+ * 位置跟随窗口顶部那条标题，超出视口就翻到上方。 */
+const TitleTip = {
+  el: null, timer: 0,
+  show(win, titleEl) {
+    if (!win || !win.el || !win.el.isConnected) return;
+    if (!this.el) {
+      this.el = document.createElement('div');
+      this.el.className = 'win-tip';
+      document.body.appendChild(this.el);
+    }
+    this.el.innerHTML = esc(win.title || '') +
+      `<i>${esc(win.type || 'window')}${win.mode && win.mode !== 'normal' ? ' · ' + esc(win.mode) : ''}</i>`;
+    this.el.classList.add('on');
+    const r = (titleEl || win.el).getBoundingClientRect();
+    const mw = this.el.offsetWidth, mh = this.el.offsetHeight;
+    let x = r.left + r.width / 2 - mw / 2;
+    let y = r.bottom + 8;
+    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
+    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+    y = Math.max(8, y);
+    this.el.style.left = x + 'px';
+    this.el.style.top = y + 'px';
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.hide(), 3200);
+  },
+  hide() {
+    clearTimeout(this.timer);
+    if (this.el) this.el.classList.remove('on');
+  }
+};
+
+/* ---------------------------------------------------------------- 胶囊菜单
+ * 隐藏式最大化把窗口标题条收起来了，所以红黄绿蓝得换个地方出现：
+ * 顶栏那个胶囊上右键 / 长按，弹出的就是这四个动作。 */
+const ChipMenu = {
+  el: null,
+  open(anchor, id) {
+    this.close();
+    const w = WindowManager.windows.get(id);
+    if (!w) return;
+    const m = document.createElement('div');
+    m.className = 'winmenu';
+    m.innerHTML = `<div class="winmenu__title">${esc(w.title || '窗口')} · 隐藏式最大化</div>
+      <button class="stack danger" data-cmd="close-type"><span>红 · 强制退出</span><em>关闭所有「${esc(w.type)}」窗口</em></button>
+      <button class="stack" data-cmd="min"><span>黄 · 最小化</span><em>收进 Dock，窗口不关</em></button>
+      <button class="stack" data-cmd="max"><span>绿 · 常规最大化</span><em>把标题条放回来</em></button>
+      <button class="stack" data-cmd="bottom"><span>蓝 · 压到最底层</span><em>让别的窗口露出来</em></button>`;
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let x = r.left;
+    if (x + mw > innerWidth - 8) x = innerWidth - mw - 8;
+    m.style.left = Math.max(8, x) + 'px';
+    m.style.top = (r.bottom + 7) + 'px';
+
+    m.addEventListener('click', e => {
+      const c = e.target.closest('[data-cmd]');
+      if (!c) return;
+      this.close();
+      const cmd = c.dataset.cmd;
+      if (cmd === 'close-type') WindowManager.closeType(w.type);
+      else if (cmd === 'min') WindowManager.minimize(id);
+      else if (cmd === 'max') WindowManager.maxMode(id, 'max');
+      else if (cmd === 'bottom') WindowManager.sendToBack(id);
+    });
+    this.el = m;
+    this._anchor = anchor;
+    setTimeout(() => {
+      document.addEventListener('pointerdown', this._outside, true);
+      document.addEventListener('keydown', this._esc, true);
+    }, 0);
+  },
+  _outside(e) {
+    if (ChipMenu.el && !ChipMenu.el.contains(e.target) &&
+        !(ChipMenu._anchor && ChipMenu._anchor.contains(e.target))) ChipMenu.close();
+  },
+  _esc(e) { if (e.key === 'Escape') ChipMenu.close(); },
+  close() {
+    if (!this.el) return;
+    this.el.remove();
+    this.el = null;
+    this._anchor = null;
     document.removeEventListener('pointerdown', this._outside, true);
     document.removeEventListener('keydown', this._esc, true);
   }

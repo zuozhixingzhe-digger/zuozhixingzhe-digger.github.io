@@ -344,6 +344,7 @@ const Drawer = {
     if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
     $('#drawerClose').onclick = () => this.close();
     $('#drawer-overlay').onclick = () => this.close();
+    this._bindSwipe();
     const bindRange = (id, key, fmt) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -469,6 +470,96 @@ const Drawer = {
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-overlay').classList.remove('on');
     if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
+  },
+  /* 右滑关闭：抽屉跟手移动，松手按「位移 + 速度」决定关还是弹回。
+   * 用 pointer 事件而不是 touch，鼠标拖拽同样生效（桌面上也符合直觉）。
+   * 抽屉本身是 touch-action:pan-y，所以横向手势不会被浏览器拿去滚页面。 */
+  _bindSwipe() {
+    const dr = $('#drawer');
+    const ov = $('#drawer-overlay');
+    if (!dr || dr.__swipe) return;
+    dr.__swipe = true;
+
+    let active = false, engaged = false;
+    let sx = 0, sy = 0, dx = 0, lastX = 0, lastT = 0, v = 0, w = 0;
+
+    const reset = () => {
+      active = engaged = false;
+      dr.style.transition = '';
+      dr.style.transform = '';
+      ov.style.transition = '';
+      ov.style.opacity = '';
+      dr.classList.remove('dragging');
+    };
+
+    dr.addEventListener('pointerdown', (e) => {
+      if (!this.opened) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      /* 输入控件 / 滑杆 / 自己声明不参与拖拽的，放过 */
+      if (e.target.closest('input,textarea,select,[data-noswipe]')) return;
+      active = true; engaged = false;
+      sx = lastX = e.clientX; sy = e.clientY;
+      dx = 0; v = 0; lastT = performance.now();
+      w = dr.getBoundingClientRect().width || 380;
+    });
+
+    dr.addEventListener('pointermove', (e) => {
+      if (!active) return;
+      const mx = e.clientX - sx, my = e.clientY - sy;
+      if (!engaged) {
+        /* 先看方向：竖着划是滚列表，横着划才是关抽屉 */
+        if (Math.abs(mx) < 7 || Math.abs(mx) < Math.abs(my) * 1.15) {
+          if (Math.abs(my) > 10) active = false;   /* 判定为纵向滚动，这一轮不再管 */
+          return;
+        }
+        engaged = true;
+        dr.classList.add('dragging');
+        dr.style.transition = 'none';
+        ov.style.transition = 'none';
+        try { dr.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+      e.preventDefault();
+      dx = mx > 0 ? mx : mx * 0.22;          /* 往左只给一点点阻尼，别拉出空白 */
+      const now = performance.now();
+      const dt = now - lastT;
+      if (dt > 0) v = (e.clientX - lastX) / dt;
+      lastX = e.clientX; lastT = now;
+      dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+      ov.style.opacity = String(Math.max(0, 1 - dx / w * 0.92));
+    }, { passive: false });
+
+    const up = () => {
+      if (!active) return;
+      if (!engaged) { active = false; return; }
+      const p = dx / w;
+      const far = p > 0.32 || (v > 0.5 && p > 0.12);
+      if (far) {
+        /* 关键顺序：inline transform 先留着——这样 .on 拿掉时画面不会闪回 0，
+         * 下一帧再清掉 inline，CSS 过渡才会从「手指松开的位置」接着滑出去 */
+        dr.style.transition = '';
+        ov.style.transition = '';
+        dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+        active = engaged = false;
+        this.close();
+        requestAnimationFrame(() => {
+          dr.style.transform = '';
+          ov.style.opacity = '';
+          dr.classList.remove('dragging');
+        });
+      } else {
+        dr.style.transition = 'transform .24s cubic-bezier(.22,1,.36,1)';
+        ov.style.transition = 'opacity .24s cubic-bezier(.22,1,.36,1)';
+        dr.style.transform = '';
+        ov.style.opacity = '';
+        const done = () => { reset(); dr.removeEventListener('transitionend', done); };
+        dr.addEventListener('transitionend', done, { once: true });
+        setTimeout(done, 320);
+        active = engaged = false;
+      }
+    };
+    dr.addEventListener('pointerup', up);
+    dr.addEventListener('pointercancel', up);
+    dr.addEventListener('lostpointercapture', up);
   },
   /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
    * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
@@ -992,11 +1083,42 @@ async function boot() {
   const logEl = document.getElementById('bootLog');
   const errEl = document.getElementById('bootErr');
   const sub = document.getElementById('bootSub');
-  let p = 0;
-  const step = (msg, inc) => {
-    p = Math.min(100, p + (inc || 8));
+  const pctEl = document.getElementById('bootPct');
+  const stageEl = document.getElementById('bootStage');
+  let p = 0, t0 = performance.now(), nDl = 0, nCache = 0, nLine = 0;
+
+  /* 启动日志是滚动控制台，不是一行替换。三类事件分开记：
+   *   下载 = 这次真的走了网络；缓存 = DepCache 命中（不需要网络）；加载 = 本地初始化。
+   * 这样用户一眼能看出「慢在网络还是慢在本地」，也能确认第二次启动是不是全命中。 */
+  const TAG = { cache:'缓存', dl:'下载', load:'加载', ok:'完成', warn:'注意', err:'失败' };
+  const addLog = (msg, kind) => {
+    if (!logEl) return;
+    kind = kind || 'load';
+    const t = ((performance.now() - t0) / 1000).toFixed(2).padStart(5, ' ');
+    const row = document.createElement('div');
+    row.className = 'bl-line' + (kind === 'err' ? ' err' : kind === 'warn' ? ' warn' : '');
+    row.innerHTML = `<span class="bl-t">${t}s</span>` +
+      `<span class="bl-k ${kind}">${TAG[kind] || '·'}</span><span class="bl-m"></span>`;
+    row.querySelector('.bl-m').textContent = msg;
+    logEl.appendChild(row);
+    /* 只留最近 240 行：启动日志再长也没人翻，DOM 无限涨反而拖慢首屏 */
+    if (++nLine > 240 && logEl.firstElementChild) logEl.firstElementChild.remove();
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  const step = (msg, inc, kind) => {
+    p = Math.min(100, p + (inc || 0));
     if (bar) bar.style.width = p + '%';
-    if (logEl) logEl.textContent = msg;
+    if (pctEl) pctEl.textContent = Math.round(p) + '%';
+    if (stageEl) stageEl.textContent = msg;
+    addLog(msg, kind);
+  };
+  /* loadXterm 抛上来的是「缓存命中 …」「下载 …」「加载 …」这几种前缀，
+   * 在这里翻译成日志级别，顺便把下载 / 命中的次数记下来做收尾统计。 */
+  const online = (m) => {
+    if (/^缓存命中/.test(m)) { nCache++; step(m, 1, 'cache'); }
+    else if (/^下载/.test(m)) { nDl++; step(m, 1, 'dl'); }
+    else if (/失败|拿不到|兜底/.test(m)) step(m, 1, 'warn');
+    else step(m, 1, 'load');
   };
 
   /* 版本号先写：启动屏在第一帧就该显示对的号，而不是 HTML 里的占位符。
@@ -1007,22 +1129,22 @@ async function boot() {
   });
 
   try {
-    step('读取设置', 5);
+    step('读取设置', 4);
     Settings.load();
     // 主题不读设置，直接跟随系统；watchSystemTheme 之后系统切换会实时生效。
     applyTheme();
     watchSystemTheme();
     applyGrid(Settings.get('grid'));
 
-    step('装载 xterm.js', 15);
-    await loadXterm((m) => step(m, 6));
-    step('xterm.js 就绪', 10);
+    step('装载 xterm.js', 6);
+    await loadXterm(online);
+    step('xterm.js 就绪', 10, 'ok');
 
-    step('打开 IndexedDB', 10);
+    step('打开 IndexedDB', 6);
     await FS.init();
-    step('文件系统就绪 · ' + FS.idx.size + ' 个条目', 12);
+    step('文件系统就绪 · ' + FS.idx.size + ' 个条目', 12, IDB.memMode ? 'warn' : 'ok');
 
-    step('初始化窗口管理器', 6);
+    step('初始化窗口管理器', 8);
     WindowManager.init();
     Drawer.init();
     installWindowAPI();
@@ -1030,14 +1152,19 @@ async function boot() {
     installKeys();
     initDropImport();
 
-    step('启动底层终端', 12);
+    step('启动底层终端', 10);
     TerminalManager.bootDesktop();
     /* 应用「Dock 是否显示」：刷新后也要保持上次的收起状态 */
     WindowManager._syncDock();
 
-    step('完成', 10);
+    p = 100;
+    if (bar) bar.style.width = '100%';
+    if (pctEl) pctEl.textContent = '100%';
+    if (stageEl) stageEl.textContent = '就绪';
+    addLog('下载 ' + nDl + ' 项 · 缓存命中 ' + nCache + ' 项 · 共用时 ' +
+      ((performance.now() - t0) / 1000).toFixed(2) + 's', 'ok');
     if (sub) sub.textContent = '就绪 · 输入 help 开始';
-    await sleep(240);
+    await sleep(320);
     bootEl.classList.add('gone');
     setTimeout(() => { bootEl.style.display = 'none'; }, 500);
 
@@ -1060,7 +1187,8 @@ async function boot() {
     console.error(e);
     if (sub) sub.textContent = '启动失败';
     if (errEl) { errEl.hidden = false; errEl.textContent = '启动失败：' + (e && e.stack || e) + '\n\n请检查网络（xterm 从 CDN 加载）。'; }
-    step('失败：' + (e.message || e), 0);
+    if (stageEl) stageEl.textContent = '启动失败';
+    addLog('启动中断：' + (e && e.message || e), 'err');
   }
 }
 
@@ -1075,3 +1203,59 @@ window.addEventListener('unhandledrejection', (e) => {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
+
+/* ---------------------------------------------------------------- 手势锁
+ * 浏览器默认手势在这个「桌面」里全是干扰：
+ *   双指缩放会把布局拉花、橡皮筋回弹让窗口跟着晃、长按选字会把界面选中成一坨蓝色。
+ * 这里只拦「页面级」的：
+ *   - 多指 touchmove（捏合缩放）
+ *   - iOS 的 gesturestart / gesturechange / gestureend
+ *   - 触控板 ctrl+wheel（浏览器把捏合手势伪装成这个）
+ *   - 双击放大（移动端）与长按弹出的系统菜单
+ * 内层滚动容器（窗口正文、抽屉、应用列表）不受影响。
+ * -------------------------------------------------------------------------- */
+function installGestureLock() {
+  if (window.__htGestureLock) return;
+  window.__htGestureLock = true;
+  const NO = { passive: false };
+  const block = (e) => e.preventDefault();
+
+  /* 1. 多指：只要屏幕上有两根手指就不许做任何默认动作 */
+  document.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  }, NO);
+
+  /* 2. iOS Safari 的私有手势事件 —— 它不看 viewport 的 user-scalable */
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
+    document.addEventListener(t, block, NO));
+
+  /* 3. 触控板捏合 = ctrl + wheel */
+  document.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
+  }, NO);
+
+  /* 4. 双击放大：只拦「不是可输入控件」的那种，否则双击选词会被误伤 */
+  let lastTap = 0;
+  document.addEventListener('touchend', (e) => {
+    if (e.touches.length) return;
+    if (e.target.closest('input,textarea,[contenteditable]')) return;
+    const now = Date.now();
+    if (now - lastTap < 320) e.preventDefault();
+    lastTap = now;
+  }, NO);
+
+  /* 5. 触屏长按：系统菜单（复制 / 查词 / 分享）不弹
+   *    桌面右键不受影响 —— 四色点、窗口标题的菜单都靠它 */
+  document.addEventListener('contextmenu', (e) => {
+    const touch = (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) ||
+      (e.pointerType === 'touch');
+    if (touch && !e.target.closest('input,textarea,[contenteditable]')) e.preventDefault();
+  });
+
+  /* 6. 兜底：万一某处被滚动了，立刻拉回原点 */
+  const pin = () => { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); };
+  window.addEventListener('scroll', pin, { passive: true });
+  window.addEventListener('pageshow', pin);
+}
+installGestureLock();
+

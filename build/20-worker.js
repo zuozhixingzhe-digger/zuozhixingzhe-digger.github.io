@@ -206,6 +206,7 @@ class LineEditor {
     /* 多行粘贴还在等右括号时的暂存。和 _pending 分开：
      * 那个是「等输出时空敲的字」，reopen 会把它插回输入行，语义完全不同。 */
     this._pasteBuf = '';
+    this._cont = false;
   }
   /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
   get cols() {
@@ -234,7 +235,8 @@ class LineEditor {
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
-    this.promptStr = this.promptText();
+    /* 续行时提示符换成「... 」，让人一眼看出这行不是新命令、是在等括号闭合 */
+    this.promptStr = this._cont ? '... ' : this.promptText();
     this.buf = ''; this.cur = 0;
     this._rows = 0; this._curRow = 0;
     this.redraw();
@@ -420,6 +422,34 @@ class LineEditor {
   }
   async submit() {
     const line = this.buf;
+
+    /* 多行输入（手动敲的，不是粘贴）：这一行回车后括号还没闭合，就先不跑，
+     * 换行画一个「... 」提示符继续等。凑齐了再整段提交，只执行一次。
+     * 判据和粘贴共用 scanJs()，字符串 / 注释 / 模板串里的括号不算数。 */
+    const merged = this._pasteBuf ? this._pasteBuf + '\n' + line : line;
+    if (line.trim() || this._pasteBuf) {
+      const sc = scanJs(merged);
+      if (sc.code && sc.open > 0 && !sc.broken) {
+        this._pasteBuf = merged;
+        this._cont = true;
+        this.buf = ''; this.cur = 0;
+        out('\r\n');
+        this._rows = 0; this._curRow = 0;
+        this.reopen();
+        return;
+      }
+      /* 之前攒着、这一行补齐了：整段一次送进 REPL，不逐行执行 */
+      if (this._pasteBuf) {
+        this._pasteBuf = '';
+        this._cont = false;
+        this.buf = ''; this.cur = 0;
+        this._rows = 0; this._curRow = 0;
+        out('\r\n');
+        this.enqueueText(merged);
+        return;
+      }
+    }
+    this._cont = false;
     this.buf = ''; this.cur = 0; this.draft = '';
     this._rows = 0; this._curRow = 0;
     out('\r\n');
@@ -547,6 +577,7 @@ class LineEditor {
         /* 单独一个 Esc：放弃还在等的多行粘贴 */
         if (this._pasteBuf) {
           this._pasteBuf = '';
+          this._cont = false;
           this.erase();
           out('\r\n' + ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n');
           this.reopen();
@@ -560,7 +591,7 @@ class LineEditor {
         i += 1;
         /* 先把输入块擦掉再打 ^C：否则 ^C 落在输入中间，后面那半截还留在屏幕上。 */
         this.erase();
-        if (this._pasteBuf) { this._pasteBuf = ''; out(ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n'); }
+        if (this._pasteBuf) { this._pasteBuf = ''; this._cont = false; out(ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n'); }
         this.buf = ''; this.cur = 0;
         out('^C\r\n');
         this.reopen();

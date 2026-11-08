@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.27';
+const HT_VERSION = '0.0.1.28';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -43,6 +43,9 @@ const Settings = {
      * rows = 固定显示行数，0 表示自动铺满。 */
     font: 14, lineHeight: 12, rows: 0,
     dockHidden: 0,
+    /* dockFold = 用户手动把 Dock 折成一颗药丸（和 dockHidden 不同：
+     * 折叠只是收起来，随时能点药丸展开；隐藏是彻底不要 Dock） */
+    dockFold: 0,
     cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */

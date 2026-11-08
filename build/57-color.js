@@ -158,25 +158,51 @@ class ColorApp {
     this.el = container;
     this.h = 174; this.s = 62; this.l = 48; this.a = 1;
     this.picking = false;
+    this.viz = 'wheel';
+    this._svH = -1;
+    this._wg = 0;
     this.el.innerHTML = `<div class="tl">
-      <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">调色盘</b>
+      <div class="tl-hd">
+        <b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">调色盘</b>
+        <div class="col-modes" role="tablist" aria-label="调色方式">
+          <button type="button" data-viz="wheel" class="on">色相环</button>
+          <button type="button" data-viz="hsv">HSV</button>
+          <button type="button" data-viz="rgb">RGB</button>
+          <button type="button" data-viz="harm">配色</button>
+        </div>
         <span style="flex:1 1 auto"></span>
         <button class="tl-btn sm" data-a="eye">取色器</button>
-        <button class="tl-btn sm" data-a="page">从页面取色</button>
+        <button class="tl-btn sm" data-a="page">页面取色</button>
         <button class="tl-btn sm" data-a="rand">随机</button>
       </div>
       <div class="tl-body">
         <div class="col-wrap">
           <div class="col-left">
             <div class="col-patch" data-f="patch"></div>
-            <div class="col-wheel" data-f="wheel"><canvas width="400" height="400" style="width:200px;height:200px"></canvas></div>
+            <div class="col-viz">
+              <div class="col-view" data-view="wheel">
+                <div class="col-wheel" data-f="wheel"><canvas width="400" height="400"></canvas></div>
+              </div>
+              <div class="col-view" data-view="hsv" hidden>
+                <div class="col-sv" data-f="sv"><canvas width="220" height="180"></canvas><i class="col-dot" data-f="svdot"></i></div>
+                <div class="col-hue" data-f="hue"><i class="col-hue-mark" data-f="huedot"></i></div>
+              </div>
+              <div class="col-view" data-view="rgb" hidden>
+                <div class="col-chline"><b>R</b><input class="col-ch" type="range" min="0" max="255" data-f="r"><em data-f="rv">0</em></div>
+                <div class="col-chline"><b>G</b><input class="col-ch" type="range" min="0" max="255" data-f="g"><em data-f="gv">0</em></div>
+                <div class="col-chline"><b>B</b><input class="col-ch" type="range" min="0" max="255" data-f="b"><em data-f="bv">0</em></div>
+              </div>
+              <div class="col-view" data-view="harm" hidden>
+                <div class="col-harm" data-f="harm"></div>
+              </div>
+            </div>
             <div class="col-sl">
               <span>L</span><input type="range" min="0" max="100" step="1" data-f="sl">
               <span data-f="slv">48%</span>
               <span>A</span><input type="range" min="0" max="100" step="1" data-f="sa" value="100">
               <span data-f="sav">100%</span>
             </div>
-            <div class="tl-note">历史</div>
+            <div class="tl-note" style="margin:2px 0 0">历史</div>
             <div class="col-sw" data-f="sw"></div>
           </div>
           <div class="col-right" data-f="right"></div>
@@ -187,9 +213,14 @@ class ColorApp {
     this.wheelBox = this.el.querySelector('[data-f="wheel"]');
     this.canvas = this.wheelBox.querySelector('canvas');
     this.ctx = this.canvas.getContext('2d', { willReadFrequently:true });
+    this.svBox = this.el.querySelector('[data-f="sv"]');
+    this.svCanvas = this.svBox.querySelector('canvas');
+    this.svCtx = this.svCanvas.getContext('2d');
+    this.hueBox = this.el.querySelector('[data-f="hue"]');
     this.right = this.el.querySelector('[data-f="right"]');
     this.buildRight();
     this.bind();
+    this.setViz('wheel', true);
     this.drawWheel();
     this.sync();
   }
@@ -226,23 +257,41 @@ class ColorApp {
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.commit(inp.dataset.f, inp.value); });
     });
   }
+
   bind() {
-    const sl = this.el.querySelector('[data-f="sl"]');
-    const sa = this.el.querySelector('[data-f="sa"]');
+    const q = s => this.el.querySelector(s);
+    const sl = q('[data-f="sl"]');
+    const sa = q('[data-f="sa"]');
     sl.addEventListener('input', () => { this.l = Number(sl.value); this.drawWheel(); this.sync(); });
     sa.addEventListener('input', () => { this.a = Number(sa.value) / 100; this.sync(); });
+
+    /* 顶部：四种调色方式互斥切换 */
+    this.el.querySelectorAll('[data-viz]').forEach(b => {
+      b.onclick = () => this.setViz(b.dataset.viz);
+    });
     this.el.addEventListener('click', (e) => {
       const b = e.target.closest('[data-a]');
-      if (!b) return;
-      if (b.dataset.a === 'eye') this.eyedropper();
-      else if (b.dataset.a === 'page') this.pickFromPage();
-      else if (b.dataset.a === 'rand') {
-        const hsl = ColorMath.hslToRgb(Math.random() * 360, 45 + Math.random() * 55, 30 + Math.random() * 40);
-        const t = ColorMath.rgbToHsl(...hsl);
-        this.h = t.h; this.s = t.s; this.l = t.l;
+      if (b) {
+        if (b.dataset.a === 'eye') this.eyedropper();
+        else if (b.dataset.a === 'page') this.pickFromPage();
+        else if (b.dataset.a === 'rand') {
+          const hsl = ColorMath.hslToRgb(Math.random() * 360, 45 + Math.random() * 55, 30 + Math.random() * 40);
+          const t = ColorMath.rgbToHsl(...hsl);
+          this.h = t.h; this.s = t.s; this.l = t.l;
+          this.drawWheel(); this.sync();
+        }
+        return;
+      }
+      /* 配色方案：点色块即应用 */
+      const sw = e.target.closest('[data-pick]');
+      if (sw) {
+        const m = sw.dataset.pick.split(',');
+        this.h = Number(m[0]); this.s = Number(m[1]); this.l = Number(m[2]);
+        if (m[3] != null) this.a = Number(m[3]);
         this.drawWheel(); this.sync();
       }
     });
+
     const drag = (e) => {
       if (!this.picking) return;
       e.preventDefault();
@@ -256,7 +305,55 @@ class ColorApp {
     this.wheelBox.addEventListener('pointermove', drag);
     this.wheelBox.addEventListener('pointerup', () => { this.picking = false; });
     this.wheelBox.addEventListener('pointercancel', () => { this.picking = false; });
-    this.el.querySelector('[data-f="sw"]').addEventListener('click', (e) => {
+
+    /* HSV：SV 方块 + 色相条 */
+    let svDrag = false, hueDrag = false;
+    const pickSV = (e) => {
+      const r = this.svCanvas.getBoundingClientRect();
+      const x = ColorMath.clamp((e.clientX - r.left) / r.width, 0, 1);
+      const y = ColorMath.clamp((e.clientY - r.top) / r.height, 0, 1);
+      this.s = x * 100;
+      this.l = this._v2l(y * 100);
+      this.drawWheel();
+      this.sync();
+    };
+    const pickHue = (e) => {
+      const r = this.hueBox.getBoundingClientRect();
+      this.h = ColorMath.clamp((e.clientX - r.left) / r.width, 0, 1) * 360;
+      this.drawWheel();
+      this.sync();
+    };
+    this.svBox.addEventListener('pointerdown', (e) => {
+      svDrag = true;
+      try { this.svBox.setPointerCapture(e.pointerId); } catch (err) {}
+      pickSV(e);
+    });
+    this.svBox.addEventListener('pointermove', (e) => { if (svDrag) { e.preventDefault(); pickSV(e); } });
+    this.svBox.addEventListener('pointerup', () => { svDrag = false; });
+    this.svBox.addEventListener('pointercancel', () => { svDrag = false; });
+    this.hueBox.addEventListener('pointerdown', (e) => {
+      hueDrag = true;
+      try { this.hueBox.setPointerCapture(e.pointerId); } catch (err) {}
+      pickHue(e);
+    });
+    this.hueBox.addEventListener('pointermove', (e) => { if (hueDrag) { e.preventDefault(); pickHue(e); } });
+    this.hueBox.addEventListener('pointerup', () => { hueDrag = false; });
+    this.hueBox.addEventListener('pointercancel', () => { hueDrag = false; });
+
+    /* RGB 三个通道：直接驱动主色 */
+    ['r', 'g', 'b'].forEach(k => {
+      const inp = q('[data-f="' + k + '"]');
+      inp.addEventListener('input', () => {
+        const cur = this.rgb.slice();
+        cur['rgb'.indexOf(k)] = Number(inp.value);
+        const t = ColorMath.rgbToHsl(...cur);
+        this.h = t.h; this.s = t.s; this.l = t.l;
+        this.drawWheel();
+        this.sync();
+      });
+    });
+
+    q('[data-f="sw"]').addEventListener('click', (e) => {
       const i = e.target.closest('i');
       if (!i) return;
       const c = ColorMath.hexToRgb(i.dataset.hex);
@@ -265,6 +362,88 @@ class ColorApp {
       this.drawWheel(); this.sync();
     });
   }
+
+  setViz(v, silent) {
+    this.viz = v;
+    this.el.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('on', b.dataset.viz === v));
+    this.el.querySelectorAll('[data-view]').forEach(d => { d.hidden = d.dataset.view !== v; });
+    if (v === 'hsv') this.drawSV(true);
+    if (v === 'rgb') this.paintChannels();
+    if (v === 'harm') this.drawHarm();
+  }
+
+  /* HSV 里 V 和 HSL 的 L 不是一回事，但底色一致：用 L 反推 V，
+   * 这样在两个视图之间来回切，颜色不会自己变。 */
+  _v2l(v) {
+    return ColorMath.rgbToHsl(...ColorMath.hsvToRgb(this.h, this.s, v)).l;
+  }
+  _l2v() {
+    return ColorMath.rgbToHsv(...this.rgb).v;
+  }
+
+  drawSV(force) {
+    if (!this.svCanvas) return;
+    const W = this.svCanvas.width, H = this.svCanvas.height;
+    const ctx = this.svCtx;
+    const h = Math.round(this.h * 10) / 10;
+    if (!force && h === this._svH) return;
+    this._svH = h;
+    const img = ctx.createImageData(W, H);
+    for (let y = 0; y < H; y++) {
+      const v = (1 - y / (H - 1)) * 100;
+      for (let x = 0; x < W; x++) {
+        const s = (x / (W - 1)) * 100;
+        const [r, g, b] = ColorMath.hsvToRgb(h, s, v);
+        const i = (y * W + x) * 4;
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  /* RGB 三条滑条的底色跟着当前颜色走：轨道本身就是这一段通道的渐变 */
+  paintChannels() {
+    const [r, g, b] = this.rgb;
+    const q = s => this.el.querySelector(s);
+    const set = (k, from, to, val) => {
+      const inp = q('[data-f="' + k + '"]');
+      if (!inp) return;
+      inp.value = String(val);
+      inp.style.background = `linear-gradient(to right, rgb(${from}), rgb(${to}))`;
+      const em = q('[data-f="' + k + 'v"]');
+      if (em) em.textContent = String(val);
+    };
+    set('r', [0, g, b], [255, g, b], r);
+    set('g', [r, 0, b], [r, 255, b], g);
+    set('b', [r, g, 0], [r, g, 255], b);
+  }
+
+  /* 配色方案：互补 / 三角 / 四角 / 类似 / 单色 —— 全部由主色算出来 */
+  drawHarm() {
+    const box = this.el.querySelector('[data-f="harm"]');
+    if (!box) return;
+    const mk = (label, list) => {
+      const items = list.map(([h, s, l, a], i) => {
+        const rgb = ColorMath.hslToRgb(h, s, l);
+        const hex = ColorMath.rgbToHex(...rgb);
+        const main = Math.abs(((h - this.h + 540) % 360) - 180) < 0.5 ? ' main' : '';
+        return `<button type="button" class="col-chip${main}" data-pick="${h.toFixed(1)},${s.toFixed(1)},${l.toFixed(1)},${a == null ? 1 : a}"
+          style="background:${hex}" title="${label} · ${hex} · 点击应用"></button>`;
+      }).join('');
+      return `<div class="col-hrow"><b>${label}</b><div class="col-hsw">${items}</div></div>`;
+    };
+    const H = this.h, S = this.s, L = this.l;
+    const wrap360 = x => ((x % 360) + 360) % 360;
+    box.innerHTML =
+      mk('互补', [[H, S, L], [wrap360(H + 180), S, L]]) +
+      mk('三角', [[H, S, L], [wrap360(H + 120), S, L], [wrap360(H + 240), S, L]]) +
+      mk('四角', [[H, S, L], [wrap360(H + 90), S, L], [wrap360(H + 180), S, L], [wrap360(H + 270), S, L]]) +
+      mk('类似', [[wrap360(H - 32), S, L], [wrap360(H - 16), S, L], [H, S, L], [wrap360(H + 16), S, L], [wrap360(H + 32), S, L]]) +
+      mk('单色', [18, 32, 46, 60, 74].map(l => [H, S, l]));
+  }
+
+  drawWheelNow() { this.drawWheel(); }
+
   get rgb() { return ColorMath.hslToRgb(this.h, this.s, this.l); }
 
   /* ---------- 色相环 ---------- */
@@ -350,6 +529,20 @@ class ColorApp {
     this.el.querySelector('[data-f="slv"]').textContent = Math.round(this.l) + '%';
     this.el.querySelector('[data-f="sa"]').value = Math.round(a * 100);
     this.el.querySelector('[data-f="sav"]').textContent = Math.round(a * 100) + '%';
+
+    /* 另外三种视图全部跟着主色走：不是四套取色器，是同一个颜色的四种看法 */
+    const dot = this.el.querySelector('[data-f="svdot"]');
+    if (dot) {
+      const v = this._l2v();
+      dot.style.left = this.s.toFixed(2) + '%';
+      dot.style.top = (100 - v).toFixed(2) + '%';
+      dot.style.background = `rgb(${r},${g},${b})`;
+    }
+    this.drawSV();
+    const hueDot = this.el.querySelector('[data-f="huedot"]');
+    if (hueDot) hueDot.style.left = (this.h / 360 * 100).toFixed(2) + '%';
+    if (this.viz === 'rgb') this.paintChannels();
+    if (this.viz === 'harm') this.drawHarm();
     const cw = ColorMath.contrast([r, g, b], [255, 255, 255]);
     const cb = ColorMath.contrast([r, g, b], [0, 0, 0]);
     const mark = (v, need) => v >= need ? `<span style="color:var(--green)">✓ ${v.toFixed(2)}</span>` : `<span style="color:var(--amber)">${v.toFixed(2)}</span>`;

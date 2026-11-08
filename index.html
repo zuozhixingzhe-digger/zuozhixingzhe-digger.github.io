@@ -100,7 +100,7 @@ body.light{
 /* —— 重置 —— */
 *,*::before,*::after{box-sizing:border-box}
 html,body{height:100%;margin:0}
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none}
 body{
   position:fixed; inset:0; overflow:hidden;
   background:var(--bg-0); color:var(--fg);
@@ -109,8 +109,29 @@ body{
   text-rendering:optimizeLegibility;
   overscroll-behavior:none;
   -webkit-tap-highlight-color:transparent;
-  touch-action:manipulation;
+  /* 只允许「平移」这一种手势：双指缩放（pinch-zoom）、双击放大都不在允许列表里。
+   * 内层滚动容器照样能上下滑，因为 pan-x / pan-y 仍然放行。
+   * iOS 不吃这一套，靠 70-boot.js 里的 gesturestart / 多指 touchmove 兜底。 */
+  touch-action:pan-x pan-y;
+  /* 长按不弹系统菜单（iOS 的「拷贝 / 查询 / 分享」气泡） */
+  -webkit-touch-callout:none;
 }
+/* 触屏设备：整页不许长按选字，观感才像原生 App。
+ * 桌面端保留选择能力——终端输出和智能体回复要能拖选复制，
+ * 只把「界面件」（顶栏、Dock、标题栏、抽屉头）锁掉，拖窗口时不会糊一片蓝。 */
+@media (hover:none),(pointer:coarse){
+  html,body{-webkit-user-select:none;user-select:none}
+}
+.topbar,#dock,#dockWrap,.drawer__user,.win-band,.win-handle,.win-title,.dock-item,.win-dot{
+  -webkit-user-select:none;user-select:none;
+}
+/* 需要打字的控件始终可选中、可长按定位光标 */
+input,textarea,select,[contenteditable="true"],[contenteditable=""]{
+  -webkit-user-select:text; user-select:text;
+}
+/* 内层滚动容器：正常的上下滚动保留，但不把回弹传给页面 */
+.win-body,.drawer__body,.hz-app,.launcher,.al-list,.tl-body,
+.hz-col textarea,.hz-col,.drawer__list,.pkg-list{overscroll-behavior:contain}
 ::selection{background:rgba(94,234,212,.25);color:var(--fg)}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
 input,textarea,select{font:inherit;color:inherit}
@@ -431,6 +452,64 @@ body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
 .win.max .win-body{margin-top:var(--hh)}
 .win.max .win-band{opacity:1}
 
+/* ---------------------------------------------------------------- 隐藏式最大化
+ * 最大化但不想要那条标题带：把提手 / 毛玻璃带 / 标题条全收掉，画面顶到边。
+ * 还原入口在顶栏的胶囊（#hidChip），不占窗口自己的空间。 */
+.win.hidemax .win-handle,
+.win.hidemax .win-band,
+.win.hidemax .win-bar{opacity:0;pointer-events:none;transition:opacity .2s}
+.win.hidemax .win-screen{top:0;border-radius:0;border-color:transparent}
+.win.hidemax .win-body{margin-top:0}
+.win.hidemax .rz{display:none}
+
+/* ---------------------------------------------------------------- 彻底全屏
+ * 连顶栏和 Dock 一起盖掉。为了还能退出，左上角留一个半透明悬浮球：
+ * 可拖动、不能拖出画布、点一下就退出。 */
+.win.immersive{
+  position:fixed!important; left:0!important; top:0!important;
+  width:100vw!important; height:100vh!important;
+  z-index:9000!important; border-radius:0;
+}
+.win.immersive .win-screen{top:0;border-radius:0;border-color:transparent;box-shadow:none}
+.win.immersive .win-handle,
+.win.immersive .win-band,
+.win.immersive .win-bar{opacity:0;pointer-events:none}
+.win.immersive .win-body{margin-top:0}
+.win.immersive .rz{display:none}
+body.immersive .topbar,
+body.immersive #dock,
+body.immersive #dockWrap,
+body.immersive #dockPill,
+body.immersive #term-view{opacity:0;pointer-events:none}
+body.immersive{background:#000}
+
+#imBall{
+  position:fixed; z-index:9500; width:46px; height:46px; border-radius:50%;
+  display:none; place-items:center; cursor:grab;
+  background:rgba(16,26,28,.52); border:1px solid rgba(255,255,255,.22);
+  -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  box-shadow:0 8px 24px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.14);
+  color:rgba(236,246,248,.9); font-size:15px; touch-action:none;
+  transition:background .18s, transform .18s, opacity .2s;
+  opacity:.62;
+}
+#imBall:hover{background:rgba(26,42,45,.72);opacity:1;transform:scale(1.04)}
+#imBall:active{cursor:grabbing;transform:scale(.96)}
+#imBall.dragging{transition:none}
+#imBall svg{width:20px;height:20px;pointer-events:none}
+
+/* 顶栏上的隐藏式最大化胶囊 */
+#hidChip{
+  display:none; align-items:center; gap:6px; height:26px; padding:0 10px 0 8px;
+  border-radius:13px; border:1px solid rgba(94,234,212,.3);
+  background:rgba(94,234,212,.1); color:var(--accent);
+  font-size:11.5px; max-width:210px; cursor:pointer; touch-action:none;
+}
+#hidChip.on{display:flex}
+#hidChip b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+#hidChip svg{width:13px;height:13px;flex:0 0 auto}
+#hidChip:hover{background:rgba(94,234,212,.18)}
+
 /* ---------------------------------------------------------------- 提手
  * 宽度固定为窗宽的 ~43%，窗口变宽它不变形；标题塞不下就中间截断，
  * 绝不允许把提手撑大（用户定的硬规则）。
@@ -442,11 +521,39 @@ body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
   margin-left:calc(var(--hw) / -2);
   pointer-events:none;
   filter:drop-shadow(0 -3px 12px rgba(0,0,0,.5));
-  transition:opacity .3s;
+  transition:opacity .3s, transform .3s cubic-bezier(.2,.85,.3,1);
 }
-.win.max .win-handle{opacity:.42}
+/* 常规最大化：提手翻成倒梯形，从标题带顶边往下收。
+ * 用 scaleY(-1) 而不是另写一条路径——形状只有一份，改一处两边都对得上。 */
+.win.max .win-handle{
+  /* scaleY(-1) 以顶边为轴，图形会翻到 y<0 的负区（看不见），
+   * 所以先翻再整体下移一个自身高度，翻完仍稳稳落在 0..--hh 里。 */
+  transform:translateY(100%) scaleY(-1); transform-origin:50% 0;
+  /* 压在毛玻璃带上面（band 是 3），否则浅色主题下白柄贴着白带，形状直接消失 */
+  z-index:4; opacity:.8;
+  filter:drop-shadow(0 3px 12px rgba(0,0,0,.42));
+}
 .win-handle .face{fill:var(--panel-solid)}
 .win-handle .edge{stroke:var(--handle-line);stroke-width:1.1}
+
+/* 细线：把四个色点和提手连成一条「天线」。
+ * 层级 1 —— 在提手（2）下面、色点（7）下面，于是视觉上从提手两侧钻出来接到点上。 */
+.win-tie{
+  position:absolute; top:calc(var(--hh) / 2 - .5px); z-index:1;
+  left:calc(50% - var(--offout) - var(--dot) / 2);
+  width:calc(var(--offout) * 2 + var(--dot)); height:1px;
+  pointer-events:none; transition:opacity .25s;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.34) 7%,
+    rgba(255,255,255,.30) 93%,transparent);
+}
+body.light .win-tie{
+  background:linear-gradient(90deg,transparent,rgba(20,60,55,.34) 7%,
+    rgba(20,60,55,.3) 93%,transparent);
+}
+.win:not(.focus) .win-tie{opacity:.45}
+.win.max .win-tie,
+.win.hidemax .win-tie,
+.win.immersive .win-tie{opacity:0}
 
 /* 最大化：提手和两侧阴角一起填成一条毛玻璃带 */
 .win-band{
@@ -517,6 +624,20 @@ body.light .win:not(.focus) .win-dot{filter:saturate(.5) brightness(.92)}
   pointer-events:none; text-align:center;
 }
 .win.focus .win-title{color:rgba(240,246,253,.97)}
+
+/* 完整标题气泡：标题被中间截断时，悬浮 / 长按 / 右键都弹它 */
+.win-tip{
+  position:fixed; z-index:9600; max-width:min(76vw,560px);
+  padding:7px 11px; border-radius:8px;
+  background:rgba(11,17,19,.95); border:1px solid var(--border);
+  color:var(--fg); font:12px/1.55 var(--ui);
+  box-shadow:0 12px 34px rgba(0,0,0,.52);
+  pointer-events:none; opacity:0; transform:translateY(-4px);
+  transition:opacity .13s ease, transform .13s ease;
+}
+.win-tip.on{opacity:1;transform:none}
+.win-tip i{display:block;font-style:normal;font-size:10px;color:var(--fg-faint);margin-top:2px}
+body.light .win-tip{background:rgba(252,254,253,.97)}
 .win-tools{position:absolute; right:10px; top:calc(var(--hh) / 2 - 12px); display:flex; gap:2px; align-items:center; z-index:7}
 .win-tools:empty{display:none}
 .win-tools button{width:24px;height:24px;border-radius:6px;color:var(--fg-mute);font-size:12px;display:grid;place-items:center}
@@ -534,21 +655,65 @@ body.light .win-body{background:rgba(252,254,253,.94)}
 .rz.sw{left:-3px;bottom:-3px;width:12px;height:12px;cursor:nesw-resize}
 .rz.se{right:-3px;bottom:-3px;width:12px;height:12px;cursor:nwse-resize}
 .win-snap{
-  position:absolute;z-index:19;pointer-events:none;display:none;
-  border:1px solid rgba(94,234,212,.6); background:rgba(94,234,212,.09); border-radius:8px;
+  position:absolute;z-index:8000;pointer-events:none;display:none;
+  border:1px solid rgba(94,234,212,.7); background:rgba(94,234,212,.10); border-radius:8px;
+  box-shadow:inset 0 0 34px rgba(94,234,212,.12);
+  transition:left .1s linear,top .1s linear,width .1s linear,height .1s linear;
 }
 
 /* =====================================================================
  * 任务栏
  * ===================================================================== */
-#dock{
+#dockWrap{
   position:absolute; left:50%; bottom:10px; transform:translateX(-50%); z-index:70;
+  display:flex; flex-direction:column; align-items:center;
+  max-width:calc(100vw - 24px);
+}
+#dock{
+  position:relative; z-index:70;
   display:flex; align-items:center; gap:4px; padding:4px; border-radius:14px;
   border:1px solid var(--line); background:var(--panel);
   backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
   box-shadow:0 10px 34px rgba(0,0,0,.35); max-width:calc(100vw - 24px);
   overflow-x:auto; scrollbar-width:none;
 }
+/* 折叠把手：贴在 Dock 上沿，不随 Dock 横向滚动跑掉 */
+.dock-fold{
+  position:relative; z-index:71; margin-bottom:-1px;
+  width:46px; height:13px; border-radius:8px 8px 0 0;
+  display:grid; place-items:center; padding-bottom:2px;
+  border:1px solid var(--line); border-bottom:0;
+  background:var(--panel); color:var(--fg-faint);
+  font-size:9px; line-height:1; letter-spacing:.1em;
+  opacity:.75; transition:opacity .16s,color .16s,height .16s;
+}
+.dock-fold{color:var(--fg-mute);background:linear-gradient(to bottom,rgba(94,234,212,.07),var(--panel))}
+.dock-fold:hover{opacity:1;color:var(--accent);height:17px}
+body.light .dock-fold{background:var(--panel)}
+/* 折叠后的药丸 */
+#dockPill{
+  position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:72;
+  display:flex; align-items:center; gap:6px; height:28px; padding:0 11px 0 10px;
+  border-radius:14px; border:1px solid rgba(94,234,212,.28);
+  background:var(--panel-solid, #0f1617);
+  box-shadow:0 8px 26px rgba(0,0,0,.55),0 0 0 3px rgba(94,234,212,.05),inset 0 1px 0 rgba(255,255,255,.04);
+  color:var(--fg-dim); font-size:10.5px; letter-spacing:.04em;
+  transition:transform .18s var(--ease), border-color .18s, box-shadow .18s, color .18s;
+}
+#dockPill:hover{
+  color:var(--accent); border-color:rgba(94,234,212,.62);
+  box-shadow:0 8px 26px rgba(0,0,0,.55),0 0 0 4px rgba(94,234,212,.10);
+  transform:translateX(-50%) translateY(-2px);
+}
+#dockPill b{font-size:9px;color:var(--accent);line-height:1}
+#dockPill em{font-style:normal;color:var(--fg-dim);font-size:10.5px}
+#dockPill span{
+  font-family:var(--mono);color:var(--accent);font-variant-numeric:tabular-nums;font-size:10px;
+  padding:0 5px;border-radius:7px;background:rgba(94,234,212,.12);line-height:15px;
+}
+#dockPill.pulse{animation:pillPulse .36s var(--ease)}
+@keyframes pillPulse{0%{transform:translateX(-50%) scale(.9)}60%{transform:translateX(-50%) scale(1.04)}100%{transform:translateX(-50%) scale(1)}}
+
 #dock::-webkit-scrollbar{display:none}
 .dock-item{
   display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-radius:10px;
@@ -562,7 +727,8 @@ body.light .win-body{background:rgba(252,254,253,.94)}
 .dock-item.min{opacity:.55}
 .dock-sep{width:1px;height:18px;background:var(--line);margin:0 2px}
 /* 用户从「更多」里收起 Dock：窗口不受影响，恢复走抽屉的窗口列表 */
-body.dock-off #dock{display:none}
+body.dock-off #dockWrap,body.dock-off #dockPill{display:none}
+body.dock-folded #dockWrap{display:none}
 .drawer__wins{display:flex;flex-direction:column;gap:2px;margin:2px 0 8px}
 .drawer__win{
   display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:7px;
@@ -630,39 +796,43 @@ body.dock-off #dock{display:none}
 .hz-sp{flex:1}
 .hz-mini{font-size:10.5px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);color:var(--fg-dim)}
 .hz-mini:hover{color:var(--accent);border-color:rgba(94,234,212,.4)}
-.hz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0;flex:1;min-height:0}
-.hz-col{display:flex;flex-direction:column;min-width:0;padding:10px 12px 8px;border-right:1px solid var(--border)}
-.hz-col:last-child{border-right:0}
-.hz-lab{font-size:10.5px;color:var(--fg-faint);margin-bottom:6px;display:flex;gap:8px}
-.hz-lab em{font-style:normal;font-family:var(--mono);color:var(--fg-mute)}
+.hz-cols{display:flex;align-items:stretch;gap:0;flex:1;min-height:0}
+.hz-col{display:flex;flex-direction:column;min-width:0;flex:1 1 0;padding:10px 12px}
+.hz-lab{font-size:10.5px;color:var(--fg-faint);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.hz-lab em{font-style:normal;font-family:var(--mono);color:var(--fg-mute);font-variant-numeric:tabular-nums}
+.hz-cp{
+  margin-left:auto;font-size:9.5px;padding:1px 7px;border-radius:5px;
+  border:1px solid var(--border);color:var(--fg-faint);transition:.13s;
+}
+.hz-cp:hover{color:var(--accent);border-color:rgba(94,234,212,.4)}
 .hz-col textarea{
-  flex:0 0 92px;resize:vertical;min-height:64px;padding:8px 9px;border-radius:8px;
+  flex:1 1 auto;min-height:86px;resize:none;padding:9px 10px;border-radius:9px;
   border:1px solid var(--line);background:rgba(0,0,0,.14);color:var(--fg);
-  font:12px/1.55 var(--mono);outline:none;
+  font:12.5px/1.62 var(--mono);outline:none;transition:border-color .14s,box-shadow .14s;
+  overscroll-behavior:contain;
 }
-.hz-col textarea:focus{border-color:rgba(94,234,212,.45)}
-.hz-acts{display:flex;gap:6px;margin:7px 0}
-.hz-btn{
-  padding:5px 11px;border-radius:7px;font-size:11.5px;
-  background:rgba(94,234,212,.14);color:var(--accent);border:1px solid rgba(94,234,212,.25);
+.hz-col textarea:focus{border-color:rgba(94,234,212,.45);box-shadow:0 0 0 3px rgba(94,234,212,.06)}
+.hz-col textarea.bad{border-color:rgba(248,113,113,.55);box-shadow:0 0 0 3px rgba(248,113,113,.07)}
+#hzHan{font-family:var(--ui);font-size:13.5px;letter-spacing:.05em;line-height:1.7}
+/* 中间那条双向箭头：两侧的「接线柱」 */
+.hz-mid{flex:0 0 30px;position:relative;display:flex;align-items:center;justify-content:center}
+.hz-mid::before{
+  content:'';position:absolute;top:16px;bottom:38px;left:50%;width:1px;
+  background:linear-gradient(to bottom,transparent,var(--border),transparent);
+  transform:translateX(-50%);
 }
-.hz-btn:hover{background:rgba(94,234,212,.2)}
-.hz-btn.ghost{background:transparent;color:var(--fg-dim);border-color:var(--border)}
-.hz-btn.ghost:hover{color:var(--fg);background:rgba(127,180,170,.08)}
-.hz-out{
-  flex:1;min-height:72px;overflow:auto;padding:8px 9px;border-radius:8px;
-  border:1px dashed var(--border);background:rgba(0,0,0,.10);
-  font-size:13px;line-height:1.9;word-break:break-all;color:var(--fg);
+.hz-mid button{
+  position:relative;z-index:1;width:26px;height:26px;border-radius:50%;
+  display:grid;place-items:center;background:var(--panel-solid);
+  border:1px solid var(--border);color:var(--fg-mute);font-size:12px;
+  transition:color .14s,border-color .14s,transform .14s;
 }
-.hz-out.mono{font:11.5px/1.7 var(--mono);color:var(--fg-dim);word-break:break-all}
-.hz-out.err{color:var(--amber);font-size:11.5px}
-.hz-out .hz-gap{white-space:pre}
-.hz-out .hz-mark{
-  color:var(--accent);background:rgba(94,234,212,.16);border-radius:3px;
-  padding:0 1px;box-shadow:inset 0 0 0 1px rgba(94,234,212,.3);
-}
-.hz-stats{margin-top:6px;font-size:10.5px;color:var(--fg-faint);min-height:14px}
+.hz-mid button:hover{color:var(--accent);border-color:rgba(94,234,212,.45);transform:scale(1.07)}
+.hz-mid button:active{transform:scale(.94)}
+.hz-stats{margin-top:6px;font-size:10.5px;color:var(--fg-faint);min-height:15px;line-height:1.5}
+.hz-stats.bad{color:var(--amber)}
 .hz-stats b{color:var(--fg-dim);font-family:var(--mono);font-weight:500}
+.hz-stats .ok{color:var(--accent)}
 .hz-foot{
   display:flex;align-items:center;gap:8px;padding:7px 12px;
   border-top:1px solid var(--border);font-size:10.5px;color:var(--fg-faint);flex:0 0 auto;
@@ -671,13 +841,19 @@ body.dock-off #dock{display:none}
 .hz-foot b.bad{color:var(--red);font-weight:500}
 .hz-tip{color:var(--fg-mute);text-align:right}
 @media (max-width:620px){
-  /* 手机上一屏放不下两栏，改成自然高度 + 整页滚动 */
+  /* 手机上一屏放不下两栏，改成上下两段 + 整页滚动 */
+  .hz-head{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:8px 10px}
+  .hz-head::-webkit-scrollbar{display:none}
+  .hz-badge{display:none}
+  .hz-seg button{padding:4px 8px;font-size:10.5px}
   .hz-app{overflow-y:auto}
-  .hz-cols{grid-template-columns:1fr;grid-template-rows:auto auto;flex:0 0 auto}
-  .hz-col{border-right:0;border-bottom:1px solid var(--border);padding:8px 10px 6px}
-  .hz-col:last-child{border-bottom:0}
-  .hz-col textarea{flex:0 0 66px}
-  .hz-out{flex:0 0 auto;min-height:64px;max-height:150px;font-size:12.5px;line-height:1.75}
+  .hz-cols{flex:1 1 auto;min-height:0;flex-direction:column}
+  .hz-col{flex:1 1 0;min-height:0;padding:8px 10px}
+  .hz-col textarea{flex:1 1 auto;min-height:84px}
+  .hz-mid{flex:0 0 28px}
+  .hz-mid::before{display:none}
+  .hz-mid button{transform:rotate(90deg)}
+  .hz-mid button:hover{transform:rotate(90deg) scale(1.07)}
 }
 
 /* =====================================================================
@@ -704,6 +880,19 @@ body.dock-off #dock{display:none}
 .winmenu button[disabled]:hover{background:transparent; color:var(--fg-dim)}
 .winmenu button.danger:hover{background:rgba(248,113,113,.14); color:var(--red)}
 .winmenu .wm-note{padding:4px 9px 7px;font-size:11px;line-height:1.6;color:var(--fg-faint)}
+/* 两行式菜单项：左边动作名，右边一句人话解释 */
+.winmenu button.stack{display:block;padding:6px 9px}
+.winmenu button.stack span{display:block;font-size:12px;color:var(--fg)}
+.winmenu button.stack em{
+  display:block;font-style:normal;font-size:10px;color:var(--fg-faint);
+  margin-top:1px;line-height:1.45;white-space:normal;
+}
+.winmenu button.stack:hover span{color:var(--accent)}
+.winmenu__label{
+  padding:7px 9px 3px; font-size:10px; color:var(--fg-faint); letter-spacing:.03em;
+}
+.winmenu__sep{height:1px;background:var(--border);margin:4px 0}
+.winmenu button.on span{color:var(--accent)}
 .winmenu__grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px 6px 6px}
 .winmenu__snap{
   position:relative; height:42px; border-radius:7px;
@@ -749,6 +938,16 @@ body.dock-off #dock{display:none}
   overscroll-behavior:contain; touch-action:pan-y;
 }
 .drawer.on{transform:none}
+/* 左缘的抓手：告诉用户「这块可以往右推」 */
+.drawer::before{
+  content:''; position:absolute; left:5px; top:50%; width:3px; height:38px; margin-top:-19px;
+  border-radius:3px; pointer-events:none;
+  background:linear-gradient(to bottom,transparent,rgba(94,234,212,.42),transparent);
+  opacity:.55; transition:opacity .2s;
+}
+.drawer:hover::before{opacity:.9}
+.drawer.dragging{transition:none!important; will-change:transform}
+.drawer.dragging::before{opacity:1}
 .drawer__user{
   display:flex; align-items:center; gap:11px; flex:0 0 auto;
   padding:15px 14px 13px; border-bottom:1px solid var(--border);
@@ -906,21 +1105,161 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
  * ===================================================================== */
 #boot{
   position:absolute; inset:0; z-index:900; display:grid; place-items:center;
-  background:radial-gradient(800px 500px at 50% 40%,#0d1415,#070a0b 70%);
-  transition:opacity .45s ease, visibility .45s;
+  overflow:hidden; padding:28px 24px;
+  background:radial-gradient(1000px 620px at 50% 34%,#0e1719,#05080a 72%);
+  transition:opacity .5s ease, visibility .5s, transform .5s ease;
 }
-body.light #boot{background:radial-gradient(800px 500px at 50% 40%,#f7fbfa,#e7efed 70%)}
-#boot.gone{opacity:0;visibility:hidden}
-.boot-inner{width:min(560px,86vw);font-family:var(--mono)}
-.boot-logo{color:var(--accent);font-size:12px;line-height:1.15;white-space:pre;letter-spacing:0}
-.boot-title{margin:18px 0 4px;font-size:13px;letter-spacing:.35em;color:var(--fg-dim);text-transform:uppercase}
-.boot-title span{letter-spacing:.06em;font-size:10.5px;color:var(--fg-faint);margin-left:6px;
-  border:1px solid var(--border);border-radius:4px;padding:1px 5px;vertical-align:1px}
-.boot-sub{font-size:11px;color:var(--fg-mute);line-height:1.7}
-.boot-bar{margin-top:22px;height:2px;background:var(--line-soft);overflow:hidden;border-radius:2px}
-.boot-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--amber));transition:width .3s}
-.boot-log{margin-top:12px;font-size:10.5px;color:var(--fg-mute);height:16px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.boot-err{color:var(--red);white-space:pre-wrap;font-size:11px;line-height:1.6;margin-top:14px}
+body.light #boot{background:radial-gradient(900px 560px at 50% 36%,#f9fcfb,#e4eeec 72%)}
+#boot.gone{opacity:0;visibility:hidden;transform:scale(1.012)}
+
+/* 背景：极淡的网格缓慢平移 + 一团呼吸光。
+ * 纯装饰，pointer-events:none，不参与任何布局。 */
+.boot-grid{
+  position:absolute; inset:-44px; pointer-events:none; opacity:.55;
+  background-image:linear-gradient(rgba(94,234,212,.06) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(94,234,212,.06) 1px,transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(ellipse 68% 58% at 50% 44%,#000 28%,transparent 76%);
+  mask-image:radial-gradient(ellipse 68% 58% at 50% 44%,#000 28%,transparent 76%);
+  animation:bootGrid 30s linear infinite;
+}
+body.light .boot-grid{
+  background-image:linear-gradient(rgba(20,60,55,.07) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(20,60,55,.07) 1px,transparent 1px);
+}
+@keyframes bootGrid{to{background-position:44px 44px,44px 44px}}
+.boot-glow{
+  position:absolute; width:min(680px,92vw); aspect-ratio:1; border-radius:50%;
+  pointer-events:none; filter:blur(24px);
+  background:radial-gradient(circle,rgba(94,234,212,.15),transparent 62%);
+  animation:bootGlow 7.5s ease-in-out infinite;
+}
+body.light .boot-glow{background:radial-gradient(circle,rgba(45,180,160,.16),transparent 62%)}
+@keyframes bootGlow{
+  0%,100%{transform:scale(.9);opacity:.5}
+  50%    {transform:scale(1.07);opacity:.95}
+}
+
+.boot-inner{
+  position:relative; width:min(600px,100%); font-family:var(--mono);
+  display:flex; flex-direction:column;
+  /* 给整块一个极淡的卡片感：不抢内容，但让面板从背景里"浮"出来 */
+  padding:26px 26px 22px; border-radius:16px;
+  border:1px solid rgba(255,255,255,.07);
+  background:linear-gradient(180deg,rgba(255,255,255,.042),rgba(255,255,255,.012));
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  box-shadow:0 34px 90px -26px rgba(0,0,0,.82), inset 0 1px 0 rgba(255,255,255,.05);
+}
+body.light .boot-inner{
+  border-color:rgba(20,60,55,.1); background:rgba(255,255,255,.66);
+  box-shadow:0 26px 64px -28px rgba(20,60,55,.3), inset 0 1px 0 #fff;
+}
+/* 四段依次浮上来：先字标，再标题，再进度条，最后控制台 */
+.boot-mark{animation:bootUp .55s .02s cubic-bezier(.2,.9,.3,1) both}
+.boot-head{animation:bootUp .55s .10s cubic-bezier(.2,.9,.3,1) both}
+.boot-bar-wrap{animation:bootUp .55s .17s cubic-bezier(.2,.9,.3,1) both}
+.boot-console{animation:bootUp .55s .24s cubic-bezier(.2,.9,.3,1) both}
+@keyframes bootUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.boot-mark pre{
+  margin:0; color:#7ff0dd; white-space:pre; letter-spacing:0;
+  /* 行高必须明显大于字号：_ 在基线下方、| 在上方，挨太近会连成一片糊字 */
+  font-size:clamp(9.5px,2.9vw,14px); line-height:1.42;
+  text-shadow:0 0 22px rgba(94,234,212,.4);
+}
+body.light .boot-mark pre{color:#0b7268; text-shadow:none}
+
+.boot-title{
+  margin:18px 0 5px; font-size:13px; letter-spacing:.35em;
+  color:var(--fg-dim); text-transform:uppercase;
+}
+.boot-title span{
+  letter-spacing:.06em; font-size:10.5px; color:var(--fg-faint); margin-left:6px;
+  border:1px solid var(--border); border-radius:4px; padding:1px 5px; vertical-align:1px;
+}
+.boot-sub{font-size:11px; color:var(--fg-mute); line-height:1.7; min-height:19px}
+
+.boot-bar-wrap{margin-top:20px}
+.boot-bar{
+  position:relative; height:4px; border-radius:4px; overflow:hidden;
+  background:rgba(255,255,255,.1);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
+}
+body.light .boot-bar{background:rgba(20,60,55,.13)}
+.boot-bar i{
+  display:block; height:100%; width:0; border-radius:3px;
+  background:linear-gradient(90deg,#0fae98,#5eead4 58%,#f5c451);
+  box-shadow:0 0 14px rgba(94,234,212,.5);
+  transition:width .34s cubic-bezier(.22,.8,.28,1);
+  position:relative; overflow:hidden;
+}
+.boot-bar i::after{
+  content:""; position:absolute; inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.62),transparent);
+  animation:bootSheen 1.25s linear infinite;
+}
+@keyframes bootSheen{from{transform:translateX(-110%)}to{transform:translateX(110%)}}
+.boot-meta{
+  display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  margin-top:8px; font-size:10px; color:var(--fg-faint); letter-spacing:.04em;
+}
+#bootPct{font-variant-numeric:tabular-nums; color:var(--fg-mute)}
+
+/* 控制台：不替换最后一行，而是一行行往下滚，滚到底自己跟到底。
+ * 顶部 12px 用蒙版淡出，看起来像终端在往下刷。 */
+.boot-console{
+  margin-top:13px; height:136px; overflow-y:auto; padding:9px 11px;
+  border:1px solid var(--border); border-radius:9px;
+  background:rgba(4,9,10,.55);
+  font-size:11px; line-height:1.72; color:var(--fg-mute);
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 13px);
+  mask-image:linear-gradient(180deg,transparent,#000 13px);
+  scrollbar-width:thin;
+}
+body.light .boot-console{background:rgba(255,255,255,.66)}
+.bl-line{display:flex; gap:7px; animation:blIn .2s ease both}
+@keyframes blIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.bl-t{flex:0 0 auto; color:var(--fg-faint); font-variant-numeric:tabular-nums}
+.bl-k{
+  flex:0 0 auto; min-width:34px; padding:0 4px; margin-top:1px; border-radius:3px;
+  font-size:9px; line-height:15px; text-align:center; letter-spacing:.02em;
+}
+.bl-k.dl  {color:#7dd3fc; background:rgba(125,211,252,.13)}
+.bl-k.cache{color:#5eead4; background:rgba(94,234,212,.14)}
+.bl-k.load{color:var(--fg-mute); background:rgba(255,255,255,.06)}
+.bl-k.ok  {color:#4ade80; background:rgba(74,222,128,.13)}
+.bl-k.warn{color:var(--amber); background:rgba(245,196,81,.13)}
+.bl-k.err {color:var(--red); background:rgba(248,113,113,.15)}
+body.light .bl-k.load{background:rgba(20,60,55,.07)}
+.bl-m{flex:1; min-width:0; color:var(--fg-dim); word-break:break-word}
+.bl-line.warn .bl-m{color:var(--amber)}
+.bl-line.err .bl-m{color:var(--red)}
+
+.boot-err{
+  color:var(--red); white-space:pre-wrap; font-size:11px; line-height:1.6;
+  margin-top:12px; max-height:34vh; overflow:auto;
+}
+
+/* 手机：字号收一点、控制台矮一点，整体仍然一屏装得下 */
+@media (max-width:560px){
+  #boot{padding:18px 12px}
+  .boot-inner{width:100%;padding:20px 15px 16px;border-radius:14px}
+  .boot-title{font-size:12px; letter-spacing:.24em; margin-top:15px}
+  .boot-console{height:112px; font-size:10px}
+  .boot-bar-wrap{margin-top:16px}
+}
+/* 横屏手机 / 极矮窗口：字标太占地方，先让位给日志 */
+@media (max-height:540px){
+  .boot-mark{display:none}
+  .boot-console{height:72px}
+  .boot-title{margin-top:4px}
+}
+@media (prefers-reduced-motion: reduce){
+  .boot-grid,.boot-glow,.boot-bar i::after{animation:none!important}
+  .boot-mark,.boot-head,.boot-bar-wrap,.boot-console,.bl-line{
+    animation:none!important; opacity:1!important; transform:none!important;
+  }
+}
 .noscript{
   position:fixed;inset:0;z-index:999;display:grid;place-items:center;
   background:var(--bg-0);color:var(--fg);font-family:var(--mono);font-size:13px;text-align:center;padding:24px;
@@ -1272,11 +1611,58 @@ body.drag-internal .br-shield{display:block}
 .calc-hist div:hover{color:var(--accent)}
 
 /* 颜色 */
-.col-wrap{display:grid;grid-template-columns:210px minmax(0,1fr);gap:12px}
-.col-left{display:flex;flex-direction:column;gap:9px}
-.col-wheel{position:relative;width:200px;height:200px;border-radius:50%;cursor:crosshair;touch-action:none}
-.col-wheel canvas{width:200px;height:200px;border-radius:50%;display:block}
-.col-patch{height:56px;border-radius:9px;border:1px solid var(--line);position:relative;overflow:hidden}
+.col-wrap{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+.col-left{display:flex;flex-direction:column;gap:9px;flex:0 1 204px;min-width:0}
+.col-right{flex:1 1 248px;min-width:0}
+.col-modes{display:flex;gap:2px;padding:2px;border-radius:7px;background:rgba(0,0,0,.14);border:1px solid var(--line)}
+.col-modes button{padding:3px 8px;border-radius:5px;font-size:10.5px;color:var(--fg-dim);white-space:nowrap}
+.col-modes button:hover{color:var(--fg)}
+.col-modes button.on{background:rgba(94,234,212,.16);color:var(--accent)}
+.col-patch{height:52px;border-radius:9px;border:1px solid var(--line);position:relative;overflow:hidden}
+.col-viz{position:relative;width:100%;min-height:200px}
+.col-view{display:block}
+.col-wheel{position:relative;width:100%;max-width:204px;aspect-ratio:1;border-radius:50%;cursor:crosshair;touch-action:none}
+.col-wheel canvas{width:100%;height:100%;border-radius:50%;display:block}
+.col-sv{position:relative;width:100%;border-radius:8px;overflow:hidden;cursor:crosshair;touch-action:none;border:1px solid var(--line)}
+.col-sv canvas{display:block;width:100%;height:auto}
+.col-dot{
+  position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;
+  border:2px solid #fff;pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.55),0 1px 5px rgba(0,0,0,.5);
+}
+.col-hue{
+  position:relative;height:14px;margin-top:9px;border-radius:7px;cursor:pointer;touch-action:none;
+  border:1px solid var(--line);
+  background:linear-gradient(to right,#f00 0%,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00 100%);
+}
+.col-hue-mark{
+  position:absolute;top:50%;width:8px;height:18px;margin:-9px 0 0 -4px;border-radius:4px;
+  background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;
+}
+.col-chline{display:grid;grid-template-columns:14px minmax(0,1fr) 34px;gap:6px;align-items:center;margin-bottom:9px;height:20px;font-size:10px;color:var(--fg-dim)}
+.col-chline b{font-weight:400;color:var(--fg-mute)}
+.col-chline em{font-style:normal;font-family:var(--mono);color:var(--fg-mute);text-align:right;font-variant-numeric:tabular-nums}
+.col-ch{
+  -webkit-appearance:none;appearance:none;width:100%;height:14px;border-radius:7px;
+  border:1px solid var(--line);outline:none;cursor:pointer;margin:0;
+}
+.col-ch::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:#fff;
+  border:2px solid rgba(0,0,0,.5);box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:grab;
+}
+.col-ch::-moz-range-thumb{width:11px;height:11px;border-radius:50%;background:#fff;border:2px solid rgba(0,0,0,.5)}
+.col-harm{display:flex;flex-direction:column;gap:5px}
+.col-hrow{display:flex;align-items:center;gap:7px}
+.col-hrow > b{flex:0 0 28px;font-weight:400;font-size:9.5px;color:var(--fg-mute)}
+.col-hsw{display:flex;gap:4px;flex:1 1 auto;min-width:0}
+.col-chip{
+  position:relative;flex:1 1 0;height:26px;min-width:22px;border-radius:6px;
+  border:1px solid rgba(255,255,255,.10);transition:transform .12s,box-shadow .12s;
+}
+.col-chip{height:30px}
+.col-chip.main{box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 0 0 1px rgba(0,0,0,.35)}
+.col-chip:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.45)}
+.col-chip:active{transform:translateY(0) scale(.97)}
 .col-sl{display:grid;grid-template-columns:14px 1fr 42px;gap:4px 7px;align-items:center;font-size:10px;color:var(--fg-dim)}
 .col-sl input[type=range]{width:100%;height:16px;accent-color:var(--accent)}
 .col-sw{display:flex;flex-wrap:wrap;gap:4px}
@@ -1284,6 +1670,11 @@ body.drag-internal .br-shield{display:block}
 .col-kv{display:grid;grid-template-columns:46px minmax(0,1fr) auto;gap:5px 7px;align-items:center;margin-bottom:3px}
 .col-kv > b{font-weight:400;font-size:10px;color:var(--fg-mute);letter-spacing:.06em}
 .col-kv > input{font-family:var(--mono);font-size:11px;padding:3px 6px}
+@media (max-width:520px){
+  .col-left{flex:1 1 100%}
+  .col-wheel{max-width:196px;margin:0 auto}
+  .col-viz{min-height:0}
+}
 
 /* 截屏 */
 .shot-stage{display:grid;place-items:center;min-height:150px;border:1px dashed var(--line);border-radius:9px;
@@ -1392,6 +1783,12 @@ body.drag-internal .br-shield{display:block}
       <button class="k" type="button" tabindex="-1" data-key="Tab" title="Tab 补全"><span>⇥</span></button>
     </div>
 
+    <!-- 隐藏式最大化的还原胶囊：窗口把自己标题条收起来之后，这里是唯一入口 -->
+    <button class="chip" id="hidChip" type="button" title="隐藏式最大化">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></svg>
+      <b>窗口</b>
+    </button>
+
     <div class="tb-right">
       <button class="k" type="button" data-act="apps" title="应用（窗口）"><span>▦</span></button>
       <button class="k" type="button" data-act="fullscreen" title="全屏 / 退出全屏"><span>⛶</span></button>
@@ -1404,24 +1801,45 @@ body.drag-internal .br-shield{display:block}
     <div id="term-view"><div id="term" aria-label="HTerMinaL 终端"></div></div>
     <div id="window-layer"></div>
     <div class="win-snap" id="winSnap"></div>
-    <div id="dock" hidden></div>
+    <!-- Dock：上面那根小把手负责折叠，折叠后只剩底部一颗药丸 -->
+    <div id="dockWrap" hidden>
+      <button class="dock-fold" id="dockFold" type="button" title="收起 Dock" aria-label="收起 Dock">⌄</button>
+      <div id="dock"></div>
+    </div>
+    <button id="dockPill" hidden type="button" title="展开 Dock" aria-label="展开 Dock">
+      <b>▴</b><em>Dock</em><span id="dockPillN">0</span>
+    </button>
   </main>
 
   <!-- 启动屏 -->
   <div id="boot">
+    <div class="boot-grid" aria-hidden="true"></div>
+    <div class="boot-glow" aria-hidden="true"></div>
     <div class="boot-inner">
-      <div class="boot-logo">  _   _ _____
+      <div class="boot-mark" aria-hidden="true"><pre>  _   _ _____
  | | | |_   _|__ _ _ _ __ _ _ __
  | |_| | | |/ -_) '_| '  \| '  \
   \__,_| |_|\___|_| |_|_|_|_|_|_|
-        js in the browser · everything is a file</div>
-      <div class="boot-title">HTerMinaL <span id="bootVer">—</span></div>
-      <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
-      <div class="boot-bar"><i id="bootBar"></i></div>
-      <div class="boot-log" id="bootLog">init</div>
+        js in the browser · everything is a file</pre></div>
+      <div class="boot-head">
+        <div class="boot-title">HTerMinaL <span id="bootVer">—</span></div>
+        <div class="boot-sub" id="bootSub">正在装载 xterm.js 与内核……</div>
+      </div>
+      <div class="boot-bar-wrap">
+        <div class="boot-bar"><i id="bootBar"></i></div>
+        <div class="boot-meta"><span id="bootStage">准备中</span><span id="bootPct">0%</span></div>
+      </div>
+      <div class="boot-console" id="bootLog" role="log" aria-live="polite" aria-label="启动日志"></div>
       <div class="boot-err" id="bootErr" hidden></div>
     </div>
   </div>
+
+  <!-- 彻底全屏时的退出悬浮球：可拖、不能出画布、点一下退出 -->
+  <button id="imBall" type="button" title="点击退出全屏（可拖动）" aria-label="退出全屏">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9 4H4v5M15 20h5v-5M20 9V4h-5M4 15v5h5"/>
+    </svg>
+  </button>
 </div>
 
 <!-- 应用启动器 -->
@@ -1834,6 +2252,7 @@ class LineEditor {
     /* 多行粘贴还在等右括号时的暂存。和 _pending 分开：
      * 那个是「等输出时空敲的字」，reopen 会把它插回输入行，语义完全不同。 */
     this._pasteBuf = '';
+    this._cont = false;
   }
   /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
   get cols() {
@@ -1862,7 +2281,8 @@ class LineEditor {
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
-    this.promptStr = this.promptText();
+    /* 续行时提示符换成「... 」，让人一眼看出这行不是新命令、是在等括号闭合 */
+    this.promptStr = this._cont ? '... ' : this.promptText();
     this.buf = ''; this.cur = 0;
     this._rows = 0; this._curRow = 0;
     this.redraw();
@@ -2048,6 +2468,34 @@ class LineEditor {
   }
   async submit() {
     const line = this.buf;
+
+    /* 多行输入（手动敲的，不是粘贴）：这一行回车后括号还没闭合，就先不跑，
+     * 换行画一个「... 」提示符继续等。凑齐了再整段提交，只执行一次。
+     * 判据和粘贴共用 scanJs()，字符串 / 注释 / 模板串里的括号不算数。 */
+    const merged = this._pasteBuf ? this._pasteBuf + '\n' + line : line;
+    if (line.trim() || this._pasteBuf) {
+      const sc = scanJs(merged);
+      if (sc.code && sc.open > 0 && !sc.broken) {
+        this._pasteBuf = merged;
+        this._cont = true;
+        this.buf = ''; this.cur = 0;
+        out('\r\n');
+        this._rows = 0; this._curRow = 0;
+        this.reopen();
+        return;
+      }
+      /* 之前攒着、这一行补齐了：整段一次送进 REPL，不逐行执行 */
+      if (this._pasteBuf) {
+        this._pasteBuf = '';
+        this._cont = false;
+        this.buf = ''; this.cur = 0;
+        this._rows = 0; this._curRow = 0;
+        out('\r\n');
+        this.enqueueText(merged);
+        return;
+      }
+    }
+    this._cont = false;
     this.buf = ''; this.cur = 0; this.draft = '';
     this._rows = 0; this._curRow = 0;
     out('\r\n');
@@ -2175,6 +2623,7 @@ class LineEditor {
         /* 单独一个 Esc：放弃还在等的多行粘贴 */
         if (this._pasteBuf) {
           this._pasteBuf = '';
+          this._cont = false;
           this.erase();
           out('\r\n' + ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n');
           this.reopen();
@@ -2188,7 +2637,7 @@ class LineEditor {
         i += 1;
         /* 先把输入块擦掉再打 ^C：否则 ^C 落在输入中间，后面那半截还留在屏幕上。 */
         this.erase();
-        if (this._pasteBuf) { this._pasteBuf = ''; out(ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n'); }
+        if (this._pasteBuf) { this._pasteBuf = ''; this._cont = false; out(ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n'); }
         this.buf = ''; this.cur = 0;
         out('^C\r\n');
         this.reopen();
@@ -6214,7 +6663,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.27';
+const HT_VERSION = '0.0.1.28';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -6252,6 +6701,9 @@ const Settings = {
      * rows = 固定显示行数，0 表示自动铺满。 */
     font: 14, lineHeight: 12, rows: 0,
     dockHidden: 0,
+    /* dockFold = 用户手动把 Dock 折成一颗药丸（和 dockHidden 不同：
+     * 折叠只是收起来，随时能点药丸展开；隐藏是彻底不要 Dock） */
+    dockFold: 0,
     cdn: 'esm.sh',
     /* 智能体：backend = 经本地 modelserver 转发（密钥在服务端）；
      * direct = 浏览器直连 OpenAI 兼容服务，密钥存在本机 localStorage（有风险，见设置页警告）。 */
@@ -8167,9 +8619,16 @@ function initTopbarKeys() {
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
 function deskBox() {
   const d = document.getElementById('desk');
-  if (!d) return { w: window.innerWidth, h: window.innerHeight };
+  if (!d) return { x:0, y:0, left:0, top:0, w: window.innerWidth, h: window.innerHeight };
   const r = d.getBoundingClientRect();
-  return { w: Math.max(120, Math.round(r.width)), h: Math.max(120, Math.round(r.height)) };
+  /* left / top 也要给：拖动吸附判断的是「指针相对桌面」的坐标，
+   * 少了这两个值 px/py 会算成 NaN，四个边缘一个都命中不了。 */
+  return {
+    x: Math.round(r.left), y: Math.round(r.top),
+    left: Math.round(r.left), top: Math.round(r.top),
+    w: Math.max(120, Math.round(r.width)),
+    h: Math.max(120, Math.round(r.height))
+  };
 }
 
 /* ---------------------------------------------------------------- 终端实例 */
@@ -8709,6 +9168,68 @@ const WindowManager = {
 
   init() {
     document.getElementById('window-layer').addEventListener('pointerdown', () => {}, { passive:true });
+    this._initModeChrome();
+  },
+
+  /* 顶栏胶囊与全屏悬浮球：两个挂件的共同点是「点了就还原 / 退出」，
+   * 区别是胶囊还带窗口操作（右键、长按弹四个动作）。 */
+  _initModeChrome() {
+    const chip = document.getElementById('hidChip');
+    if (chip) {
+      let timer = 0, sx = 0, sy = 0, longPressed = false;
+      const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+      chip.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        longPressed = false; sx = e.clientX; sy = e.clientY;
+        clear();
+        timer = setTimeout(() => { timer = 0; longPressed = true; ChipMenu.open(chip, chip.dataset.win); }, 500);
+      });
+      chip.addEventListener('pointermove', e => {
+        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => chip.addEventListener(t, clear));
+      chip.addEventListener('contextmenu', e => {
+        e.preventDefault(); clear();
+        ChipMenu.open(chip, chip.dataset.win);
+      });
+      chip.addEventListener('click', () => {
+        if (longPressed) { longPressed = false; return; }
+        const id = chip.dataset.win;
+        if (id) WindowManager.maxMode(id, 'normal');
+      });
+    }
+
+    const ball = document.getElementById('imBall');
+    if (!ball) return;
+    let drag = null, moved = false;
+    ball.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      drag = { x:e.clientX, y:e.clientY, l:parseFloat(ball.style.left) || 0, t:parseFloat(ball.style.top) || 0 };
+      moved = false;
+      try { ball.setPointerCapture(e.pointerId); } catch (_) {}
+      ball.classList.add('dragging');
+    });
+    ball.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      const r = ball.getBoundingClientRect(), pad = 8;
+      ball.style.left = clamp(drag.l + dx, pad, Math.max(pad, innerWidth - r.width - pad)) + 'px';
+      ball.style.top = clamp(drag.t + dy, pad, Math.max(pad, innerHeight - r.height - pad)) + 'px';
+    });
+    const up = (e) => {
+      if (!drag) return;
+      drag = null;
+      ball.classList.remove('dragging');
+      try { ball.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (!moved) WindowManager.exitImmersive();
+    };
+    ball.addEventListener('pointerup', up);
+    ball.addEventListener('pointercancel', () => { drag = null; ball.classList.remove('dragging'); });
+    addEventListener('resize', () => {
+      if (ball.style.display !== 'none') WindowManager._placeImBall(ball);
+    });
   },
 
   open(opts) {
@@ -8745,7 +9266,7 @@ const WindowManager = {
     const defW = Math.min(opts.w || base[0], vw - 24);
     /* 高度含顶部提手：调用方给的 w/h 一直指"画面"尺寸，提手另外加，
      * 否则窗口内容会比以前矮 44~74px。 */
-    const hh0 = clamp(Math.round(defW * 0.1), 44, 74);
+    const hh0 = clamp(Math.round(defW * 0.1), 38, 86);
     const defH = Math.min((opts.h || base[1]) + hh0, vh - 16);
     const n = this.cascade++ % 6;
     // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
@@ -8756,7 +9277,8 @@ const WindowManager = {
     el.className = 'win focus';
     el.dataset.id = id;
     el.style.cssText = `left:${x}px;top:${y}px;width:${defW}px;height:${defH}px;z-index:${++this.z}`;
-    el.innerHTML = `<svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
+    el.innerHTML = `<div class="win-tie"></div>
+      <svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
         <defs><linearGradient id="htHandleHi" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#fff" stop-opacity=".055"/>
           <stop offset=".55" stop-color="#fff" stop-opacity=".022"/>
@@ -8814,13 +9336,15 @@ const WindowManager = {
         if (a === 'close') this.close(id);
         else if (a === 'min') this.minimize(id);
         else if (a === 'max') this.toggleMax(id);
-        else if (a === 'back') this.sendDown(id);
+        /* 蓝点：直接压到最底（用户定的默认语义）。只下移一层的选项在右键菜单里。 */
+        else if (a === 'back') this.sendToBack(id);
       });
       this._bindDotMenu(dot, id);
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
     bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+    this._bindTitleTip(win);
 
     /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
      * 不是几档断点。ResizeObserver 盯 el 的宽度（最大化、拖边框都会触发）。 */
@@ -8877,6 +9401,12 @@ const WindowManager = {
     const dbox = document.getElementById('desk').getBoundingClientRect();
     if (icon) {
       const r = icon.getBoundingClientRect();
+      return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
+    }
+    /* Dock 折叠时没有图标可落，收到药丸上 */
+    const pill = document.getElementById('dockPill');
+    if (pill && !pill.hidden) {
+      const r = pill.getBoundingClientRect();
       return { x: r.left + r.width / 2 - dbox.left, y: r.top + r.height / 2 - dbox.top };
     }
     return { x: dbox.width / 2, y: dbox.height + 24 };
@@ -8980,7 +9510,7 @@ const WindowManager = {
     const oy = Number.isFinite(st) ? st : r.top - box0.top;
     const w0 = r.width, h0 = r.height;
 
-    let moved = false, snap = null, raf = 0, last = null;
+    let moved = false, snapPos = null, raf = 0, last = null;
     const snapEl = document.getElementById('winSnap');
     document.body.classList.add('win-drag');
 
@@ -8998,15 +9528,24 @@ const WindowManager = {
       win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
 
+      /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一。
+       * 角优先于边——不然在左上角永远只能拿到「左半屏」。 */
       const px = ev.clientX - box0.left, py = ev.clientY - box0.top;
-      if (py <= 8) snap = { x:0, y:0, w:box.w, h:box.h };
-      else if (px <= 8) snap = { x:0, y:0, w:Math.round(box.w / 2), h:box.h };
-      else if (px >= box.w - 8) snap = { x:Math.round(box.w / 2), y:0, w:Math.round(box.w / 2), h:box.h };
-      else snap = null;
-      if (snap) {
+      const EDGE = 10, CORNER = 110;
+      if (py <= EDGE && px <= CORNER) snapPos = 'tl';
+      else if (py <= EDGE && px >= box.w - CORNER) snapPos = 'tr';
+      else if (py <= EDGE) snapPos = 'full';
+      else if (px <= EDGE && py >= box.h - CORNER) snapPos = 'bl';
+      else if (px >= box.w - EDGE && py >= box.h - CORNER) snapPos = 'br';
+      else if (px <= EDGE) snapPos = 'left';
+      else if (px >= box.w - EDGE) snapPos = 'right';
+      else snapPos = null;
+      const rect = snapPos ? this._snapRect(snapPos) : null;
+      if (rect) {
         snapEl.style.display = 'block';
-        snapEl.style.left = snap.x + 'px'; snapEl.style.top = snap.y + 'px';
-        snapEl.style.width = snap.w + 'px'; snapEl.style.height = snap.h + 'px';
+        snapEl.style.left = rect.x + 'px'; snapEl.style.top = rect.y + 'px';
+        snapEl.style.width = rect.w + 'px'; snapEl.style.height = rect.h + 'px';
+        snapEl.dataset.pos = snapPos;
       } else snapEl.style.display = 'none';
     };
     const move = (ev) => {
@@ -9024,14 +9563,15 @@ const WindowManager = {
       document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
       if (snapEl) snapEl.style.display = 'none';
-      if (snap) {
-        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:w0, h:h0 };
-        win.el.style.left = snap.x + 'px'; win.el.style.top = snap.y + 'px';
-        win.el.style.width = snap.w + 'px'; win.el.style.height = snap.h + 'px';
-        const box = deskBox();
-        win.maximized = snap.w === box.w && snap.h === box.h;
-        win.el.classList.toggle('max', win.maximized);
-        win.content && win.content.onResize && win.content.onResize();
+      if (snapPos) {
+        /* 还原尺寸必须是「拖动前」的位置：此刻窗口已经跟着指针跑到边缘了，
+         * 不先把旧坐标塞回去，snap() 会把边缘位置记成原始位置。 */
+        win.restoreRect = { x:Math.round(ox), y:Math.round(oy), w:Math.round(w0), h:Math.round(h0) };
+        win.mode = 'normal'; win.maximized = false;
+        win.el.classList.remove('max', 'hidemax', 'immersive');
+        win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
+        win.el.style.width = w0 + 'px'; win.el.style.height = h0 + 'px';
+        this.snap(win.id, snapPos);
       }
     };
     bar.addEventListener('pointermove', move);
@@ -9127,6 +9667,7 @@ const WindowManager = {
     /* 先算 Dock 位置再藏：_syncDock 之后图标位置才准，
      * 但 .min 会被 display:none 掉，所以顺序是 同步 Dock → 取点 → 动画 → 加 .min */
     this._syncDock();
+    this._syncModeChrome();
     if (w.content && w.content.onHide) w.content.onHide();
     this._animMin(w, () => { w.el.classList.add('min'); });
   },
@@ -9136,6 +9677,7 @@ const WindowManager = {
     w.minimized = false;
     const wasMin = w.el.classList.contains('min');
     w.el.classList.remove('min');
+    this._syncModeChrome();
     this.focus(id);
     if (w.content && w.content.onShow) w.content.onShow();
     if (!wasMin) return;
@@ -9161,31 +9703,111 @@ const WindowManager = {
     else if (w.el.classList.contains('focus')) this.minimize(id);
     else this.focus(id);
   },
+  /* 绿色按钮单击 = 常规最大化 / 还原。
+   * 另外三种（布局、隐藏式、彻底全屏）在它的右键菜单里。 */
   toggleMax(id) {
     const w = this.windows.get(id);
     if (!w) return;
-    /* 加 .tween 让 left/top/width/height 插值过渡（外扩 / 内缩），
-     * 过渡结束立刻摘掉，避免以后拖拽时窗口"追不上"鼠标。 */
-    w.el.classList.add('tween');
-    clearTimeout(w._tweenT);
-    w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 300);
-    if (w.maximized) {
-      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
-      w.el.style.left = r.x + 'px'; w.el.style.top = r.y + 'px';
-      w.el.style.width = r.w + 'px'; w.el.style.height = r.h + 'px';
-      w.maximized = false;
-      w.el.classList.remove('max');
-    } else {
-      const rect = w.el.getBoundingClientRect();
-      const dbox = document.getElementById('desk').getBoundingClientRect();
-      w.restoreRect = { x:rect.left - dbox.left, y:rect.top - dbox.top, w:rect.width, h:rect.height };
-      w.el.style.left = '0px'; w.el.style.top = '0px';
-      w.el.style.width = '100%'; w.el.style.height = '100%';
-      w.maximized = true;
-      w.el.classList.add('max');
+    if (w.mode && w.mode !== 'normal') { this.maxMode(id, 'normal'); return; }
+    this.maxMode(id, w.maximized ? 'normal' : 'max');
+  },
+
+  /* 窗口的四种形态，统一从一个口子进出，避免「最大化标记」和「DOM 类」打架。
+   *   normal    普通窗口（可拖可缩）
+   *   max       常规最大化：占满桌面，提手翻成倒梯形，标题带还在
+   *   hidden    隐藏式最大化：占满桌面但把提手/标题条全收掉，顶栏留一个胶囊还原
+   *   immersive 彻底全屏：连顶栏和 Dock 一起盖住，只留一个可拖的悬浮球退出
+   */
+  maxMode(id, mode) {
+    const w = this.windows.get(id);
+    if (!w) return;
+    mode = mode || 'normal';
+    const el = w.el;
+    const from = w.mode || (w.maximized ? 'max' : 'normal');
+    if (mode === from) return;
+
+    /* 只在「从普通窗口离开」时记还原尺寸；模式之间互转沿用同一份，
+     * 否则 全屏 → 隐藏式 → 还原 会把全屏尺寸当成原始尺寸存下来。 */
+    if (from === 'normal') {
+      const r = el.getBoundingClientRect();
+      const db = document.getElementById('desk').getBoundingClientRect();
+      w.restoreRect = { x:Math.round(r.left - db.left), y:Math.round(r.top - db.top), w:Math.round(r.width), h:Math.round(r.height) };
     }
+
+    el.classList.remove('max', 'hidemax', 'immersive');
+    w.maximized = false;
+
+    if (mode === 'normal') {
+      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
+      el.classList.add('tween');
+      clearTimeout(w._tweenT);
+      w._tweenT = setTimeout(() => el.classList.remove('tween'), 320);
+      el.style.left = r.x + 'px'; el.style.top = r.y + 'px';
+      el.style.width = r.w + 'px'; el.style.height = r.h + 'px';
+      w.mode = 'normal';
+    } else {
+      el.classList.add('tween');
+      clearTimeout(w._tweenT);
+      w._tweenT = setTimeout(() => el.classList.remove('tween'), 320);
+      el.style.left = '0px'; el.style.top = '0px';
+      el.style.width = '100%'; el.style.height = '100%';
+      w.mode = mode;
+      if (mode === 'max') { el.classList.add('max'); w.maximized = true; }
+      else if (mode === 'hidden') el.classList.add('hidemax');
+      else if (mode === 'immersive') el.classList.add('immersive');
+    }
+
+    /* 同一个桌面只留一个隐藏式 / 全屏窗口：新的进来，旧的就退回常规最大化 */
+    if (mode === 'hidden' || mode === 'immersive') {
+      for (const o of this.windows.values()) {
+        if (o.id !== id && (o.mode === 'hidden' || o.mode === 'immersive')) this.maxMode(o.id, 'max');
+      }
+    }
+    this._syncModeChrome();
     this.focus(id);
-    setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 40);
+    setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 60);
+  },
+
+  /* 顶栏胶囊 + 全屏悬浮球，都只服务「当前那一扇」特殊窗口 */
+  _syncModeChrome() {
+    const hidden = [...this.windows.values()].find(w => w.mode === 'hidden' && !w.minimized);
+    const im = [...this.windows.values()].find(w => w.mode === 'immersive' && !w.minimized);
+    document.body.classList.toggle('immersive', !!im);
+    const chip = document.getElementById('hidChip');
+    if (chip) {
+      chip.classList.toggle('on', !!hidden);
+      chip.dataset.win = hidden ? hidden.id : '';
+      const b = chip.querySelector('b');
+      if (b) b.textContent = hidden ? hidden.title : '';
+      chip.title = hidden ? ('隐藏式最大化：' + hidden.title + '（点击还原；右键 / 长按看窗口操作）') : '';
+    }
+    const ball = document.getElementById('imBall');
+    if (ball) {
+      ball.style.display = im ? 'grid' : 'none';
+      if (im) this._placeImBall(ball);
+    }
+    this._imWin = im ? im.id : null;
+  },
+
+  /* 悬浮球只允许待在画布内：拖动时按尺寸夹住，窗口变化 / 旋转屏后重夹一次 */
+  _placeImBall(ball) {
+    if (!ball) return;
+    const b = ball.getBoundingClientRect();
+    const pad = 8;
+    let x = parseFloat(ball.style.left), y = parseFloat(ball.style.top);
+    if (!Number.isFinite(x)) x = innerWidth - b.width - 18;
+    if (!Number.isFinite(y)) y = innerHeight - b.height - 18;
+    x = clamp(x, pad, Math.max(pad, innerWidth - b.width - pad));
+    y = clamp(y, pad, Math.max(pad, innerHeight - b.height - pad));
+    ball.style.left = x + 'px';
+    ball.style.top = y + 'px';
+  },
+
+  /* 退出当前特殊形态（供 chip / 悬浮球 / 键盘调用） */
+  exitImmersive() {
+    const id = this._imWin || [...this.windows.values()].find(w => w.mode === 'immersive')?.id;
+    if (id) this.maxMode(id, 'normal');
+    else { document.body.classList.remove('immersive'); this._syncModeChrome(); }
   },
   close(id) {
     const w = this.windows.get(id);
@@ -9197,6 +9819,8 @@ const WindowManager = {
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
     if (w._ro) { try { w._ro.disconnect(); } catch (e) {} }
     this.windows.delete(id);
+    if (w.mode === 'hidden' || w.mode === 'immersive') w.mode = 'normal';
+    this._syncModeChrome();
     this._syncDock();
     this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
   },
@@ -9234,6 +9858,51 @@ const WindowManager = {
     });
   },
 
+  /* 标题被中间截断时，完整标题得有个地方看：
+   * 桌面悬停 500ms、触屏长按 500ms、右键，三条路都通向同一个气泡。 */
+  _bindTitleTip(win) {
+    const bar = $('.win-bar', win.el);
+    const t = $('.win-title', win.el);
+    if (!bar || !t) return;
+    const truncated = () => t.textContent !== (win.title || '');
+    let timer = 0, sx = 0, sy = 0, longPressed = false, inside = false;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+    /* 标题本身 pointer-events:none（不然会挡住拖动），所以不能靠 e.target 判断，
+     * 只能拿坐标和标题实际矩形比。 */
+    const overTitle = (e) => {
+      const r = t.getBoundingClientRect();
+      return r.width > 0 && e.clientX >= r.left && e.clientX <= r.right &&
+             e.clientY >= r.top && e.clientY <= r.bottom;
+    };
+    const arm = (e) => {
+      clear();
+      if (!truncated()) return;
+      sx = e.clientX; sy = e.clientY;
+      timer = setTimeout(() => { timer = 0; longPressed = true; TitleTip.show(win, t); }, 500);
+    };
+    const leave = () => { inside = false; clear(); TitleTip.hide(); };
+
+    bar.addEventListener('pointermove', e => {
+      const now = overTitle(e);
+      if (now && !inside) { inside = true; arm(e); }
+      else if (!now && inside) leave();
+      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+    });
+    bar.addEventListener('pointerdown', e => {
+      if (!overTitle(e)) return;
+      longPressed = false;
+      arm(e);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t2 =>
+      bar.addEventListener(t2, () => { clear(); if (t2 === 'pointerleave') leave(); }));
+    bar.addEventListener('contextmenu', e => {
+      if (!overTitle(e)) return;
+      e.preventDefault();
+      TitleTip.show(win, t);
+    });
+    bar.addEventListener('click', () => { if (longPressed) { longPressed = false; TitleTip.hide(); } });
+  },
+
   /* 红色：关掉所有同类型窗口（「相关应用」按 type 算，不碰别的类型）。
    * hsb2 的 dispose 会顺带停掉 v86，不需要单独处理。 */
   closeType(type) {
@@ -9269,16 +9938,24 @@ const WindowManager = {
 
   /* 绿色：把窗口吸到桌面的一半 / 四分之一。full 仍走 maximized 标记，
    * 这样再点绿点能还原回原来的位置。 */
-  snap(id, pos) {
-    const w = this.windows.get(id);
-    if (!w) return;
+  /* 吸附目标的几何：屏幕坐标系（相对 #desk），拖动预览与真吸附共用一份 */
+  _snapRect(pos) {
     const d = deskBox();
     const hw = Math.round(d.w / 2), hh = Math.round(d.h / 2);
     const map = {
-      full:[0,0,d.w,d.h], left:[0,0,hw,d.h], right:[hw,0,hw,d.h],
-      tl:[0,0,hw,hh], tr:[hw,0,hw,hh], bl:[0,hh,hw,hh], br:[hw,hh,hw,hh]
+      full:{ x:0, y:0, w:d.w, h:d.h },
+      left:{ x:0, y:0, w:hw, h:d.h },
+      right:{ x:hw, y:0, w:hw, h:d.h },
+      tl:{ x:0, y:0, w:hw, h:hh }, tr:{ x:hw, y:0, w:hw, h:hh },
+      bl:{ x:0, y:hh, w:hw, h:hh }, br:{ x:hw, y:hh, w:hw, h:hh }
     };
-    const r = map[pos];
+    return map[pos] || null;
+  },
+
+  snap(id, pos) {
+    const w = this.windows.get(id);
+    if (!w) return;
+    const r = this._snapRect(pos);
     if (!r) return;
     if (!w.restoreRect) {
       const rr = w.el.getBoundingClientRect();
@@ -9288,12 +9965,16 @@ const WindowManager = {
     w.el.classList.add('tween');
     clearTimeout(w._tweenT);
     w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 320);
-    w.el.style.left = r[0] + 'px';
-    w.el.style.top = r[1] + 'px';
-    w.el.style.width = r[2] + 'px';
-    w.el.style.height = r[3] + 'px';
+    w.el.style.left = r.x + 'px';
+    w.el.style.top = r.y + 'px';
+    w.el.style.width = r.w + 'px';
+    w.el.style.height = r.h + 'px';
+    /* 吸附到全屏 = 常规最大化，走 modes 同一套类，绿点菜单和拖拽才不会各说各话 */
+    w.el.classList.remove('hidemax', 'immersive');
     w.maximized = (pos === 'full');
+    w.mode = pos === 'full' ? 'max' : 'normal';
     w.el.classList.toggle('max', pos === 'full');
+    this._syncModeChrome();
     this.focus(id);
     setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 60);
   },
@@ -9308,9 +9989,12 @@ const WindowManager = {
     const el = win.el;
     if (!el || !el.isConnected) return;
     const W = el.clientWidth || 640;
-    const dot = clamp(Math.round(W * 0.0625), 16, 40);
-    const hh  = clamp(Math.round(W * 0.1), 44, 74);
-    const hw  = clamp(Math.round(W * 0.433), 190, 380);
+    /* 严格按窗口宽度成比例：窗口 240–736 这一段完全线性（也正是绝大多数窗口的宽度），
+     * 超出这段才用上下限收住——1920 宽的窗口若还按 6.25% 算，色点会有 120px，
+     * 直接盖住半条标题。上下限只兜极值，不参与常规尺寸。 */
+    const dot = clamp(Math.round(W * 0.0625), 14, 46);
+    const hh  = clamp(Math.round(W * 0.1), 38, 86);
+    const hw  = clamp(Math.round(W * 0.433), 150, 430);
     let offOut = hw * 0.735, offIn = hw * 0.536;
     /* 窄窗：四个点不能跑出窗口。按可用半宽整体等比收，别只夹外点——
      * 只夹外点会让内外两对挤在一起，看着像两个点。 */
@@ -9365,13 +10049,30 @@ const WindowManager = {
   _syncDock() {
     const dock = document.getElementById('dock');
     if (!dock) return;
+    const wrap = document.getElementById('dockWrap');
+    const pill = document.getElementById('dockPill');
     /* Dock 是否显示由设置决定；这里只管类，避免每次开窗都读一遍 localStorage */
     const off = !!Number(Settings.get('dockHidden'));
+    const folded = !off && !!Number(Settings.get('dockFold'));
     document.body.classList.toggle('dock-off', off);
+    document.body.classList.toggle('dock-folded', folded);
     const wins = [...this.windows.values()];
     const focused = this.focused();
-    if (!wins.length) { dock.hidden = true; dock.innerHTML = ''; this._syncWinList(); return; }
-    dock.hidden = false;
+    if (!wins.length) {
+      dock.innerHTML = '';
+      if (wrap) wrap.hidden = true;
+      if (pill) pill.hidden = true;
+      this._syncWinList();
+      return;
+    }
+    /* 折叠后连把手一起收走，只留底部药丸 */
+    if (wrap) wrap.hidden = folded;
+    dock.hidden = folded;
+    if (pill) {
+      pill.hidden = !folded;
+      const n = document.getElementById('dockPillN');
+      if (n) n.textContent = String(wins.length);
+    }
     const iconOf = (t) => svgIcon(t === 'browser' ? 'browser' : t === 'agent' ? 'agent' : t === 'files' ? 'files' : t === 'python' ? 'python' : t === 'editor' ? 'editor' : 'term');
     dock.innerHTML = `<button class="dock-item ${!focused ? 'focus' : ''}" data-desk="1" title="桌面终端">${svgIcon('term')}<b>desktop</b><span>jshel</span></button><div class="dock-sep"></div>` +
       wins.map(w => `<button class="dock-item ${w.minimized ? 'min' : ''} ${focused && focused.id === w.id ? 'focus' : ''}" data-win="${esc(w.id)}" title="${esc(w.title)}">
@@ -9379,8 +10080,67 @@ const WindowManager = {
     $$('[data-win]', dock).forEach(b => b.onclick = () => this.toggleMin(b.dataset.win));
     const d = $('[data-desk]', dock);
     if (d) d.onclick = () => { for (const w of wins) this.minimize(w.id); };
+    this._bindDockFold();
     this._syncWinList();
     this._syncAppList();
+  },
+
+  /* 折叠 / 展开：把手点一下、Dock 往下拖、药丸往上滑、药丸点一下 —— 四条路都通 */
+  setFold(on) {
+    on = !!on;
+    if (!!Number(Settings.get('dockFold')) === on) return;
+    Settings.set('dockFold', on ? 1 : 0);
+    this._syncDock();
+    if (on) {
+      const p = document.getElementById('dockPill');
+      if (p) { p.classList.remove('pulse'); void p.offsetWidth; p.classList.add('pulse'); }
+    }
+  },
+
+  _bindDockFold() {
+    if (this.__foldBound) return;
+    this.__foldBound = true;
+    const dock = document.getElementById('dock');
+    const fold = document.getElementById('dockFold');
+    const pill = document.getElementById('dockPill');
+    if (fold) fold.onclick = (e) => { e.stopPropagation(); this.setFold(true); };
+    if (pill) {
+      pill.onclick = () => this.setFold(false);
+      let py = 0, pOn = false;
+      pill.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        pOn = true; py = e.clientY;
+      }, { passive: true });
+      pill.addEventListener('pointermove', (e) => {
+        if (!pOn) return;
+        if (py - e.clientY > 22) { pOn = false; this.setFold(false); }
+      }, { passive: true });
+      pill.addEventListener('pointerup', () => { pOn = false; }, { passive: true });
+    }
+    if (dock) {
+      let sy = 0, on = false, moved = false;
+      dock.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.target.closest('#dock')) { on = true; moved = false; sy = e.clientY; }
+      }, { passive: true });
+      dock.addEventListener('pointermove', (e) => {
+        if (!on) return;
+        const dy = e.clientY - sy;
+        if (dy > 26) { on = false; moved = true; this.setFold(true); }
+        else if (dy < -26) on = false;
+      }, { passive: true });
+      dock.addEventListener('pointerup', () => {
+        if (moved) {
+          /* 拖完别再顺手触发「最小化这个窗口」 */
+          dock.__swallow = true;
+          setTimeout(() => { dock.__swallow = false; }, 0);
+        }
+        on = false;
+      }, { passive: true });
+      dock.addEventListener('click', (e) => {
+        if (dock.__swallow) { e.stopPropagation(); e.preventDefault(); }
+      }, true);
+    }
   },
 
   /* 「所有应用」窗口开着时，窗口开合要让它把「打开 / 切换」重新算一遍 */
@@ -9427,6 +10187,8 @@ const WinMenu = {
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-snap]');
       if (b) { WindowManager.snap(id, b.dataset.snap); this.close(); return; }
+      const md = e.target.closest('[data-mode]');
+      if (md) { this.close(); WindowManager.maxMode(id, md.dataset.mode); return; }
       const c = e.target.closest('[data-cmd]');
       if (!c) return;
       const cmd = c.dataset.cmd;
@@ -9435,6 +10197,7 @@ const WinMenu = {
       else if (cmd === 'close-one') WindowManager.close(id);
       else if (cmd === 'down') WindowManager.sendDown(id);
       else if (cmd === 'bottom') WindowManager.sendToBack(id);
+      else if (cmd === 'mintype') WindowManager.minimize(id);
     });
 
     this.el = m;
@@ -9459,7 +10222,14 @@ const WinMenu = {
         <button data-cmd="noop">知道了</button>`;
     }
     if (act === 'max') {
-      return `<div class="winmenu__title">绿色 · 选择位置布局</div>
+      const cur = w.mode || (w.maximized ? 'max' : 'normal');
+      const che = (k) => cur === k ? ' on' : '';
+      return `<div class="winmenu__title">绿色 · 窗口形态</div>
+        <button class="stack${che('max')}" data-mode="max"><span>常规最大化</span><em>占满桌面，提手翻成倒梯形，标题条保留</em></button>
+        <button class="stack${che('hidden')}" data-mode="hidden"><span>隐藏式最大化</span><em>收起标题条，顶栏胶囊里的工具栏可还原</em></button>
+        <button class="stack${che('immersive')}" data-mode="immersive"><span>彻底全屏</span><em>盖住顶栏与 Dock，留一个可拖的半透明球退出</em></button>
+        <div class="winmenu__sep"></div>
+        <div class="winmenu__label">吸附到…</div>
         <div class="winmenu__grid">
           <button class="winmenu__snap" data-snap="tl" title="左上四分之一"><i></i></button>
           <button class="winmenu__snap" data-snap="full" title="全屏"><i></i></button>
@@ -9468,11 +10238,12 @@ const WinMenu = {
           <button class="winmenu__snap" data-snap="right" title="右半屏"><i></i></button>
           <button class="winmenu__snap" data-snap="bl" title="左下四分之一"><i></i></button>
           <button class="winmenu__snap" data-snap="br" title="右下四分之一"><i></i></button>
-        </div>`;
+        </div>
+        ${cur !== 'normal' ? '<button class="stack" data-mode="normal"><span>还原窗口</span><em>回到最大化之前的位置和大小</em></button>' : ''}`;
     }
     return `<div class="winmenu__title">蓝色 · 层叠</div>
-      <button data-cmd="down">仅下移一层</button>
-      <button data-cmd="bottom">压到最底层</button>`;
+      <button class="stack" data-cmd="bottom"><span>压到最底层</span><em>蓝点单击就是这个（默认行为）</em></button>
+      <button class="stack" data-cmd="down"><span>仅下移一层</span><em>只和紧挨着的那扇窗换个位置</em></button>`;
   },
   _outside(e) {
     if (WinMenu.el && !WinMenu.el.contains(e.target) && !(WinMenu._dot && WinMenu._dot.contains(e.target))) WinMenu.close();
@@ -9484,6 +10255,95 @@ const WinMenu = {
     this.el = null;
     this.winId = null;
     this._dot = null;
+    document.removeEventListener('pointerdown', this._outside, true);
+    document.removeEventListener('keydown', this._esc, true);
+  }
+};
+
+/* ---------------------------------------------------------------- 标题气泡
+ * 只做一件事：把被 middleEllipsis 截断的标题原样显示出来。
+ * 位置跟随窗口顶部那条标题，超出视口就翻到上方。 */
+const TitleTip = {
+  el: null, timer: 0,
+  show(win, titleEl) {
+    if (!win || !win.el || !win.el.isConnected) return;
+    if (!this.el) {
+      this.el = document.createElement('div');
+      this.el.className = 'win-tip';
+      document.body.appendChild(this.el);
+    }
+    this.el.innerHTML = esc(win.title || '') +
+      `<i>${esc(win.type || 'window')}${win.mode && win.mode !== 'normal' ? ' · ' + esc(win.mode) : ''}</i>`;
+    this.el.classList.add('on');
+    const r = (titleEl || win.el).getBoundingClientRect();
+    const mw = this.el.offsetWidth, mh = this.el.offsetHeight;
+    let x = r.left + r.width / 2 - mw / 2;
+    let y = r.bottom + 8;
+    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
+    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+    y = Math.max(8, y);
+    this.el.style.left = x + 'px';
+    this.el.style.top = y + 'px';
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.hide(), 3200);
+  },
+  hide() {
+    clearTimeout(this.timer);
+    if (this.el) this.el.classList.remove('on');
+  }
+};
+
+/* ---------------------------------------------------------------- 胶囊菜单
+ * 隐藏式最大化把窗口标题条收起来了，所以红黄绿蓝得换个地方出现：
+ * 顶栏那个胶囊上右键 / 长按，弹出的就是这四个动作。 */
+const ChipMenu = {
+  el: null,
+  open(anchor, id) {
+    this.close();
+    const w = WindowManager.windows.get(id);
+    if (!w) return;
+    const m = document.createElement('div');
+    m.className = 'winmenu';
+    m.innerHTML = `<div class="winmenu__title">${esc(w.title || '窗口')} · 隐藏式最大化</div>
+      <button class="stack danger" data-cmd="close-type"><span>红 · 强制退出</span><em>关闭所有「${esc(w.type)}」窗口</em></button>
+      <button class="stack" data-cmd="min"><span>黄 · 最小化</span><em>收进 Dock，窗口不关</em></button>
+      <button class="stack" data-cmd="max"><span>绿 · 常规最大化</span><em>把标题条放回来</em></button>
+      <button class="stack" data-cmd="bottom"><span>蓝 · 压到最底层</span><em>让别的窗口露出来</em></button>`;
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let x = r.left;
+    if (x + mw > innerWidth - 8) x = innerWidth - mw - 8;
+    m.style.left = Math.max(8, x) + 'px';
+    m.style.top = (r.bottom + 7) + 'px';
+
+    m.addEventListener('click', e => {
+      const c = e.target.closest('[data-cmd]');
+      if (!c) return;
+      this.close();
+      const cmd = c.dataset.cmd;
+      if (cmd === 'close-type') WindowManager.closeType(w.type);
+      else if (cmd === 'min') WindowManager.minimize(id);
+      else if (cmd === 'max') WindowManager.maxMode(id, 'max');
+      else if (cmd === 'bottom') WindowManager.sendToBack(id);
+    });
+    this.el = m;
+    this._anchor = anchor;
+    setTimeout(() => {
+      document.addEventListener('pointerdown', this._outside, true);
+      document.addEventListener('keydown', this._esc, true);
+    }, 0);
+  },
+  _outside(e) {
+    if (ChipMenu.el && !ChipMenu.el.contains(e.target) &&
+        !(ChipMenu._anchor && ChipMenu._anchor.contains(e.target))) ChipMenu.close();
+  },
+  _esc(e) { if (e.key === 'Escape') ChipMenu.close(); },
+  close() {
+    if (!this.el) return;
+    this.el.remove();
+    this.el = null;
+    this._anchor = null;
     document.removeEventListener('pointerdown', this._outside, true);
     document.removeEventListener('keydown', this._esc, true);
   }
@@ -12329,25 +13189,51 @@ class ColorApp {
     this.el = container;
     this.h = 174; this.s = 62; this.l = 48; this.a = 1;
     this.picking = false;
+    this.viz = 'wheel';
+    this._svH = -1;
+    this._wg = 0;
     this.el.innerHTML = `<div class="tl">
-      <div class="tl-hd"><b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">调色盘</b>
+      <div class="tl-hd">
+        <b style="letter-spacing:.08em;font-size:10.5px;color:var(--fg-mute)">调色盘</b>
+        <div class="col-modes" role="tablist" aria-label="调色方式">
+          <button type="button" data-viz="wheel" class="on">色相环</button>
+          <button type="button" data-viz="hsv">HSV</button>
+          <button type="button" data-viz="rgb">RGB</button>
+          <button type="button" data-viz="harm">配色</button>
+        </div>
         <span style="flex:1 1 auto"></span>
         <button class="tl-btn sm" data-a="eye">取色器</button>
-        <button class="tl-btn sm" data-a="page">从页面取色</button>
+        <button class="tl-btn sm" data-a="page">页面取色</button>
         <button class="tl-btn sm" data-a="rand">随机</button>
       </div>
       <div class="tl-body">
         <div class="col-wrap">
           <div class="col-left">
             <div class="col-patch" data-f="patch"></div>
-            <div class="col-wheel" data-f="wheel"><canvas width="400" height="400" style="width:200px;height:200px"></canvas></div>
+            <div class="col-viz">
+              <div class="col-view" data-view="wheel">
+                <div class="col-wheel" data-f="wheel"><canvas width="400" height="400"></canvas></div>
+              </div>
+              <div class="col-view" data-view="hsv" hidden>
+                <div class="col-sv" data-f="sv"><canvas width="220" height="180"></canvas><i class="col-dot" data-f="svdot"></i></div>
+                <div class="col-hue" data-f="hue"><i class="col-hue-mark" data-f="huedot"></i></div>
+              </div>
+              <div class="col-view" data-view="rgb" hidden>
+                <div class="col-chline"><b>R</b><input class="col-ch" type="range" min="0" max="255" data-f="r"><em data-f="rv">0</em></div>
+                <div class="col-chline"><b>G</b><input class="col-ch" type="range" min="0" max="255" data-f="g"><em data-f="gv">0</em></div>
+                <div class="col-chline"><b>B</b><input class="col-ch" type="range" min="0" max="255" data-f="b"><em data-f="bv">0</em></div>
+              </div>
+              <div class="col-view" data-view="harm" hidden>
+                <div class="col-harm" data-f="harm"></div>
+              </div>
+            </div>
             <div class="col-sl">
               <span>L</span><input type="range" min="0" max="100" step="1" data-f="sl">
               <span data-f="slv">48%</span>
               <span>A</span><input type="range" min="0" max="100" step="1" data-f="sa" value="100">
               <span data-f="sav">100%</span>
             </div>
-            <div class="tl-note">历史</div>
+            <div class="tl-note" style="margin:2px 0 0">历史</div>
             <div class="col-sw" data-f="sw"></div>
           </div>
           <div class="col-right" data-f="right"></div>
@@ -12358,9 +13244,14 @@ class ColorApp {
     this.wheelBox = this.el.querySelector('[data-f="wheel"]');
     this.canvas = this.wheelBox.querySelector('canvas');
     this.ctx = this.canvas.getContext('2d', { willReadFrequently:true });
+    this.svBox = this.el.querySelector('[data-f="sv"]');
+    this.svCanvas = this.svBox.querySelector('canvas');
+    this.svCtx = this.svCanvas.getContext('2d');
+    this.hueBox = this.el.querySelector('[data-f="hue"]');
     this.right = this.el.querySelector('[data-f="right"]');
     this.buildRight();
     this.bind();
+    this.setViz('wheel', true);
     this.drawWheel();
     this.sync();
   }
@@ -12397,23 +13288,41 @@ class ColorApp {
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.commit(inp.dataset.f, inp.value); });
     });
   }
+
   bind() {
-    const sl = this.el.querySelector('[data-f="sl"]');
-    const sa = this.el.querySelector('[data-f="sa"]');
+    const q = s => this.el.querySelector(s);
+    const sl = q('[data-f="sl"]');
+    const sa = q('[data-f="sa"]');
     sl.addEventListener('input', () => { this.l = Number(sl.value); this.drawWheel(); this.sync(); });
     sa.addEventListener('input', () => { this.a = Number(sa.value) / 100; this.sync(); });
+
+    /* 顶部：四种调色方式互斥切换 */
+    this.el.querySelectorAll('[data-viz]').forEach(b => {
+      b.onclick = () => this.setViz(b.dataset.viz);
+    });
     this.el.addEventListener('click', (e) => {
       const b = e.target.closest('[data-a]');
-      if (!b) return;
-      if (b.dataset.a === 'eye') this.eyedropper();
-      else if (b.dataset.a === 'page') this.pickFromPage();
-      else if (b.dataset.a === 'rand') {
-        const hsl = ColorMath.hslToRgb(Math.random() * 360, 45 + Math.random() * 55, 30 + Math.random() * 40);
-        const t = ColorMath.rgbToHsl(...hsl);
-        this.h = t.h; this.s = t.s; this.l = t.l;
+      if (b) {
+        if (b.dataset.a === 'eye') this.eyedropper();
+        else if (b.dataset.a === 'page') this.pickFromPage();
+        else if (b.dataset.a === 'rand') {
+          const hsl = ColorMath.hslToRgb(Math.random() * 360, 45 + Math.random() * 55, 30 + Math.random() * 40);
+          const t = ColorMath.rgbToHsl(...hsl);
+          this.h = t.h; this.s = t.s; this.l = t.l;
+          this.drawWheel(); this.sync();
+        }
+        return;
+      }
+      /* 配色方案：点色块即应用 */
+      const sw = e.target.closest('[data-pick]');
+      if (sw) {
+        const m = sw.dataset.pick.split(',');
+        this.h = Number(m[0]); this.s = Number(m[1]); this.l = Number(m[2]);
+        if (m[3] != null) this.a = Number(m[3]);
         this.drawWheel(); this.sync();
       }
     });
+
     const drag = (e) => {
       if (!this.picking) return;
       e.preventDefault();
@@ -12427,7 +13336,55 @@ class ColorApp {
     this.wheelBox.addEventListener('pointermove', drag);
     this.wheelBox.addEventListener('pointerup', () => { this.picking = false; });
     this.wheelBox.addEventListener('pointercancel', () => { this.picking = false; });
-    this.el.querySelector('[data-f="sw"]').addEventListener('click', (e) => {
+
+    /* HSV：SV 方块 + 色相条 */
+    let svDrag = false, hueDrag = false;
+    const pickSV = (e) => {
+      const r = this.svCanvas.getBoundingClientRect();
+      const x = ColorMath.clamp((e.clientX - r.left) / r.width, 0, 1);
+      const y = ColorMath.clamp((e.clientY - r.top) / r.height, 0, 1);
+      this.s = x * 100;
+      this.l = this._v2l(y * 100);
+      this.drawWheel();
+      this.sync();
+    };
+    const pickHue = (e) => {
+      const r = this.hueBox.getBoundingClientRect();
+      this.h = ColorMath.clamp((e.clientX - r.left) / r.width, 0, 1) * 360;
+      this.drawWheel();
+      this.sync();
+    };
+    this.svBox.addEventListener('pointerdown', (e) => {
+      svDrag = true;
+      try { this.svBox.setPointerCapture(e.pointerId); } catch (err) {}
+      pickSV(e);
+    });
+    this.svBox.addEventListener('pointermove', (e) => { if (svDrag) { e.preventDefault(); pickSV(e); } });
+    this.svBox.addEventListener('pointerup', () => { svDrag = false; });
+    this.svBox.addEventListener('pointercancel', () => { svDrag = false; });
+    this.hueBox.addEventListener('pointerdown', (e) => {
+      hueDrag = true;
+      try { this.hueBox.setPointerCapture(e.pointerId); } catch (err) {}
+      pickHue(e);
+    });
+    this.hueBox.addEventListener('pointermove', (e) => { if (hueDrag) { e.preventDefault(); pickHue(e); } });
+    this.hueBox.addEventListener('pointerup', () => { hueDrag = false; });
+    this.hueBox.addEventListener('pointercancel', () => { hueDrag = false; });
+
+    /* RGB 三个通道：直接驱动主色 */
+    ['r', 'g', 'b'].forEach(k => {
+      const inp = q('[data-f="' + k + '"]');
+      inp.addEventListener('input', () => {
+        const cur = this.rgb.slice();
+        cur['rgb'.indexOf(k)] = Number(inp.value);
+        const t = ColorMath.rgbToHsl(...cur);
+        this.h = t.h; this.s = t.s; this.l = t.l;
+        this.drawWheel();
+        this.sync();
+      });
+    });
+
+    q('[data-f="sw"]').addEventListener('click', (e) => {
       const i = e.target.closest('i');
       if (!i) return;
       const c = ColorMath.hexToRgb(i.dataset.hex);
@@ -12436,6 +13393,88 @@ class ColorApp {
       this.drawWheel(); this.sync();
     });
   }
+
+  setViz(v, silent) {
+    this.viz = v;
+    this.el.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('on', b.dataset.viz === v));
+    this.el.querySelectorAll('[data-view]').forEach(d => { d.hidden = d.dataset.view !== v; });
+    if (v === 'hsv') this.drawSV(true);
+    if (v === 'rgb') this.paintChannels();
+    if (v === 'harm') this.drawHarm();
+  }
+
+  /* HSV 里 V 和 HSL 的 L 不是一回事，但底色一致：用 L 反推 V，
+   * 这样在两个视图之间来回切，颜色不会自己变。 */
+  _v2l(v) {
+    return ColorMath.rgbToHsl(...ColorMath.hsvToRgb(this.h, this.s, v)).l;
+  }
+  _l2v() {
+    return ColorMath.rgbToHsv(...this.rgb).v;
+  }
+
+  drawSV(force) {
+    if (!this.svCanvas) return;
+    const W = this.svCanvas.width, H = this.svCanvas.height;
+    const ctx = this.svCtx;
+    const h = Math.round(this.h * 10) / 10;
+    if (!force && h === this._svH) return;
+    this._svH = h;
+    const img = ctx.createImageData(W, H);
+    for (let y = 0; y < H; y++) {
+      const v = (1 - y / (H - 1)) * 100;
+      for (let x = 0; x < W; x++) {
+        const s = (x / (W - 1)) * 100;
+        const [r, g, b] = ColorMath.hsvToRgb(h, s, v);
+        const i = (y * W + x) * 4;
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  /* RGB 三条滑条的底色跟着当前颜色走：轨道本身就是这一段通道的渐变 */
+  paintChannels() {
+    const [r, g, b] = this.rgb;
+    const q = s => this.el.querySelector(s);
+    const set = (k, from, to, val) => {
+      const inp = q('[data-f="' + k + '"]');
+      if (!inp) return;
+      inp.value = String(val);
+      inp.style.background = `linear-gradient(to right, rgb(${from}), rgb(${to}))`;
+      const em = q('[data-f="' + k + 'v"]');
+      if (em) em.textContent = String(val);
+    };
+    set('r', [0, g, b], [255, g, b], r);
+    set('g', [r, 0, b], [r, 255, b], g);
+    set('b', [r, g, 0], [r, g, 255], b);
+  }
+
+  /* 配色方案：互补 / 三角 / 四角 / 类似 / 单色 —— 全部由主色算出来 */
+  drawHarm() {
+    const box = this.el.querySelector('[data-f="harm"]');
+    if (!box) return;
+    const mk = (label, list) => {
+      const items = list.map(([h, s, l, a], i) => {
+        const rgb = ColorMath.hslToRgb(h, s, l);
+        const hex = ColorMath.rgbToHex(...rgb);
+        const main = Math.abs(((h - this.h + 540) % 360) - 180) < 0.5 ? ' main' : '';
+        return `<button type="button" class="col-chip${main}" data-pick="${h.toFixed(1)},${s.toFixed(1)},${l.toFixed(1)},${a == null ? 1 : a}"
+          style="background:${hex}" title="${label} · ${hex} · 点击应用"></button>`;
+      }).join('');
+      return `<div class="col-hrow"><b>${label}</b><div class="col-hsw">${items}</div></div>`;
+    };
+    const H = this.h, S = this.s, L = this.l;
+    const wrap360 = x => ((x % 360) + 360) % 360;
+    box.innerHTML =
+      mk('互补', [[H, S, L], [wrap360(H + 180), S, L]]) +
+      mk('三角', [[H, S, L], [wrap360(H + 120), S, L], [wrap360(H + 240), S, L]]) +
+      mk('四角', [[H, S, L], [wrap360(H + 90), S, L], [wrap360(H + 180), S, L], [wrap360(H + 270), S, L]]) +
+      mk('类似', [[wrap360(H - 32), S, L], [wrap360(H - 16), S, L], [H, S, L], [wrap360(H + 16), S, L], [wrap360(H + 32), S, L]]) +
+      mk('单色', [18, 32, 46, 60, 74].map(l => [H, S, l]));
+  }
+
+  drawWheelNow() { this.drawWheel(); }
+
   get rgb() { return ColorMath.hslToRgb(this.h, this.s, this.l); }
 
   /* ---------- 色相环 ---------- */
@@ -12521,6 +13560,20 @@ class ColorApp {
     this.el.querySelector('[data-f="slv"]').textContent = Math.round(this.l) + '%';
     this.el.querySelector('[data-f="sa"]').value = Math.round(a * 100);
     this.el.querySelector('[data-f="sav"]').textContent = Math.round(a * 100) + '%';
+
+    /* 另外三种视图全部跟着主色走：不是四套取色器，是同一个颜色的四种看法 */
+    const dot = this.el.querySelector('[data-f="svdot"]');
+    if (dot) {
+      const v = this._l2v();
+      dot.style.left = this.s.toFixed(2) + '%';
+      dot.style.top = (100 - v).toFixed(2) + '%';
+      dot.style.background = `rgb(${r},${g},${b})`;
+    }
+    this.drawSV();
+    const hueDot = this.el.querySelector('[data-f="huedot"]');
+    if (hueDot) hueDot.style.left = (this.h / 360 * 100).toFixed(2) + '%';
+    if (this.viz === 'rgb') this.paintChannels();
+    if (this.viz === 'harm') this.drawHarm();
     const cw = ColorMath.contrast([r, g, b], [255, 255, 255]);
     const cb = ColorMath.contrast([r, g, b], [0, 0, 0]);
     const mark = (v, need) => v >= need ? `<span style="color:var(--green)">✓ ${v.toFixed(2)}</span>` : `<span style="color:var(--amber)">${v.toFixed(2)}</span>`;
@@ -17646,7 +18699,7 @@ const HanziCodec = (() => {
     }
     return cs[0];
   }
-  function encC(raw) {
+  function encC(raw, prev) {
     const h = checkHex(raw);
     let z = 0;
     while (z < h.length && h[z] === '0') z++;
@@ -17657,8 +18710,17 @@ const HanziCodec = (() => {
     const digits = [];
     if (n === 0n) digits.push(0);
     while (n > 0n) { digits.push(Number(n % BASE)); n /= BASE; }
+    /* 双向实时联动时，每敲一个 hex 都会整串重算。
+     * 如果上一次的某个位置读音没变，就把那个字原样留下 —— 否则整行同音字会乱跳。 */
+    const old = prev ? [...String(prev).replace(/\s+/g, '')] : [];
+    if (old.length) old.pop();          /* 去掉末尾标记字 */
     let out = '';
-    for (let i = digits.length - 1; i >= 0; i--) out += pickChar(digits[i]);
+    for (let i = digits.length - 1, k = 0; i >= 0; i--, k++) {
+      const d = digits[i];
+      const pc = old[k];
+      if (pc && !ALL_MARKS.has(pc) && C2S.get(pc) === d) out += pc;
+      else out += pickChar(d);
+    }
     out += MC[z];
     return out;
   }
@@ -17696,10 +18758,22 @@ const HanziCodec = (() => {
     if (out == null) throw new Error('解码失败：标记字与内容不匹配');
     return { scheme, hex: out };
   }
-  function encode(raw, scheme) {
+  function encode(raw, scheme, prev) {
     if (scheme === 'B') return encB(raw);
-    if (scheme === 'C') return encC(raw);
+    if (scheme === 'C') return encC(raw, prev);
     return encA(raw);
+  }
+  /* 没有末尾标记字时的「宽松解码」：按当前选中的方案直接解。
+   * 严格协议仍然优先——只有 detect() 认不出标记才会走到这里。
+   * A/B 的末组宽度是有损的（不知道原本是 1/2/3 位），这里统一按满宽处理：
+   * 结果可能多出前导零，但每个字对应的数值一定对。 */
+  function decodeLoose(han, scheme) {
+    const s = String(han == null ? '' : han).replace(/\s+/g, '');
+    if (!s) return { scheme, hex: '', loose: true };
+    const mark = scheme === 'B' ? MB[0] : scheme === 'C' ? MC[0] : MA[2];
+    const out = scheme === 'B' ? decB(s + mark) : scheme === 'C' ? decC(s + mark) : decA(s + mark);
+    if (out == null) throw new Error('解码失败');
+    return { scheme, hex: out, loose: true };
   }
   function stats(raw, han, scheme) {
     const h = clean(raw);
@@ -17738,7 +18812,7 @@ const HanziCodec = (() => {
   }
 
   return {
-    encode, decode, detect, stats, selfTest,
+    encode, decode, decodeLoose, detect, stats, selfTest,
     names: NAMES, syllables: SYL.length,
   };
 })();
@@ -17753,14 +18827,16 @@ class HanziApp {
   constructor(body, opts) {
     this.body = body;
     this.scheme = 'A';
+    this._lock = false;
     this._build();
     this._bind();
     const st = HanziCodec.selfTest();
     this._self = st;
     this._paintSelf();
-    this._encPreview();
+    this._len();
   }
 
+  /* 左右都是输入框：没有「输入栏 / 输出栏」的区别，改哪边另一边就跟着变 */
   _build() {
     this.body.classList.add('hz-app');
     this.body.innerHTML = `
@@ -17770,30 +18846,27 @@ class HanziApp {
           <button type="button" data-s="B">2048 字</button>
           <button type="button" data-s="C">按读音</button>
         </div>
-        <span class="hz-badge" id="hzDetect">解码自动识别</span>
+        <span class="hz-badge" id="hzDetect">双向实时同步</span>
         <span class="hz-sp"></span>
         <button type="button" class="hz-mini" id="hzAes" title="AES-256 密钥 64 hex">AES-256</button>
         <button type="button" class="hz-mini" id="hzRsa" title="RSA-2048 模数 512 hex">RSA-2048</button>
       </div>
       <div class="hz-cols">
-        <section class="hz-col">
-          <div class="hz-lab">十六进制 <em id="hzHexLen">0</em></div>
-          <textarea id="hzHex" spellcheck="false" placeholder="粘贴 hex，例如 48656c6c6f"></textarea>
-          <div class="hz-acts">
-            <button class="hz-btn" id="hzEnc">编码 →</button>
-            <button class="hz-btn ghost" id="hzToDec">填入右侧</button>
-          </div>
-          <div class="hz-out" id="hzHanOut"></div>
-          <div class="hz-stats" id="hzSt1"></div>
+        <section class="hz-col" data-side="hex">
+          <div class="hz-lab"><span>十六进制</span><em id="hzHexLen">0</em>
+            <button type="button" class="hz-cp" data-cp="hex">复制</button></div>
+          <textarea id="hzHex" spellcheck="false" autocapitalize="off" autocomplete="off"
+            placeholder="在这里输入 hex，例如 48656c6c6f"></textarea>
+          <div class="hz-stats" id="hzSt1">改哪边都行，另一边实时跟着变</div>
         </section>
-        <section class="hz-col">
-          <div class="hz-lab">汉字 <em id="hzHanLen">0</em></div>
-          <textarea id="hzHan" spellcheck="false" placeholder="粘贴汉字串；末尾标记字决定用哪套方案"></textarea>
-          <div class="hz-acts">
-            <button class="hz-btn" id="hzDec">← 解码</button>
-            <button class="hz-btn ghost" id="hzCopy">复制结果</button>
-          </div>
-          <div class="hz-out mono" id="hzHexOut"></div>
+        <div class="hz-mid">
+          <button type="button" id="hzSwap" title="交换两侧内容" aria-label="交换两侧内容">⇄</button>
+        </div>
+        <section class="hz-col" data-side="han">
+          <div class="hz-lab"><span>汉字</span><em id="hzHanLen">0</em>
+            <button type="button" class="hz-cp" data-cp="han">复制</button></div>
+          <textarea id="hzHan" spellcheck="false" autocapitalize="off" autocomplete="off"
+            placeholder="也可以直接粘汉字；末尾标记字决定用哪套方案"></textarea>
           <div class="hz-stats" id="hzSt2"></div>
         </section>
       </div>
@@ -17808,50 +18881,58 @@ class HanziApp {
     const q = s => this.body.querySelector(s);
     this.hexEl = q('#hzHex');
     this.hanEl = q('#hzHan');
-    this.hanOut = q('#hzHanOut');
-    this.hexOut = q('#hzHexOut');
+    this.st1 = q('#hzSt1');
+    this.st2 = q('#hzSt2');
 
     this.body.querySelectorAll('.hz-seg [data-s]').forEach(b => {
       b.onclick = () => {
         this.scheme = b.dataset.s;
         this.body.querySelectorAll('.hz-seg [data-s]').forEach(x => x.classList.toggle('on', x === b));
-        this._encPreview();
+        /* 换方案就是把左边的 hex 按新方案重新写一遍 */
+        this._fromHex(true);
         this._tip(this.scheme === 'C'
-          ? '读音方案：每个音节随机取一个同音字，解码只看读音，换个同音字结果一样'
+          ? '读音方案：每个音节取一个同音字，解码只看读音，换同音字结果一样'
           : '解码不用选方案：末尾标记字会告诉程序这是哪一套');
       };
     });
 
     let t = 0;
-    const deb = (fn) => { clearTimeout(t); t = setTimeout(fn, 180); };
-    this.hexEl.addEventListener('input', () => { this._len(); deb(() => this._encPreview()); });
-    this.hanEl.addEventListener('input', () => { this._len(); deb(() => this._decPreview()); });
+    const deb = (fn) => { clearTimeout(t); t = setTimeout(fn, 90); };
+    this.hexEl.addEventListener('input', () => { this._len(); deb(() => this._fromHex()); });
+    this.hanEl.addEventListener('input', () => { this._len(); deb(() => this._fromHan()); });
+    /* 粘贴要立刻反应，不等防抖 */
+    this.hexEl.addEventListener('paste', () => setTimeout(() => { this._len(); this._fromHex(); }, 0));
+    this.hanEl.addEventListener('paste', () => setTimeout(() => { this._len(); this._fromHan(); }, 0));
 
-    q('#hzEnc').onclick = () => this._encPreview(true);
-    q('#hzDec').onclick = () => this._decPreview(true);
-    q('#hzToDec').onclick = () => {
-      const v = this.hanOut.dataset.raw || '';
-      if (!v) { toast('先编码出结果', 'warn'); return; }
-      this.hanEl.value = v;
-      this.hanEl.focus();
+    q('#hzSwap').onclick = () => {
+      const a = this.hexEl.value, b = this.hanEl.value;
+      this.hexEl.value = b; this.hanEl.value = a;
       this._len();
-      this._decPreview(true);
+      if (b.trim()) this._fromHex(true); else this._fromHan(true);
     };
-    q('#hzCopy').onclick = async () => {
-      const v = this.hexOut.dataset.raw || '';
-      if (!v) { toast('没有可复制的结果', 'warn'); return; }
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(v);
-        else {
-          const ta = document.createElement('textarea');
-          ta.value = v; document.body.appendChild(ta); ta.select();
-          document.execCommand('copy'); ta.remove();
-        }
-        toast('已复制 ' + v.length + ' 个字符');
-      } catch (e) { toast('复制失败：' + (e && e.message || e), 'warn'); }
-    };
-    q('#hzAes').onclick = () => { this.hexEl.value = HZ_SAMPLE_AES; this._len(); this._encPreview(true); };
-    q('#hzRsa').onclick = () => { this.hexEl.value = HZ_SAMPLE_RSA; this._len(); this._encPreview(true); };
+    this.body.querySelectorAll('[data-cp]').forEach(b => {
+      b.onclick = async () => {
+        const v = (b.dataset.cp === 'hex' ? this.hexEl : this.hanEl).value.trim();
+        if (!v) { toast('这一侧还没有内容', 'warn'); return; }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(v);
+          else {
+            const ta = document.createElement('textarea');
+            ta.value = v; document.body.appendChild(ta); ta.select();
+            document.execCommand('copy'); ta.remove();
+          }
+          toast('已复制 ' + v.length + ' 个字符');
+        } catch (e) { toast('复制失败：' + (e && e.message || e), 'warn'); }
+      };
+    });
+    q('#hzAes').onclick = () => this._fill(HZ_SAMPLE_AES);
+    q('#hzRsa').onclick = () => this._fill(HZ_SAMPLE_RSA);
+  }
+
+  _fill(v) {
+    this.hexEl.value = v;
+    this._len();
+    this._fromHex(true);
   }
 
   _len() {
@@ -17861,8 +18942,9 @@ class HanziApp {
     q('#hzHexLen').textContent = n1;
     q('#hzHanLen').textContent = n2;
     const d = HanziCodec.detect(this.hanEl.value);
-    q('#hzDetect').textContent = d ? ('识别为 ' + HanziCodec.names[d]) : '解码自动识别';
-    q('#hzDetect').classList.toggle('on', !!d);
+    const badge = q('#hzDetect');
+    badge.textContent = d ? ('识别为 ' + HanziCodec.names[d]) : '双向实时同步';
+    badge.classList.toggle('on', !!d);
   }
 
   _tip(msg) {
@@ -17870,74 +18952,100 @@ class HanziApp {
     if (el) el.textContent = msg || '';
   }
 
-  _err(el, msg) {
-    el.dataset.raw = '';
-    el.classList.add('err');
-    el.textContent = '⚠ ' + msg;
+  /* 右边输出区（其实是 textarea）整体换内容 */
+  _setHan(v) {
+    if (this.hanEl.value === v) return;
+    this.hanEl.value = v;
+  }
+  _setHex(v) {
+    if (this.hexEl.value === v) return;
+    this.hexEl.value = v;
   }
 
-  _encPreview(force) {
-    const el = this.hanOut;
+  _mark(el, bad, msg) {
+    el.classList.toggle('bad', !!bad);
+    if (!bad) return;
+    const box = el === this.hexEl ? this.st1 : this.st2;
+    box.innerHTML = '<b class="bad" style="color:var(--amber)">⚠ ' + esc(msg) + '</b>';
+  }
+
+  /* 由 hex 推汉字 */
+  _fromHex(force) {
+    if (this._lock) return;
     const raw = this.hexEl.value;
-    if (!raw.trim()) { el.textContent = ''; el.dataset.raw = ''; el.classList.remove('err'); this._stats(null); return; }
+    if (!raw.trim()) {
+      this._lock = true;
+      this._setHan('');
+      this._lock = false;
+      this.hexEl.classList.remove('bad');
+      this.st1.textContent = '改哪边都行，另一边实时跟着变';
+      this.st2.textContent = '';
+      this._tip('');
+      return;
+    }
     try {
-      const han = HanziCodec.encode(raw, this.scheme);
-      el.dataset.raw = han;
-      el.classList.remove('err');
-      this._renderHan(el, han);
-      const st = HanziCodec.stats(raw, han, this.scheme);
-      this._stats(st, true);
-      this._tip(this.scheme === 'C' ? '同音字随机取；解码只还原读音，结果与原文等效' : '');
+      this._lock = true;
+      const han = HanziCodec.encode(raw, this.scheme, this.hanEl.value);
+      this._setHan(han);
+      this._lock = false;
+      this.hexEl.classList.remove('bad');
+      this._paintBoth(raw, han, this.scheme, true);
+      this._tip(this.scheme === 'C'
+        ? '同音字随机取；解码只还原读音，结果与原文等效'
+        : '已经按 ' + HanziCodec.names[this.scheme] + ' 编码');
     } catch (e) {
-      this._err(el, e.message);
-      this._stats(null);
+      this._lock = false;
+      this._mark(this.hexEl, true, e.message);
+      this.st2.textContent = '';
+      this._tip('');
     }
   }
 
-  _decPreview(force) {
-    const el = this.hexOut;
+  /* 由汉字推 hex */
+  _fromHan(force) {
+    if (this._lock) return;
     const han = this.hanEl.value;
-    if (!han.trim()) { el.textContent = ''; el.dataset.raw = ''; el.classList.remove('err'); this._stats(null, true); return; }
+    if (!han.trim()) {
+      this._lock = true;
+      this._setHex('');
+      this._lock = false;
+      this.hanEl.classList.remove('bad');
+      this.st2.textContent = '';
+      this.st1.textContent = '改哪边都行，另一边实时跟着变';
+      this._tip('');
+      return;
+    }
     try {
-      const r = HanziCodec.decode(han);
-      el.dataset.raw = r.hex;
-      el.classList.remove('err');
-      el.textContent = r.hex;
-      const st = HanziCodec.stats(r.hex, han, r.scheme);
-      this._stats(st, false, true);
-      this._tip('识别为 ' + HanziCodec.names[r.scheme] + '，还原 ' + r.hex.length + ' 个 hex 字符');
+      this._lock = true;
+      const d = HanziCodec.detect(han);
+      const r = d ? HanziCodec.decode(han) : HanziCodec.decodeLoose(han, this.scheme);
+      this._setHex(r.hex);
+      this._lock = false;
+      this.hanEl.classList.remove('bad');
+      this._paintBoth(r.hex, han, r.scheme, false);
+      this._tip(d
+        ? '识别为 ' + HanziCodec.names[r.scheme] + '，还原 ' + r.hex.length + ' 个 hex 字符'
+        : '没有末尾标记字，按当前方案「' + HanziCodec.names[r.scheme] + '」直接解；加标记字可自动识别');
     } catch (e) {
-      this._err(el, e.message);
-      this._stats(null, true);
+      this._lock = false;
+      this._mark(this.hanEl, true, e.message);
+      this.st1.textContent = '';
+      this._tip('');
     }
   }
 
-  /* 每 10 字插一个空格；标记字单独高亮。空格是独立节点，不进 dataset.raw。 */
-  _renderHan(el, han) {
-    el.textContent = '';
-    const chars = [...han];
-    const mark = chars[chars.length - 1];
-    chars.forEach((ch, i) => {
-      if (i && i % 10 === 0) {
-        const g = document.createElement('span');
-        g.className = 'hz-gap';
-        g.textContent = ' ';
-        el.appendChild(g);
-      }
-      const sp = document.createElement('span');
-      sp.textContent = ch;
-      if (i === chars.length - 1) { sp.className = 'hz-mark'; sp.title = '长度 / 方案标记字'; }
-      el.appendChild(sp);
-    });
-  }
-
-  _stats(st, encSide, decSide) {
-    const q = s => this.body.querySelector(s);
-    const host = q(decSide ? '#hzSt2' : '#hzSt1');
-    if (!host) return;
-    if (!st) { host.textContent = ''; return; }
-    const ratio = st.ratio ? st.ratio.toFixed(2) + ':1' : '—';
-    host.innerHTML = `输入 <b>${st.input}</b> hex · 数据字 <b>${st.data}</b> · 含标记 <b>${st.total}</b> · 压缩比 <b>${ratio}</b>`;
+  /* 两侧的统计各自算，互不覆盖 */
+  _paintBoth(hex, han, scheme, fromHex) {
+    const st = HanziCodec.stats(hex, han, scheme);
+    const chars = [...String(han).replace(/\s+/g, '')].length;
+    const marked = !!HanziCodec.detect(han);
+    const data = Math.max(0, chars - (marked ? 1 : 0));
+    const ratio = chars ? (st.input / chars).toFixed(2) + ':1' : '—';
+    this.st1.innerHTML = `输入 <b>${st.input}</b> hex · 方案 <b>${scheme}</b>`;
+    this.st2.innerHTML = `数据字 <b>${data}</b> · ` +
+      (marked ? `含标记 <b>${chars}</b>` : `无标记字`) +
+      ` · 压缩比 <b>${ratio}</b>`;
+    this._len();
   }
 
   _paintSelf() {
@@ -18295,6 +19403,7 @@ const Drawer = {
     if (brand) brand.onclick = (e) => { e.preventDefault(); modal({ title:'关于 HTerMinaL', body:aboutHtml(), buttons:[{ label:'关闭', primary:true }] }); };
     $('#drawerClose').onclick = () => this.close();
     $('#drawer-overlay').onclick = () => this.close();
+    this._bindSwipe();
     const bindRange = (id, key, fmt) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -18420,6 +19529,96 @@ const Drawer = {
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-overlay').classList.remove('on');
     if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
+  },
+  /* 右滑关闭：抽屉跟手移动，松手按「位移 + 速度」决定关还是弹回。
+   * 用 pointer 事件而不是 touch，鼠标拖拽同样生效（桌面上也符合直觉）。
+   * 抽屉本身是 touch-action:pan-y，所以横向手势不会被浏览器拿去滚页面。 */
+  _bindSwipe() {
+    const dr = $('#drawer');
+    const ov = $('#drawer-overlay');
+    if (!dr || dr.__swipe) return;
+    dr.__swipe = true;
+
+    let active = false, engaged = false;
+    let sx = 0, sy = 0, dx = 0, lastX = 0, lastT = 0, v = 0, w = 0;
+
+    const reset = () => {
+      active = engaged = false;
+      dr.style.transition = '';
+      dr.style.transform = '';
+      ov.style.transition = '';
+      ov.style.opacity = '';
+      dr.classList.remove('dragging');
+    };
+
+    dr.addEventListener('pointerdown', (e) => {
+      if (!this.opened) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      /* 输入控件 / 滑杆 / 自己声明不参与拖拽的，放过 */
+      if (e.target.closest('input,textarea,select,[data-noswipe]')) return;
+      active = true; engaged = false;
+      sx = lastX = e.clientX; sy = e.clientY;
+      dx = 0; v = 0; lastT = performance.now();
+      w = dr.getBoundingClientRect().width || 380;
+    });
+
+    dr.addEventListener('pointermove', (e) => {
+      if (!active) return;
+      const mx = e.clientX - sx, my = e.clientY - sy;
+      if (!engaged) {
+        /* 先看方向：竖着划是滚列表，横着划才是关抽屉 */
+        if (Math.abs(mx) < 7 || Math.abs(mx) < Math.abs(my) * 1.15) {
+          if (Math.abs(my) > 10) active = false;   /* 判定为纵向滚动，这一轮不再管 */
+          return;
+        }
+        engaged = true;
+        dr.classList.add('dragging');
+        dr.style.transition = 'none';
+        ov.style.transition = 'none';
+        try { dr.setPointerCapture(e.pointerId); } catch (err) {}
+      }
+      e.preventDefault();
+      dx = mx > 0 ? mx : mx * 0.22;          /* 往左只给一点点阻尼，别拉出空白 */
+      const now = performance.now();
+      const dt = now - lastT;
+      if (dt > 0) v = (e.clientX - lastX) / dt;
+      lastX = e.clientX; lastT = now;
+      dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+      ov.style.opacity = String(Math.max(0, 1 - dx / w * 0.92));
+    }, { passive: false });
+
+    const up = () => {
+      if (!active) return;
+      if (!engaged) { active = false; return; }
+      const p = dx / w;
+      const far = p > 0.32 || (v > 0.5 && p > 0.12);
+      if (far) {
+        /* 关键顺序：inline transform 先留着——这样 .on 拿掉时画面不会闪回 0，
+         * 下一帧再清掉 inline，CSS 过渡才会从「手指松开的位置」接着滑出去 */
+        dr.style.transition = '';
+        ov.style.transition = '';
+        dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
+        active = engaged = false;
+        this.close();
+        requestAnimationFrame(() => {
+          dr.style.transform = '';
+          ov.style.opacity = '';
+          dr.classList.remove('dragging');
+        });
+      } else {
+        dr.style.transition = 'transform .24s cubic-bezier(.22,1,.36,1)';
+        ov.style.transition = 'opacity .24s cubic-bezier(.22,1,.36,1)';
+        dr.style.transform = '';
+        ov.style.opacity = '';
+        const done = () => { reset(); dr.removeEventListener('transitionend', done); };
+        dr.addEventListener('transitionend', done, { once: true });
+        setTimeout(done, 320);
+        active = engaged = false;
+      }
+    };
+    dr.addEventListener('pointerup', up);
+    dr.addEventListener('pointercancel', up);
+    dr.addEventListener('lostpointercapture', up);
   },
   /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
    * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
@@ -18943,11 +20142,42 @@ async function boot() {
   const logEl = document.getElementById('bootLog');
   const errEl = document.getElementById('bootErr');
   const sub = document.getElementById('bootSub');
-  let p = 0;
-  const step = (msg, inc) => {
-    p = Math.min(100, p + (inc || 8));
+  const pctEl = document.getElementById('bootPct');
+  const stageEl = document.getElementById('bootStage');
+  let p = 0, t0 = performance.now(), nDl = 0, nCache = 0, nLine = 0;
+
+  /* 启动日志是滚动控制台，不是一行替换。三类事件分开记：
+   *   下载 = 这次真的走了网络；缓存 = DepCache 命中（不需要网络）；加载 = 本地初始化。
+   * 这样用户一眼能看出「慢在网络还是慢在本地」，也能确认第二次启动是不是全命中。 */
+  const TAG = { cache:'缓存', dl:'下载', load:'加载', ok:'完成', warn:'注意', err:'失败' };
+  const addLog = (msg, kind) => {
+    if (!logEl) return;
+    kind = kind || 'load';
+    const t = ((performance.now() - t0) / 1000).toFixed(2).padStart(5, ' ');
+    const row = document.createElement('div');
+    row.className = 'bl-line' + (kind === 'err' ? ' err' : kind === 'warn' ? ' warn' : '');
+    row.innerHTML = `<span class="bl-t">${t}s</span>` +
+      `<span class="bl-k ${kind}">${TAG[kind] || '·'}</span><span class="bl-m"></span>`;
+    row.querySelector('.bl-m').textContent = msg;
+    logEl.appendChild(row);
+    /* 只留最近 240 行：启动日志再长也没人翻，DOM 无限涨反而拖慢首屏 */
+    if (++nLine > 240 && logEl.firstElementChild) logEl.firstElementChild.remove();
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  const step = (msg, inc, kind) => {
+    p = Math.min(100, p + (inc || 0));
     if (bar) bar.style.width = p + '%';
-    if (logEl) logEl.textContent = msg;
+    if (pctEl) pctEl.textContent = Math.round(p) + '%';
+    if (stageEl) stageEl.textContent = msg;
+    addLog(msg, kind);
+  };
+  /* loadXterm 抛上来的是「缓存命中 …」「下载 …」「加载 …」这几种前缀，
+   * 在这里翻译成日志级别，顺便把下载 / 命中的次数记下来做收尾统计。 */
+  const online = (m) => {
+    if (/^缓存命中/.test(m)) { nCache++; step(m, 1, 'cache'); }
+    else if (/^下载/.test(m)) { nDl++; step(m, 1, 'dl'); }
+    else if (/失败|拿不到|兜底/.test(m)) step(m, 1, 'warn');
+    else step(m, 1, 'load');
   };
 
   /* 版本号先写：启动屏在第一帧就该显示对的号，而不是 HTML 里的占位符。
@@ -18958,22 +20188,22 @@ async function boot() {
   });
 
   try {
-    step('读取设置', 5);
+    step('读取设置', 4);
     Settings.load();
     // 主题不读设置，直接跟随系统；watchSystemTheme 之后系统切换会实时生效。
     applyTheme();
     watchSystemTheme();
     applyGrid(Settings.get('grid'));
 
-    step('装载 xterm.js', 15);
-    await loadXterm((m) => step(m, 6));
-    step('xterm.js 就绪', 10);
+    step('装载 xterm.js', 6);
+    await loadXterm(online);
+    step('xterm.js 就绪', 10, 'ok');
 
-    step('打开 IndexedDB', 10);
+    step('打开 IndexedDB', 6);
     await FS.init();
-    step('文件系统就绪 · ' + FS.idx.size + ' 个条目', 12);
+    step('文件系统就绪 · ' + FS.idx.size + ' 个条目', 12, IDB.memMode ? 'warn' : 'ok');
 
-    step('初始化窗口管理器', 6);
+    step('初始化窗口管理器', 8);
     WindowManager.init();
     Drawer.init();
     installWindowAPI();
@@ -18981,14 +20211,19 @@ async function boot() {
     installKeys();
     initDropImport();
 
-    step('启动底层终端', 12);
+    step('启动底层终端', 10);
     TerminalManager.bootDesktop();
     /* 应用「Dock 是否显示」：刷新后也要保持上次的收起状态 */
     WindowManager._syncDock();
 
-    step('完成', 10);
+    p = 100;
+    if (bar) bar.style.width = '100%';
+    if (pctEl) pctEl.textContent = '100%';
+    if (stageEl) stageEl.textContent = '就绪';
+    addLog('下载 ' + nDl + ' 项 · 缓存命中 ' + nCache + ' 项 · 共用时 ' +
+      ((performance.now() - t0) / 1000).toFixed(2) + 's', 'ok');
     if (sub) sub.textContent = '就绪 · 输入 help 开始';
-    await sleep(240);
+    await sleep(320);
     bootEl.classList.add('gone');
     setTimeout(() => { bootEl.style.display = 'none'; }, 500);
 
@@ -19011,7 +20246,8 @@ async function boot() {
     console.error(e);
     if (sub) sub.textContent = '启动失败';
     if (errEl) { errEl.hidden = false; errEl.textContent = '启动失败：' + (e && e.stack || e) + '\n\n请检查网络（xterm 从 CDN 加载）。'; }
-    step('失败：' + (e.message || e), 0);
+    if (stageEl) stageEl.textContent = '启动失败';
+    addLog('启动中断：' + (e && e.message || e), 'err');
   }
 }
 
@@ -19026,6 +20262,61 @@ window.addEventListener('unhandledrejection', (e) => {
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
+
+/* ---------------------------------------------------------------- 手势锁
+ * 浏览器默认手势在这个「桌面」里全是干扰：
+ *   双指缩放会把布局拉花、橡皮筋回弹让窗口跟着晃、长按选字会把界面选中成一坨蓝色。
+ * 这里只拦「页面级」的：
+ *   - 多指 touchmove（捏合缩放）
+ *   - iOS 的 gesturestart / gesturechange / gestureend
+ *   - 触控板 ctrl+wheel（浏览器把捏合手势伪装成这个）
+ *   - 双击放大（移动端）与长按弹出的系统菜单
+ * 内层滚动容器（窗口正文、抽屉、应用列表）不受影响。
+ * -------------------------------------------------------------------------- */
+function installGestureLock() {
+  if (window.__htGestureLock) return;
+  window.__htGestureLock = true;
+  const NO = { passive: false };
+  const block = (e) => e.preventDefault();
+
+  /* 1. 多指：只要屏幕上有两根手指就不许做任何默认动作 */
+  document.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  }, NO);
+
+  /* 2. iOS Safari 的私有手势事件 —— 它不看 viewport 的 user-scalable */
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
+    document.addEventListener(t, block, NO));
+
+  /* 3. 触控板捏合 = ctrl + wheel */
+  document.addEventListener('wheel', (e) => {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
+  }, NO);
+
+  /* 4. 双击放大：只拦「不是可输入控件」的那种，否则双击选词会被误伤 */
+  let lastTap = 0;
+  document.addEventListener('touchend', (e) => {
+    if (e.touches.length) return;
+    if (e.target.closest('input,textarea,[contenteditable]')) return;
+    const now = Date.now();
+    if (now - lastTap < 320) e.preventDefault();
+    lastTap = now;
+  }, NO);
+
+  /* 5. 触屏长按：系统菜单（复制 / 查词 / 分享）不弹
+   *    桌面右键不受影响 —— 四色点、窗口标题的菜单都靠它 */
+  document.addEventListener('contextmenu', (e) => {
+    const touch = (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) ||
+      (e.pointerType === 'touch');
+    if (touch && !e.target.closest('input,textarea,[contenteditable]')) e.preventDefault();
+  });
+
+  /* 6. 兜底：万一某处被滚动了，立刻拉回原点 */
+  const pin = () => { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); };
+  window.addEventListener('scroll', pin, { passive: true });
+  window.addEventListener('pageshow', pin);
+}
+installGestureLock();
 </script>
 </body>
 </html>
