@@ -2193,6 +2193,11 @@ async function callSafe(op, ...args) {
  * 只认 ASCII 的 {} () []；跳过字符串、模板串、行注释、块注释——
  * 否则 `console.log("}")` 会被当成少一个右括号。
  * open > 0 表示还有未闭合的括号，missing 是补齐需要的那串字符。 */
+/* spotfs 的路径是点分的，basename 就是最后一段。
+ * sptx 的 html 分支要拿它当窗口标题——之前这里直接引用了主线程的 baseName，
+ * Worker 里根本没有，于是「打开任何 .html 文件」都 ReferenceError。 */
+function baseName(p) { return String(p == null ? '' : p).split('.').pop(); }
+
 function scanJs(text) {
   const stack = [];
   const pairs = { '}':'{', ')':'(', ']':'[' };
@@ -3022,7 +3027,8 @@ function makeShell(ctx) {
     if (st.kind === 'device') { await deviceOpen(t, st); return; }
     if (st.kind === 'package') { await loadPackage(st.meta.spec || st.name); return; }
     if (st.kind === 'grant') { await call('perm.request', st.meta.perm || st.name); return; }
-    // 普通文件：文本用编辑器窗口，二进制下载
+    // 普通文件：HTML 用浏览器窗口（和「双击 .html」一致），二进制下载，其余编辑器
+    if (st.meta && /html/i.test(String(st.meta.mime || ''))) { return sptx(t); }
     if (st.meta && (st.meta.mime === 'application/octet-stream' || st.meta.binary)) {
       await call('file.download', t); return;
     }
@@ -3225,6 +3231,9 @@ function makeShell(ctx) {
       /* 不做「裸命令自动调用」：JSHeL 只按真实 JS 求值，
        * `ls` 得到函数对象本身，`ls()` 才是调用。 */
       state.last = value;
+      /* Node / 浏览器控制台的约定：`_` 就是上一次的结果。
+       * 只在有值时更新，undefined 不覆盖上一次（和 Node 一致）。 */
+      if (value !== undefined) globalThis._ = value;
     } catch (e) {
       if (e === EXIT) throw e;
       error = e;
@@ -3235,6 +3244,9 @@ function makeShell(ctx) {
        * 以前这里是偷偷把 `ls -la` 当 shell 跑掉，那才叫不可预测。 */
       /* 敲了 shell 命令却没进 shell：SyntaxError（`ls -la`）和 ReferenceError
        * （`nano x`）都会发生。这里只补一句指路，不改变求值方式。 */
+      if (e instanceof SyntaxError && /^\s*import\b/.test(String(code))) {
+        out(ANSI.gray + '提示：这里的 import 语句不能直接跑。用 await import(URL.createObjectURL(new Blob([code],{type:"text/javascript"}))) 加载模块。' + ANSI.reset + '\r\n');
+      }
       if (e instanceof SyntaxError || e instanceof ReferenceError) {
         const first = String(code).trim().split(/[\s|;>]+/)[0] || '';
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
@@ -3329,11 +3341,18 @@ function makeShell(ctx) {
       set:(k, v) => call('settings.set', String(k), v),
       all:() => call('settings.all')
     },
+    /* print 是 JSHeL 的终端输出（Python 习惯）。注意它和 window.print 不是一回事：
+     * window.print() 仍然走浏览器打印对话框（见 windowShim）。 */
+    print: (...a) => out(fmtArgs(a) + '\r\n'),
+    /* 控制台惯例：$ / $$ 是 querySelector 的简写（浏览器 devtools 里一直有）。
+     * 它们只是别名，不改变任何语义。 */
+    $: (sel) => globalThis.document.querySelector(sel),
+    $$: (sel) => [...globalThis.document.querySelectorAll(sel)],
     whoami, uname, date, echo, env, ps, kill, nuke, clear, history:historyList, help, exit,
     sleep:(ms) => new Promise(r => setTimeout(r, ms)),
     uuid:() => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2)),
     // 内建对象
-    console:con,
+    console:globalThis.console,
     fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
          sptc, sptn, spta, sptr, sptx, sptd, sptm, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
@@ -3370,15 +3389,17 @@ function makeShell(ctx) {
 
 const DOMC = {
   root: null,            // 最近一次 snap 的结果
-  nodes: new Map(),      // ref -> desc
+  nodes: new Map(),      // ref -> desc（本地影子 + 远程快照合并后的结果）
   bySel: new Map(),      // 选择器 -> desc（预取填充）
+  byId: new Map(),       // id -> ref（本地挂载/扫描出来的，同步查得到）
   lists: new Map(),      // 选择器 -> desc[]
   proxies: new Map(),    // ref -> Proxy
   refSeq: 0,
+  seqcounter: 0,         // 事件监听 id
   listeners: new Map(),  // id -> { type, fn, sel }
   chosen: new Map(),     // 回调函数 -> listener id
   newRef() { return '\u0001w' + (++this.refSeq); },
-  clear() { this.nodes.clear(); this.bySel.clear(); this.lists.clear(); this.proxies.clear(); }
+  clear() { this.nodes.clear(); this.bySel.clear(); this.byId.clear(); this.lists.clear(); this.proxies.clear(); }
 };
 
 const HTML_NS = '[object HTMLElement]';
@@ -3390,6 +3411,152 @@ function refOf(x) {
   if (typeof x === 'string') return x;
   if (x.__ref) return x.__ref;
   return null;
+}
+
+/* ================================================================
+ * 本地影子节点
+ *
+ * Worker 与主线程之间没有同步通道。原生 `el.setAttribute('x','1')` 之后
+ * 立刻 `el.getAttribute('x')` 必须拿到 '1' —— 靠「发出去再等回来」永远
+ * 做不到。所以在 Worker 里先记一份影子：写立刻改影子（因此读立刻正确），
+ * 同时异步把真操作发给主线程。主线程返回快照时只补本地不知道的部分
+ * （位置、计算样式、真实子节点），本地写过的字段不覆盖。
+ *
+ * 这不是「模拟 DOM」，是 DOM 的写通缓存：真的节点仍然在主线程上，
+ * 页面上看到的、事件命中的、F12 里查到的都是它。
+ * ================================================================ */
+function localNode(ref, tag) {
+  const d = {
+    ref, tag: String(tag || 'div').toLowerCase(), id: '', cls: '',
+    text: '', html: '', value: undefined, checked: false, selected: false,
+    attrs: {}, children: [], parent: null, connected: true,
+    rect: { x: 0, y: 0, w: 0, h: 0 }, computed: {},
+    __local: 1, __inDoc: false
+  };
+  DOMC.nodes.set(ref, d);
+  return d;
+}
+
+function isDocRoot(ref) {
+  if (ref === '\u0001doc') return true;
+  const r = DOMC.root;
+  if (!r) return false;
+  return [r.body, r.html, r.doc, r.head].some(x => x && x.ref === ref);
+}
+
+function markInDoc(ref, on) {
+  const d = DOMC.nodes.get(ref);
+  if (!d) return;
+  d.__inDoc = !!on;
+  if (on && d.id) DOMC.byId.set(d.id, ref);
+  if (!on && d.id && DOMC.byId.get(d.id) === ref) DOMC.byId.delete(d.id);
+  for (const c of (d.children || [])) markInDoc(c, on);
+}
+
+/* 远程快照回来时合并：本地写过的优先 */
+function mergeDesc(ref, remote) {
+  if (!remote) return null;
+  const cur = DOMC.nodes.get(ref);
+  if (!cur || cur === remote) { DOMC.nodes.set(ref, remote); return remote; }
+  if (cur.__local) {
+    remote.attrs = Object.assign({}, remote.attrs || {}, cur.attrs || {});
+    remote.id = cur.id || remote.id || '';
+    remote.cls = cur.cls || remote.cls || '';
+    if (cur.__dirtyText) remote.text = cur.text;
+    if (cur.__dirtyHtml) remote.html = cur.html;
+    if (cur.__canvas) remote.__canvas = cur.__canvas;
+    if (cur.children && cur.children.length) remote.children = cur.children;
+    if (cur.parent) remote.parent = cur.parent;
+    remote.__inDoc = cur.__inDoc;
+    remote.__local = 1;
+    DOMC.nodes.set(ref, remote);
+    if (remote.id) DOMC.byId.set(remote.id, ref);
+  }
+  return remote;
+}
+
+/* innerHTML 里的 id 先扫出来，异步换回真 ref 登记进 byId。
+ * 这样 `d.innerHTML = '<b id="x">'; await sleep(0); document.getElementById('x')`
+ * 就能命中——不 await 的那一瞬间仍然不行，这是跨线程的物理下限。 */
+function harvestIds(html) {
+  const src = String(html || '');
+  const re = /\bid\s*=\s*["']([^"']+)["']/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const id = m[1];
+    if (!id || DOMC.byId.has(id)) continue;
+    call('dom.op', 'queryId', [id]).then(d => {
+      if (d && d.ref) { mergeDesc(d.ref, d); DOMC.byId.set(id, d.ref); if (!DOMC.nodes.has(d.ref)) DOMC.nodes.set(d.ref, d); }
+    }).catch(() => {});
+  }
+}
+
+function applyLocalProps(d, props) {
+  if (!props || typeof props !== 'object') return;
+  for (const k of Object.keys(props)) {
+    const v = props[k];
+    try {
+      if (k === 'style') {
+        const css = typeof v === 'string' ? v : Object.keys(v || {}).map(p => p + ':' + v[p]).join(';');
+        d.attrs.style = css;
+      } else if (k === 'dataset') {
+        for (const p of Object.keys(v || {})) d.attrs['data-' + camel2kebab(p)] = String(v[p]);
+      } else if (k === 'className') { d.cls = String(v); d.attrs['class'] = String(v); }
+      else if (k === 'id') { d.id = String(v); d.attrs.id = String(v); }
+      else if (k === 'html' || k === 'innerHTML') { d.html = String(v); d.__dirtyHtml = 1; d.text = stripTags(v); }
+      else if (k === 'textContent' || k === 'text') { d.text = String(v); d.__dirtyText = 1; }
+      else if (k === 'value') d.value = v;
+      else if (k === 'checked') d.checked = !!v;
+      else d.attrs[k] = String(v);
+    } catch (e) {}
+  }
+}
+
+/* 极简去标签：只用于 textContent 的近似值，不追求 HTML 语义 */
+function stripTags(html) {
+  return String(html == null ? '' : html).replace(/<[^>]*>/g, '');
+}
+
+/* 把一个子节点挂到父节点上（本地影子 + 远程真节点）。
+ * 只有挂进文档（body / html / document）的节点才登记 id，
+ * 否则 `const d = createElement(); d.id='x'` 会污染 getElementById —— 原生不会。 */
+function linkChild(parentRef, child) {
+  const r = refOf(child);
+  if (!r) return child;
+  unlinkChild(r);
+  const pd = DOMC.nodes.get(parentRef);
+  const cd = DOMC.nodes.get(r);
+  if (pd) {
+    pd.children = pd.children || [];
+    if (!pd.children.includes(r)) pd.children.push(r);
+  }
+  if (cd) cd.parent = parentRef;
+  callDom('append', parentRef, r);
+  if ((isDocRoot(parentRef) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+  return child;
+}
+
+function unlinkChild(ref) {
+  const d = DOMC.nodes.get(ref);
+  const p = d && d.parent;
+  if (p) {
+    const pd = DOMC.nodes.get(p);
+    if (pd && pd.children) pd.children = pd.children.filter(x => x !== ref);
+    d.parent = null;
+  }
+  if (d && d.id && DOMC.byId.get(d.id) === ref) DOMC.byId.delete(d.id);
+  markInDoc(ref, false);
+  /* 父节点上还挂着的兄弟不受影响；这里只改自己这一支 */
+  if (d) d.__inDoc = false;
+}
+
+/* 本地树里找 id（只认挂进文档的节点，和原生一致） */
+function localById(id) {
+  const r = DOMC.byId.get(String(id));
+  if (!r) return null;
+  const d = DOMC.nodes.get(r);
+  if (!d) { DOMC.byId.delete(String(id)); return null; }
+  return r;
 }
 
 /* ---------------------------------------------------------------- 元素句柄 */
@@ -3478,19 +3645,71 @@ function nodeProxy(ref) {
     click: () => { callDom('click', ref); },
     focus: () => { callDom('focus', ref); },
     blur: () => { callDom('blur', ref); },
-    remove: () => { callDom('remove', ref); },
+    remove: () => { unlinkChild(ref); callDom('remove', ref); },
     getAttribute: (n) => { const d = D(); return d && d.attrs && String(n) in d.attrs ? d.attrs[String(n)] : null; },
-    setAttribute: (n, v) => { callDom('setAttr', ref, String(n), String(v)); const d = D(); if (d) { d.attrs = d.attrs || {}; d.attrs[String(n)] = String(v); } },
-    removeAttribute: (n) => { callDom('rmAttr', ref, String(n)); const d = D(); if (d && d.attrs) delete d.attrs[String(n)]; },
+    setAttribute: (n, v) => {
+      const name = String(n), val = String(v);
+      callDom('setAttr', ref, name, val);
+      const d = D();
+      if (d) {
+        d.attrs = d.attrs || {};
+        d.attrs[name] = val;
+        if (name === 'id') { d.id = val; if (d.__inDoc || isDocRoot(ref)) DOMC.byId.set(val, ref); }
+        if (name === 'class') d.cls = val;
+        if (name === 'value') d.value = val;
+        if (name === 'checked') d.checked = val !== 'false' && val !== '';
+      }
+    },
+    removeAttribute: (n) => {
+      const name = String(n);
+      callDom('rmAttr', ref, name);
+      const d = D();
+      if (d && d.attrs) delete d.attrs[name];
+      if (name === 'id') { const d2 = D(); if (d2) d2.id = ''; if (DOMC.byId.get(String(d && d.id)) === ref) DOMC.byId.delete(String(d && d.id)); }
+    },
     hasAttribute: (n) => { const d = D(); return !!(d && d.attrs && String(n) in d.attrs); },
     toggleAttribute: (n, force) => { const has = M.hasAttribute(n); const on = force === undefined ? !has : !!force; if (on) M.setAttribute(n, ''); else M.removeAttribute(n); return on; },
     getAttributeNames: () => Object.keys((D() && D().attrs) || {}),
-    appendChild: (child) => { const r = refOf(child); if (r) callDom('append', ref, r); return child; },
-    append: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('appendHtml', ref, n); else { const r = refOf(n); if (r) callDom('append', ref, r); } } },
-    prepend: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('prependHtml', ref, n); else { const r = refOf(n); if (r) callDom('prepend', ref, r); } } },
-    insertBefore: (child, before) => { const r = refOf(child); if (r) callDom('insertBefore', ref, r, before ? refOf(before) : null); return child; },
-    removeChild: (child) => { const r = refOf(child); if (r) callDom('removeChild', ref, r); return child; },
-    replaceChild: (n, o) => { callDom('replaceChild', ref, refOf(n), refOf(o)); return o; },
+    appendChild: (child) => { linkChild(ref, child); return child; },
+    append: (...nodes) => {
+      for (const n of nodes) {
+        if (typeof n === 'string') { callDom('appendHtml', ref, n); harvestIds(n); }
+        else linkChild(ref, n);
+      }
+    },
+    prepend: (...nodes) => {
+      for (const n of nodes) {
+        if (typeof n === 'string') { callDom('prependHtml', ref, n); harvestIds(n); }
+        else {
+          const r = refOf(n);
+          if (!r) continue;
+          unlinkChild(r);
+          const pd = DOMC.nodes.get(ref), cd = DOMC.nodes.get(r);
+          if (pd) { pd.children = pd.children || []; pd.children.unshift(r); }
+          if (cd) cd.parent = ref;
+          callDom('prepend', ref, r);
+          if ((isDocRoot(ref) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+        }
+      }
+    },
+    insertBefore: (child, before) => {
+      const r = refOf(child);
+      if (r) {
+        unlinkChild(r);
+        const pd = DOMC.nodes.get(ref), cd = DOMC.nodes.get(r), bd = before ? DOMC.nodes.get(refOf(before)) : null;
+        if (pd) {
+          pd.children = pd.children || [];
+          const i = bd ? pd.children.indexOf(refOf(before)) : -1;
+          if (i >= 0) pd.children.splice(i, 0, r); else pd.children.push(r);
+        }
+        if (cd) cd.parent = ref;
+        callDom('insertBefore', ref, r, before ? refOf(before) : null);
+        if ((isDocRoot(ref) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+      }
+      return child;
+    },
+    removeChild: (child) => { const r = refOf(child); if (r) { unlinkChild(r); callDom('removeChild', ref, r); } return child; },
+    replaceChild: (n, o) => { const rn = refOf(n), ro = refOf(o); if (ro) unlinkChild(ro); if (rn) linkChild(ref, n); callDom('replaceChild', ref, rn, ro); return o; },
     insertAdjacentHTML: (pos, html) => { callDom('insertHtml', ref, String(pos), String(html)); },
     insertAdjacentText: (pos, txt) => { callDom('insertHtml', ref, String(pos), String(txt).replace(/[&<>]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m]))); },
     cloneNode: (deep) => { const r = DOMC.newRef(); callDom('cloneAs', ref, r, !!deep); return nodeProxy(r); },
@@ -3517,8 +3736,7 @@ function nodeProxy(ref) {
     setAttributeNS: (ns, n, v) => M.setAttribute(n, v),
     addEventListener: (type, fn) => {
       if (typeof fn !== 'function') return;
-      const key = ref + '|' + type + '|' + DOMC.listeners.size;
-      const id = (++DOMC.seqcounter) || (DOMC.seqcounter = 1);
+      const id = ++DOMC.seqcounter;
       DOMC.listeners.set(id, { type: String(type), fn, sel: ref });
       DOMC.chosen.set(fn, id);
       callDom('listen', ref, String(type)).then(real => {
@@ -3534,9 +3752,49 @@ function nodeProxy(ref) {
       DOMC.listeners.delete(id);
       DOMC.chosen.delete(fn);
     },
-    dispatchEvent: (ev) => { callDom('dispatch', ref, (ev && ev.type) || 'click', (ev && ev.detail)); return true; }
+    dispatchEvent: (ev) => { callDom('dispatch', ref, (ev && ev.type) || 'click', (ev && ev.detail)); return true; },
+
+    /* canvas：Worker 里没有 HTMLCanvasElement，但 OffscreenCanvas 是真的 2D/WebGL 实现。
+     * getContext 返回它，于是 `c.getContext('2d').fillRect(...)`、`getImageData` 都是真像素。
+     * 唯一差别是 toDataURL 只能异步（OffscreenCanvas 没有同步编码器）。 */
+    getContext(kind, opts) {
+      const d = D();
+      if (!d) return null;
+      if (!d.__canvas && typeof OffscreenCanvas !== 'undefined') {
+        const w = Number(d.attrs && d.attrs.width) || 300;
+        const h = Number(d.attrs && d.attrs.height) || 150;
+        d.__canvas = new OffscreenCanvas(w, h);
+      }
+      if (!d.__canvas) return null;
+      d.__canvas.width = Number((d.attrs && d.attrs.width) || d.__canvas.width) || 300;
+      d.__canvas.height = Number((d.attrs && d.attrs.height) || d.__canvas.height) || 150;
+      try { return d.__canvas.getContext(String(kind || '2d'), opts); } catch (e) { return null; }
+    },
+    toDataURL(type, q) {
+      const d = D();
+      if (d && d.__canvas && d.__canvas.convertToBlob) {
+        return d.__canvas.convertToBlob({ type: type || 'image/png', quality: q }).then(async (b) => {
+          const buf = new Uint8Array(await b.arrayBuffer());
+          let bin = '';
+          for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+          return 'data:' + (type || 'image/png') + ';base64,' + btoa(bin);
+        });
+      }
+      return Promise.resolve('');
+    },
+    toBlob(cb, type, q) {
+      const p = this.toDataURL(type, q);
+      p.then(u => {
+        const m = /^data:([^;]+);base64,(.*)$/.exec(u);
+        if (!m) return;
+        const bin = atob(m[2]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        if (typeof cb === 'function') cb(new Blob([arr], { type: m[1] }));
+      });
+      return p;
+    }
   };
-  DOMC.seqcounter = DOMC.seqcounter || 0;
 
   const handler = {
     get(t, k) {
@@ -3563,6 +3821,8 @@ function nodeProxy(ref) {
         case 'textContent':
         case 'innerText': return d ? (d.text || '') : '';
         case 'value': return d && d.value !== undefined ? d.value : '';
+        case 'width': return d && d.__canvas ? d.__canvas.width : (d && d.attrs ? Number(d.attrs.width) || 0 : 0);
+        case 'height': return d && d.__canvas ? d.__canvas.height : (d && d.attrs ? Number(d.attrs.height) || 0 : 0);
         case 'checked': return !!(d && d.checked);
         case 'selected': return !!(d && d.selected);
         case 'id': return d ? (d.id || '') : '';
@@ -3618,11 +3878,31 @@ function nodeProxy(ref) {
     },
     set(t, k, v) {
       if (typeof k === 'symbol') return true;
-      if (k === 'innerHTML') { callDom('setHtml', ref, String(v)); const d = D(); if (d) d.html = String(v); return true; }
+      if (k === 'innerHTML') { callDom('setHtml', ref, String(v)); const d = D(); if (d) { d.html = String(v); d.__dirtyHtml = 1; d.text = stripTags(v); } harvestIds(v); return true; }
       if (k === 'outerHTML') { callDom('setOuter', ref, String(v)); return true; }
-      if (k === 'textContent' || k === 'innerText') { callDom('setText', ref, String(v)); const d = D(); if (d) d.text = String(v); return true; }
-      if (k === 'className') { callDom('setProp', ref, 'className', String(v)); const d = D(); if (d) d.cls = String(v); return true; }
-      if (k === 'id') { callDom('setProp', ref, 'id', String(v)); const d = D(); if (d) d.id = String(v); return true; }
+      if (k === 'textContent' || k === 'innerText') {
+        callDom('setText', ref, String(v));
+        const d = D();
+        if (d) { d.text = String(v); d.__dirtyText = 1; }
+        return true;
+      }
+      if (k === 'className') { callDom('setProp', ref, 'className', String(v)); const d = D(); if (d) { d.cls = String(v); d.attrs = d.attrs || {}; d.attrs['class'] = String(v); } return true; }
+      if (k === 'id') {
+        callDom('setProp', ref, 'id', String(v));
+        const d = D();
+        if (d) {
+          d.id = String(v); d.attrs = d.attrs || {}; d.attrs.id = String(v);
+          if (d.__inDoc || isDocRoot(ref)) DOMC.byId.set(d.id, ref);
+        }
+        return true;
+      }
+      if ((k === 'width' || k === 'height') && D() && D().__canvas) {
+        const d0 = D();
+        d0.attrs = d0.attrs || {};
+        d0.attrs[k] = String(v);
+        if (k === 'width') d0.__canvas.width = Number(v) || 0; else d0.__canvas.height = Number(v) || 0;
+        return true;
+      }
       if (k === 'style') { callDom('setProp', ref, 'style', String(v)); return true; }
       if (k === 'value') { callDom('setProp', ref, 'value', v); const d = D(); if (d) d.value = v; return true; }
       if (k === 'checked') { callDom('setProp', ref, 'checked', !!v); const d = D(); if (d) d.checked = !!v; return true; }
@@ -3733,12 +4013,30 @@ async function prefetchDom(code) {
 function makeDocument() {
   const c = (op, ...args) => call('dom.op', op, args);
   const docRef = '\u0001doc';
+  const selectionShim = {
+    rangeCount: 0, type: 'None', isCollapsed: true, anchorNode: null, focusNode: null,
+    anchorOffset: 0, focusOffset: 0,
+    toString() { return ''; },
+    getRangeAt() { return document.createRange(); },
+    removeAllRanges() {}, addRange() {}, empty() {},
+    collapse() {}, collapseToStart() {}, collapseToEnd() {},
+    selectAllChildren() {}, removeRange() {}, extend() {}, setBaseAndExtent() {},
+    containsNode() { return false; }
+  };
 
   const elsFromSel = (sel) => {
     const d = DOMC.bySel.get(sel);
     if (d && d.ref) return nodeProxy(d.ref);
     const r = DOMC.newRef();
-    call('dom.op', 'queryAs', [r, String(sel)]).then(x => { if (x && x.ref) { DOMC.nodes.set(x.ref, x); DOMC.bySel.set(sel, x); } }).catch(() => {});
+    /* 先在表里占住这个 ref：同一个选择器第二次、第三次访问拿到的还是它，
+     * 于是 RPC 一回来，之前拿到的 proxy 立刻就能读到值（不用重新查）。 */
+    const placeholder = { ref: r, __pending: true };
+    DOMC.nodes.set(r, placeholder);
+    DOMC.bySel.set(sel, placeholder);
+    call('dom.op', 'queryAs', [r, String(sel)]).then(x => {
+      if (x && x.ref) { DOMC.nodes.set(x.ref, x); DOMC.bySel.set(sel, x); if (x.id) DOMC.byId.set(x.id, x.ref); }
+      else { DOMC.bySel.delete(sel); DOMC.nodes.delete(r); }
+    }).catch(() => {});
     return nodeProxy(r);
   };
 
@@ -3762,16 +4060,39 @@ function makeDocument() {
     get dir() { return 'ltr'; },
     hasFocus: () => true,
 
-    /* ---- 树根 ---- */
-    get documentElement() { return elsFromSel('html'); },
-    get body() { return elsFromSel('body'); },
-    get head() { return elsFromSel('head'); },
+    /* ---- 树根 ----
+     * 优先用快照里的那个 ref：这样 `document.body.appendChild(x)` 和
+     * `isDocRoot()` 认的是同一个节点，本地 id 索引才能正确判断「进没进文档」。
+     * （每次重新 query 会拿到新 ref，两个句柄指向同一个真节点，但本地树会把
+     *  它们当成两个爸爸。） */
+    get documentElement() {
+      const h = DOMC.root && DOMC.root.html;
+      if (h && h.ref) { if (!DOMC.nodes.has(h.ref)) DOMC.nodes.set(h.ref, h); return nodeProxy(h.ref); }
+      return elsFromSel('html');
+    },
+    get body() {
+      const b = DOMC.root && DOMC.root.body;
+      if (b && b.ref) { if (!DOMC.nodes.has(b.ref)) DOMC.nodes.set(b.ref, b); return nodeProxy(b.ref); }
+      return elsFromSel('body');
+    },
+    get head() {
+      const h = DOMC.root && DOMC.root.head;
+      if (h && h.ref) { if (!DOMC.nodes.has(h.ref)) DOMC.nodes.set(h.ref, h); return nodeProxy(h.ref); }
+      return elsFromSel('head');
+    },
     get activeElement() { return DOMC.root && DOMC.root.active ? nodeProxy(DOMC.root.active.ref) : elsFromSel('body'); },
     get scrollingElement() { return elsFromSel('html'); },
     get children() { const h = DOMC.root && (DOMC.root.html || DOMC.root.doc); return h ? [nodeProxy(h.ref)] : []; },
 
     /* ---- 查询 ---- */
-    querySelector: (sel) => { try { return elsFromSel(String(sel)); } catch (e) { throw new Error('querySelector: ' + sel + ' 不是有效选择器'); } },
+    querySelector: (sel) => {
+      try {
+        const q = String(sel).trim();
+        const m = /^#([\w\u00a0-\uffff-]+)$/.exec(q);
+        if (m) { const r = localById(m[1]); if (r) return nodeProxy(r); }
+        return elsFromSel(q);
+      } catch (e) { throw new Error('querySelector: ' + sel + ' 不是有效选择器'); }
+    },
     querySelectorAll: (sel) => {
       const key = String(sel);
       const cached = DOMC.lists.get(key);
@@ -3789,29 +4110,61 @@ function makeDocument() {
       arr.item = (i) => arr[i] || null;
       return arr;
     },
-    getElementById: (id) => elsFromSel('#' + String(id).replace(/[^\w\u00a0-\uffff-]/g, '\\$&')),
+    getElementById: (id) => {
+      /* 先查本地索引：刚 append 的元素、刚 setHtml 扫到的 id 都在里面，
+       * 这一步是同步的，原生什么时序这里就是什么时序。 */
+      const r = localById(id);
+      if (r) return nodeProxy(r);
+      return elsFromSel('#' + String(id).replace(/[^\w\u00a0-\uffff-]/g, '\\$&'));
+    },
     getElementsByClassName: (cls) => document.querySelectorAll('.' + String(cls).trim().split(/\s+/).join('.')),
     getElementsByTagName: (tag) => document.querySelectorAll(String(tag) === '*' ? '*' : String(tag)),
     getElementsByName: (n) => document.querySelectorAll('[name="' + String(n).replace(/"/g, '\\"') + '"]'),
+
+    /* 老式集合：原生返回 HTMLCollection（可迭代、有 length / item / namedItem）。
+     * 这里返回 querySelectorAll 的数组，可迭代、有 length，够脚本用。 */
+    get forms() { return document.querySelectorAll('form'); },
+    get images() { return document.querySelectorAll('img'); },
+    get links() { return document.querySelectorAll('a[href],area[href]'); },
+    get scripts() { return document.querySelectorAll('script'); },
+    get embeds() { return document.querySelectorAll('embed,object'); },
+    get styleSheets() { return []; },
+    get fonts() { return { ready: Promise.resolve(), check() { return true; }, load() { return Promise.resolve([]); } }; },
+    get timeline() { return { currentTime: (typeof performance !== 'undefined' ? performance.now() : Date.now()) }; },
+    get currentScript() { return null; },
+    get doctype() { return { name: 'html' }; },
     elementFromPoint: (x, y) => { const r = DOMC.newRef(); call('dom.op', 'fromPoint', [r, x, y]).catch(() => {}); return nodeProxy(r); },
 
     /* ---- 创建 ---- */
     createElement: (tag, opts) => {
       const r = DOMC.newRef();
+      const name = String(tag).toLowerCase();
       let props = null, html = null;
       if (typeof opts === 'string') html = opts;
       else if (opts && typeof opts === 'object') props = opts;
-      call('dom.op', 'createAs', [r, String(tag), props, html]).catch(() => {});
+      /* 先建本地影子：`const d = document.createElement('div'); d.id='x'` 之后
+       * 立刻 `d.id` / `d.getAttribute('id')` 就是 'x'，不用等主线程。 */
+      const d = localNode(r, name);
+      if (name === 'canvas' && typeof OffscreenCanvas !== 'undefined') {
+        d.__canvas = new OffscreenCanvas(300, 150);
+      }
+      if (props) applyLocalProps(d, props);
+      if (html != null) { d.html = String(html); d.__dirtyHtml = 1; d.text = stripTags(html); harvestIds(html); }
+      call('dom.op', 'createAs', [r, name, props, html]).then(x => { if (x) mergeDesc(r, x); }).catch(() => {});
       return nodeProxy(r);
     },
     createElementNS: (ns, tag) => document.createElement(String(tag).replace(/^.*:/, '')),
     createTextNode: (t) => {
       const r = DOMC.newRef();
-      call('dom.op', 'createTextAs', [r, String(t == null ? '' : t)]).catch(() => {});
+      const d = localNode(r, '#text');
+      d.text = String(t == null ? '' : t);
+      d.__dirtyText = 1;
+      call('dom.op', 'createTextAs', [r, d.text]).catch(() => {});
       return nodeProxy(r);
     },
     createDocumentFragment: () => {
       const r = DOMC.newRef();
+      localNode(r, '#fragment');
       call('dom.op', 'createFragmentAs', [r]).catch(() => {});
       return nodeProxy(r);
     },
@@ -3830,6 +4183,39 @@ function makeDocument() {
     },
     open() { call('dom.op', 'docOpen', []).then(() => DOMC.clear()).catch(() => {}); return this; },
     close() { call('dom.op', 'docClose', []).catch(() => {}); },
+
+    /* ---- 选区 ----
+     * Worker 里没有真选区（选区属于渲染进程）。这里给一个同形状的对象：
+     * toString() 返回空串，rangeCount=0。要读真实选区用 page.selection()。 */
+    getSelection() { return selectionShim; },
+    createRange() {
+      const body = elsFromSel('body');
+      return {
+        startContainer: body, endContainer: body, startOffset: 0, endOffset: 0,
+        collapsed: true, commonAncestorContainer: body,
+        setStart() {}, setEnd() {}, setStartBefore() {}, setEndAfter() {},
+        selectNode() {}, selectNodeContents() {}, collapse() {}, detach() {},
+        cloneContents() { return document.createDocumentFragment(); },
+        extractContents() { return document.createDocumentFragment(); },
+        insertNode() {}, deleteContents() {},
+        getBoundingClientRect() { return { x:0, y:0, width:0, height:0, top:0, left:0, right:0, bottom:0, toJSON(){ return this; } }; },
+        getClientRects() { return []; },
+        toString() { return ''; }
+      };
+    },
+    execCommand() { return false; },
+    queryCommandSupported() { return false; },
+    queryCommandState() { return false; },
+
+    /* ---- Document 也是 Node：原生可以 appendChild 到 document。
+     * 这里落到 body 上（document 的直接子节点只能是 html，硬塞会抛错）。 */
+    appendChild(n) { if (document.body) document.body.appendChild(n); return n; },
+    insertBefore(n, b) { if (document.body) document.body.insertBefore(n, b); return n; },
+    removeChild(n) { if (document.body) document.body.removeChild(n); return n; },
+    replaceChild(n, o) { if (document.body) document.body.replaceChild(n, o); return o; },
+    contains(n) { const r = refOf(n); if (!r) return false; const d = DOMC.nodes.get(r); return !!(d && (d.__inDoc || isDocRoot(r))); },
+    cloneNode() { return document.createElement('html'); },
+    hasChildNodes() { return !!(document.documentElement); },
 
     /* ---- 事件 ---- */
     addEventListener: (type, fn) => { if (typeof fn === 'function') addWorkerListener(docRef, String(type), fn); },
@@ -4032,6 +4418,10 @@ function installDomProxy(call_) {
     scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return nat('scrollTo', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     scrollBy(dx, dy) { const n = typeof dx === 'object' && dx ? dx : { left: dx, top: dy }; return nat('scrollBy', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     getComputedStyle, matchMedia,
+    getSelection: () => document.getSelection(),
+    createRange: () => document.createRange(),
+    scrollIntoView: () => {},
+    get scrollbars() { return { visible: false }; },
     /* ---- 原生 API：一律转回主线程调真的，不在 Worker 里另造一个 ----
      *
      * 以前 alert 变成一条 toast、confirm 变成自绘对话框、open 变成内部窗口，
@@ -4086,7 +4476,8 @@ async function bootShell(init) {
     globalThis.window = globalThis;
     const KEYS = ['document','localStorage','page','location','history',
       'alert','confirm','prompt','print','open','close','focus','blur','stop',
-      'getComputedStyle','matchMedia',
+      'getComputedStyle','matchMedia','getSelection',
+      'createRange','scrollIntoView',
       'innerWidth','innerHeight','outerWidth','outerHeight','devicePixelRatio',
       'scrollX','scrollY','pageXOffset','pageYOffset','scrollTo','scrollBy','screen',
       'requestAnimationFrame','cancelAnimationFrame',
@@ -4105,17 +4496,60 @@ async function bootShell(init) {
     globalThis.window = globalThis;
     globalThis.page = null;
   }
+  /* console 不是一个「打印函数集合」，它有状态：计时器、计数器、缩进。
+   * 以前 time/timeEnd/assert 是空函数，脚本里 console.time('x') 之后什么都看不到。 */
+  const conTimers = new Map();
+  const conCounts = new Map();
+  let conIndent = 0;
+  const conPad = () => '  '.repeat(Math.max(0, conIndent));
   globalThis.console = {
-    log: (...a) => out(fmtArgs(a) + '\r\n'),
-    info: (...a) => out(ANSI.blue + fmtArgs(a) + ANSI.reset + '\r\n'),
-    warn: (...a) => out(ANSI.yellow + fmtArgs(a) + ANSI.reset + '\r\n'),
-    error: (...a) => out(ANSI.red + fmtArgs(a) + ANSI.reset + '\r\n'),
-    debug: (...a) => out(ANSI.gray + fmtArgs(a) + ANSI.reset + '\r\n'),
-    dir: (o) => out(inspect(o, 1) + '\r\n'),
-    table: (o) => out(inspect(o, 1) + '\r\n'),
+    log: (...a) => out(conPad() + fmtArgs(a) + '\r\n'),
+    info: (...a) => out(ANSI.blue + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    warn: (...a) => out(ANSI.yellow + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    error: (...a) => out(ANSI.red + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    debug: (...a) => out(ANSI.gray + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    dir: (o) => out(conPad() + inspect(o, 1) + '\r\n'),
+    dirxml: (o) => out(conPad() + inspect(o, 1) + '\r\n'),
+    table: (o) => {
+      /* 简易表格：数组套对象 → 列对齐；其它退回 inspect */
+      try {
+        if (!Array.isArray(o) || !o.length || typeof o[0] !== 'object') { out(conPad() + inspect(o, 1) + '\r\n'); return; }
+        const cols = [...new Set(o.flatMap(x => Object.keys(x || {})))].slice(0, 12);
+        if (!cols.length) { out(conPad() + inspect(o, 1) + '\r\n'); return; }
+        const w = cols.map(c => Math.max(c.length, ...o.map(x => String(x && x[c] != null ? x[c] : '').length)));
+        const line = (cells) => conPad() + '│ ' + cells.map((v, i) => String(v).padEnd(w[i])).join(' │ ') + ' │';
+        out(line(cols) + '\r\n');
+        out(conPad() + '├' + w.map(n => '─'.repeat(n + 2)).join('┼') + '┤\r\n');
+        for (const row of o) out(line(cols.map(c => row && row[c] != null ? row[c] : '')) + '\r\n');
+      } catch (e) { out(conPad() + inspect(o, 1) + '\r\n'); }
+    },
     clear: () => out('\x1b[2J\x1b[H'),
-    trace: (...a) => out(ANSI.gray + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
-    time: () => {}, timeEnd: () => {}, assert: () => {}
+    trace: (...a) => out(ANSI.gray + conPad() + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
+    time: (label) => { conTimers.set(String(label == null ? 'default' : label), performance.now()); },
+    timeLog: (label, ...a) => {
+      const k = String(label == null ? 'default' : label);
+      const t = conTimers.get(k);
+      if (t == null) { out(ANSI.yellow + 'console.timeLog: 计时器 ' + k + ' 不存在' + ANSI.reset + '\r\n'); return; }
+      out(ANSI.gray + k + ': ' + (performance.now() - t).toFixed(3) + ' ms' + ANSI.reset + (a.length ? ' ' + fmtArgs(a) : '') + '\r\n');
+    },
+    timeEnd: (label) => {
+      const k = String(label == null ? 'default' : label);
+      const t = conTimers.get(k);
+      if (t == null) { out(ANSI.yellow + 'console.timeEnd: 计时器 ' + k + ' 不存在' + ANSI.reset + '\r\n'); return; }
+      conTimers.delete(k);
+      out(ANSI.gray + k + ': ' + (performance.now() - t).toFixed(3) + ' ms' + ANSI.reset + '\r\n');
+    },
+    count: (label) => {
+      const k = String(label == null ? 'default' : label);
+      const n = (conCounts.get(k) || 0) + 1;
+      conCounts.set(k, n);
+      out(conPad() + k + ': ' + n + '\r\n');
+    },
+    countReset: (label) => { conCounts.delete(String(label == null ? 'default' : label)); },
+    group: (...a) => { if (a.length) out(conPad() + fmtArgs(a) + '\r\n'); conIndent++; },
+    groupCollapsed: (...a) => { if (a.length) out(conPad() + fmtArgs(a) + '\r\n'); conIndent++; },
+    groupEnd: () => { conIndent = Math.max(0, conIndent - 1); },
+    assert: (cond, ...a) => { if (!cond) out(ANSI.red + 'Assertion failed' + (a.length ? ': ' + fmtArgs(a) : '') + ANSI.reset + '\r\n'); }
   };
   /* print 不是「往终端打印」的别名：浏览器里 window.print() 是打印对话框。
    * 以前这里把它改成了终端输出，属于抢注。要往终端输出请用 console.log。 */
@@ -4787,19 +5221,217 @@ function inspect(v, depth, seen, plain) {
 const HTScript = (() => {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-  /* REPL 里声明的变量要能被下一行用到。`new AsyncFunction` 每次都是新函数作用域，
-   * 所以把「整行就是一条声明」的 const/let/var/function 提升到 globalThis。
-   * 只处理单行、单声明的简单情形；复杂解构不碰——宁可它不持久，也不改写语义。 */
-  function hoist(code) {
-    return code.split('\n').map(line => {
-      let m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/);
-      if (m && !/[,]/.test(m[4].replace(/[,({\[]/g, ''))) {
-        return m[1] + 'globalThis.' + m[3] + ' = ' + m[4] + ';';
+  /* ================================================================
+   * 顶层语句扫描
+   *
+   * REPL 收到的常常是「一整段粘贴」，不是一行。以前按 '\n' 拆，
+   * `const a = {` / `  b: 1` / `}` 会被拆成三条残句，第一条直接语法错误。
+   * 这里按「括号深度 0 的 ; 或换行」切，字符串 / 模板串 / 注释 / 正则
+   * 里的分隔符不算数。
+   * ================================================================ */
+  const REGEX_PREV = /[=(:,;[!&|?{}+\-*%<>~^]$/;
+  const REGEX_WORD = /\b(return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+
+  function topSplit(src) {
+    const out = [];
+    let depth = 0, i = 0, start = 0;
+    let q = null, inLine = false, inBlock = false;
+
+    const push = (end) => {
+      const t = src.slice(start, end);
+      if (t.trim()) out.push(t);
+      start = end + 1;
+    };
+
+    for (; i < src.length; i++) {
+      const ch = src[i], nx = src[i + 1];
+
+      if (inLine) {
+        if (ch === '\n') { inLine = false; if (depth === 0) push(i); }
+        continue;
       }
-      let f = line.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
-      if (f) return f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + line.slice(f[0].length);
-      return line;
-    }).join('\n');
+      if (inBlock) {
+        if (ch === '*' && nx === '/') { inBlock = false; i++; }
+        continue;
+      }
+      if (q) {
+        if (ch === '\\') { i++; continue; }
+        if (ch === q) q = null;
+        continue;
+      }
+      if (ch === '/' && nx === '/') { inLine = true; i++; continue; }
+      if (ch === '/' && nx === '*') { inBlock = true; i++; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+
+      /* 正则字面量：`/` 前面是运算符 / 行首 / return 之类才当正则。
+       * 不追求 100% 精确——只要正则里的 `;` `,` 不被当成分隔符就够了。 */
+      if (ch === '/' && depth >= 0) {
+        const prev = src.slice(Math.max(0, i - 12), i);
+        if (REGEX_PREV.test(prev.trimEnd()) || REGEX_WORD.test(prev.trimEnd()) || !prev.trim()) {
+          let j = i + 1, cls = false;
+          for (; j < src.length; j++) {
+            const c2 = src[j];
+            if (c2 === '\\') { j++; continue; }
+            if (c2 === '[') cls = true;
+            else if (c2 === ']') cls = false;
+            else if (c2 === '/' && !cls) break;
+            else if (c2 === '\n') break;
+          }
+          if (j < src.length && src[j] === '/') { i = j; continue; }
+        }
+      }
+
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && (ch === ';' || ch === '\n')) push(i);
+    }
+    if (start < src.length) { const t = src.slice(start); if (t.trim()) out.push(t); }
+    return out;
+  }
+
+  /* 按顶层分隔符切（用于 `const a = 1, b = 2` 和解构模式） */
+  function splitTop(text, sep) {
+    const out = [];
+    let depth = 0, i = 0, start = 0, q = null;
+    for (; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && ch === sep) { out.push(text.slice(start, i)); start = i + 1; }
+    }
+    out.push(text.slice(start));
+    return out;
+  }
+
+  /* 找顶层 `=`（跳过 => == === >= <= != 以及属性默认值之外的情况） */
+  function findTopAssign(text) {
+    let depth = 0, q = null;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], nx = text[i + 1], pv = text[i - 1];
+      if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && ch === '=' && nx !== '=' && nx !== '>' && pv !== '=' && pv !== '!' && pv !== '<' && pv !== '>') return i;
+    }
+    return -1;
+  }
+
+  /* 从一个绑定模式里取出所有「会被真正声明」的标识符。
+   *   x              -> x
+   *   {a, b: c}      -> a, c
+   *   {a: {b}, ...r} -> b, r
+   *   [x, , y = 1]   -> x, y
+   * 只取第一层 + 递归解构，不处理重命名以外的花活。 */
+  function bindingNames(pat) {
+    pat = String(pat == null ? '' : pat).trim();
+    const eq = findTopAssign(pat);
+    if (eq >= 0) pat = pat.slice(0, eq).trim();
+    if (!pat) return [];
+    if (/^[A-Za-z_$][\w$]*$/.test(pat)) return [pat];
+    if (pat[0] === '{' && pat[pat.length - 1] === '}') {
+      const inner = pat.slice(1, -1).trim();
+      if (!inner) return [];
+      const names = [];
+      for (let part of splitTop(inner, ',')) {
+        part = part.trim();
+        if (!part) continue;
+        if (part.startsWith('...')) { names.push(...bindingNames(part.slice(3))); continue; }
+        /* 顶层冒号：左边是键，右边是值模式 */
+        let depth = 0, q = null, colon = -1;
+        for (let i = 0; i < part.length; i++) {
+          const ch = part[i];
+          if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+          if (ch === '"' || ch === "'") { q = ch; continue; }
+          if (ch === '(' || ch === '[' || ch === '{') depth++;
+          else if (ch === ')' || ch === ']' || ch === '}') depth--;
+          else if (ch === ':' && depth === 0) { colon = i; break; }
+        }
+        if (colon >= 0) names.push(...bindingNames(part.slice(colon + 1)));
+        else names.push(...bindingNames(part));
+      }
+      return names;
+    }
+    if (pat[0] === '[' && pat[pat.length - 1] === ']') {
+      const inner = pat.slice(1, -1);
+      const names = [];
+      for (const part of splitTop(inner, ',')) {
+        const t = part.trim();
+        if (!t) continue;
+        names.push(...bindingNames(t.startsWith('...') ? t.slice(3) : t));
+      }
+      return names;
+    }
+    return [];
+  }
+
+  /* 把声明改写成「赋值到 globalThis」：
+   *   const x = 1            -> globalThis.x = (1)
+   *   const {a, b: c} = o    -> (() => { const {a, b: c} = (o); globalThis.a = a; globalThis.c = c; })()
+   *   class A {}             -> globalThis.A = class A {}
+   *   const a = 1, b = 2     -> globalThis.a = (1); globalThis.b = (2);
+   *
+   * 为什么不直接把 `const` 换成 `globalThis.`：解构和多声明没法逐字替换，
+   * 而且 `const {a: x}` 里的 x 本来就该是新名字。 */
+  function rewriteDecl(stmt) {
+    const m = stmt.match(/^(\s*)(const|let|var)\s+/);
+    if (!m) return stmt;
+    const indent = m[1], kw = m[2];
+    const rest = stmt.slice(m[0].length).replace(/;\s*$/, '');
+    const parts = splitTop(rest, ',');
+    const outs = [];
+
+    for (const part of parts) {
+      const raw = part.trim();
+      if (!raw) continue;
+      const eq = findTopAssign(raw);
+      const pattern = (eq >= 0 ? raw.slice(0, eq) : raw).trim();
+      const expr = eq >= 0 ? raw.slice(eq + 1).trim() : null;
+      if (!pattern) continue;
+
+      if (/^[A-Za-z_$][\w$]*$/.test(pattern)) {
+        outs.push('globalThis.' + pattern + ' = ' + (expr === null ? 'undefined' : '(' + expr + ')') + ';');
+        continue;
+      }
+      const names = bindingNames(pattern);
+      if (!names.length) return stmt;         // 认不出来就整段原样执行，别乱改
+      if (expr === null) return stmt;         // 解构必须带初始化
+      outs.push('(() => { ' + kw + ' ' + pattern + ' = (' + expr + '); ' +
+        names.map(n => 'globalThis.' + n + ' = ' + n + ';').join(' ') + ' })();');
+    }
+    if (!outs.length) return stmt;
+    return indent + outs.join(' ');
+  }
+
+  /* 单条语句的改写。返回 { code, decl } */
+  function rewriteStmt(stmt) {
+    const t = stmt.trim();
+    if (/^(const|let|var)\s+/.test(t)) {
+      const code = rewriteDecl(stmt);
+      return { code, decl: code !== stmt || true };
+    }
+    /* class 声明：类名是「声明」，但类体是表达式，包一层赋值即可 */
+    const c = stmt.match(/^(\s*)class\s+([A-Za-z_$][\w$]*)/);
+    if (c) return { code: c[1] + 'globalThis.' + c[2] + ' = class ' + c[2] + stmt.slice(c[0].length), decl: true };
+    const f = stmt.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
+    if (f) return { code: f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + stmt.slice(f[0].length), decl: true };
+    return { code: stmt, decl: false };
+  }
+
+  /* 兼容旧接口：只返回改写后的代码 */
+  function hoist(code) { return hoistEx(code).code; }
+
+  function hoistEx(code) {
+    const stmts = topSplit(String(code));
+    let allDecl = stmts.length > 0;
+    const out = stmts.map(st => {
+      const r = rewriteStmt(st);
+      if (!r.decl) allDecl = false;
+      return r.code;
+    });
+    return { code: out.join('\n'), allDecl };
   }
 
   /* 把最后一条「表达式语句」改成 return。
@@ -4827,6 +5459,12 @@ const HTScript = (() => {
     return null;
   }
 
+  /* 编译时带上 sourceURL：报错堆栈里就能看到 HTRepl.js:3:7，
+   * 而不是 blob:null/4b39…:2796:22 这种谁也看不懂的东西。 */
+  function compile(body) {
+    return new AsyncFunction(body + '\n//# sourceURL=HTRepl.js');
+  }
+
   /* 唯一的求值入口。返回「最后一个值」，语义与浏览器控制台一致：
    *   - 先当表达式求值（支持顶层 await）；
    *   - 语法不成立再当语句块执行，并把最后一条表达式作为结果；
@@ -4838,15 +5476,17 @@ const HTScript = (() => {
     const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(src);
     if (!isDecl) {
       try {
-        return await new AsyncFunction('return (' + src + '\n)')();
+        return await compile('return (' + src + '\n)')();
       } catch (e) {
         if (!(e instanceof SyntaxError)) throw e;
       }
     }
 
-    const hoisted = hoist(src);
-    const withTail = tailReturn(hoisted);
-    return await new AsyncFunction(withTail || ('"use strict";\n' + hoisted))();
+    const hx = hoistEx(src);
+    /* 整段都是声明：不回显任何值（`const a = 1` 在浏览器控制台里就是 undefined） */
+    if (hx.allDecl) return await compile('"use strict";' + hx.code)();
+    const withTail = tailReturn(hx.code);
+    return await compile(withTail || ('"use strict";' + hx.code))();
   }
 
   function describe(v) { return inspect(v, 0, null, true); }
@@ -6589,19 +7229,217 @@ function inspect(v, depth, seen, plain) {
 const HTScript = (() => {
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
-  /* REPL 里声明的变量要能被下一行用到。`new AsyncFunction` 每次都是新函数作用域，
-   * 所以把「整行就是一条声明」的 const/let/var/function 提升到 globalThis。
-   * 只处理单行、单声明的简单情形；复杂解构不碰——宁可它不持久，也不改写语义。 */
-  function hoist(code) {
-    return code.split('\n').map(line => {
-      let m = line.match(/^(\s*)(const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$/);
-      if (m && !/[,]/.test(m[4].replace(/[,({\[]/g, ''))) {
-        return m[1] + 'globalThis.' + m[3] + ' = ' + m[4] + ';';
+  /* ================================================================
+   * 顶层语句扫描
+   *
+   * REPL 收到的常常是「一整段粘贴」，不是一行。以前按 '\n' 拆，
+   * `const a = {` / `  b: 1` / `}` 会被拆成三条残句，第一条直接语法错误。
+   * 这里按「括号深度 0 的 ; 或换行」切，字符串 / 模板串 / 注释 / 正则
+   * 里的分隔符不算数。
+   * ================================================================ */
+  const REGEX_PREV = /[=(:,;[!&|?{}+\-*%<>~^]$/;
+  const REGEX_WORD = /\b(return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/;
+
+  function topSplit(src) {
+    const out = [];
+    let depth = 0, i = 0, start = 0;
+    let q = null, inLine = false, inBlock = false;
+
+    const push = (end) => {
+      const t = src.slice(start, end);
+      if (t.trim()) out.push(t);
+      start = end + 1;
+    };
+
+    for (; i < src.length; i++) {
+      const ch = src[i], nx = src[i + 1];
+
+      if (inLine) {
+        if (ch === '\n') { inLine = false; if (depth === 0) push(i); }
+        continue;
       }
-      let f = line.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
-      if (f) return f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + line.slice(f[0].length);
-      return line;
-    }).join('\n');
+      if (inBlock) {
+        if (ch === '*' && nx === '/') { inBlock = false; i++; }
+        continue;
+      }
+      if (q) {
+        if (ch === '\\') { i++; continue; }
+        if (ch === q) q = null;
+        continue;
+      }
+      if (ch === '/' && nx === '/') { inLine = true; i++; continue; }
+      if (ch === '/' && nx === '*') { inBlock = true; i++; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+
+      /* 正则字面量：`/` 前面是运算符 / 行首 / return 之类才当正则。
+       * 不追求 100% 精确——只要正则里的 `;` `,` 不被当成分隔符就够了。 */
+      if (ch === '/' && depth >= 0) {
+        const prev = src.slice(Math.max(0, i - 12), i);
+        if (REGEX_PREV.test(prev.trimEnd()) || REGEX_WORD.test(prev.trimEnd()) || !prev.trim()) {
+          let j = i + 1, cls = false;
+          for (; j < src.length; j++) {
+            const c2 = src[j];
+            if (c2 === '\\') { j++; continue; }
+            if (c2 === '[') cls = true;
+            else if (c2 === ']') cls = false;
+            else if (c2 === '/' && !cls) break;
+            else if (c2 === '\n') break;
+          }
+          if (j < src.length && src[j] === '/') { i = j; continue; }
+        }
+      }
+
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && (ch === ';' || ch === '\n')) push(i);
+    }
+    if (start < src.length) { const t = src.slice(start); if (t.trim()) out.push(t); }
+    return out;
+  }
+
+  /* 按顶层分隔符切（用于 `const a = 1, b = 2` 和解构模式） */
+  function splitTop(text, sep) {
+    const out = [];
+    let depth = 0, i = 0, start = 0, q = null;
+    for (; i < text.length; i++) {
+      const ch = text[i];
+      if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && ch === sep) { out.push(text.slice(start, i)); start = i + 1; }
+    }
+    out.push(text.slice(start));
+    return out;
+  }
+
+  /* 找顶层 `=`（跳过 => == === >= <= != 以及属性默认值之外的情况） */
+  function findTopAssign(text) {
+    let depth = 0, q = null;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], nx = text[i + 1], pv = text[i - 1];
+      if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+      if (ch === '"' || ch === "'" || ch === '`') { q = ch; continue; }
+      if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+      if (ch === ')' || ch === ']' || ch === '}') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0 && ch === '=' && nx !== '=' && nx !== '>' && pv !== '=' && pv !== '!' && pv !== '<' && pv !== '>') return i;
+    }
+    return -1;
+  }
+
+  /* 从一个绑定模式里取出所有「会被真正声明」的标识符。
+   *   x              -> x
+   *   {a, b: c}      -> a, c
+   *   {a: {b}, ...r} -> b, r
+   *   [x, , y = 1]   -> x, y
+   * 只取第一层 + 递归解构，不处理重命名以外的花活。 */
+  function bindingNames(pat) {
+    pat = String(pat == null ? '' : pat).trim();
+    const eq = findTopAssign(pat);
+    if (eq >= 0) pat = pat.slice(0, eq).trim();
+    if (!pat) return [];
+    if (/^[A-Za-z_$][\w$]*$/.test(pat)) return [pat];
+    if (pat[0] === '{' && pat[pat.length - 1] === '}') {
+      const inner = pat.slice(1, -1).trim();
+      if (!inner) return [];
+      const names = [];
+      for (let part of splitTop(inner, ',')) {
+        part = part.trim();
+        if (!part) continue;
+        if (part.startsWith('...')) { names.push(...bindingNames(part.slice(3))); continue; }
+        /* 顶层冒号：左边是键，右边是值模式 */
+        let depth = 0, q = null, colon = -1;
+        for (let i = 0; i < part.length; i++) {
+          const ch = part[i];
+          if (q) { if (ch === '\\') i++; else if (ch === q) q = null; continue; }
+          if (ch === '"' || ch === "'") { q = ch; continue; }
+          if (ch === '(' || ch === '[' || ch === '{') depth++;
+          else if (ch === ')' || ch === ']' || ch === '}') depth--;
+          else if (ch === ':' && depth === 0) { colon = i; break; }
+        }
+        if (colon >= 0) names.push(...bindingNames(part.slice(colon + 1)));
+        else names.push(...bindingNames(part));
+      }
+      return names;
+    }
+    if (pat[0] === '[' && pat[pat.length - 1] === ']') {
+      const inner = pat.slice(1, -1);
+      const names = [];
+      for (const part of splitTop(inner, ',')) {
+        const t = part.trim();
+        if (!t) continue;
+        names.push(...bindingNames(t.startsWith('...') ? t.slice(3) : t));
+      }
+      return names;
+    }
+    return [];
+  }
+
+  /* 把声明改写成「赋值到 globalThis」：
+   *   const x = 1            -> globalThis.x = (1)
+   *   const {a, b: c} = o    -> (() => { const {a, b: c} = (o); globalThis.a = a; globalThis.c = c; })()
+   *   class A {}             -> globalThis.A = class A {}
+   *   const a = 1, b = 2     -> globalThis.a = (1); globalThis.b = (2);
+   *
+   * 为什么不直接把 `const` 换成 `globalThis.`：解构和多声明没法逐字替换，
+   * 而且 `const {a: x}` 里的 x 本来就该是新名字。 */
+  function rewriteDecl(stmt) {
+    const m = stmt.match(/^(\s*)(const|let|var)\s+/);
+    if (!m) return stmt;
+    const indent = m[1], kw = m[2];
+    const rest = stmt.slice(m[0].length).replace(/;\s*$/, '');
+    const parts = splitTop(rest, ',');
+    const outs = [];
+
+    for (const part of parts) {
+      const raw = part.trim();
+      if (!raw) continue;
+      const eq = findTopAssign(raw);
+      const pattern = (eq >= 0 ? raw.slice(0, eq) : raw).trim();
+      const expr = eq >= 0 ? raw.slice(eq + 1).trim() : null;
+      if (!pattern) continue;
+
+      if (/^[A-Za-z_$][\w$]*$/.test(pattern)) {
+        outs.push('globalThis.' + pattern + ' = ' + (expr === null ? 'undefined' : '(' + expr + ')') + ';');
+        continue;
+      }
+      const names = bindingNames(pattern);
+      if (!names.length) return stmt;         // 认不出来就整段原样执行，别乱改
+      if (expr === null) return stmt;         // 解构必须带初始化
+      outs.push('(() => { ' + kw + ' ' + pattern + ' = (' + expr + '); ' +
+        names.map(n => 'globalThis.' + n + ' = ' + n + ';').join(' ') + ' })();');
+    }
+    if (!outs.length) return stmt;
+    return indent + outs.join(' ');
+  }
+
+  /* 单条语句的改写。返回 { code, decl } */
+  function rewriteStmt(stmt) {
+    const t = stmt.trim();
+    if (/^(const|let|var)\s+/.test(t)) {
+      const code = rewriteDecl(stmt);
+      return { code, decl: code !== stmt || true };
+    }
+    /* class 声明：类名是「声明」，但类体是表达式，包一层赋值即可 */
+    const c = stmt.match(/^(\s*)class\s+([A-Za-z_$][\w$]*)/);
+    if (c) return { code: c[1] + 'globalThis.' + c[2] + ' = class ' + c[2] + stmt.slice(c[0].length), decl: true };
+    const f = stmt.match(/^(\s*)(async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/);
+    if (f) return { code: f[1] + 'globalThis.' + f[3] + ' = ' + (f[2] || '') + 'function ' + f[3] + '(' + stmt.slice(f[0].length), decl: true };
+    return { code: stmt, decl: false };
+  }
+
+  /* 兼容旧接口：只返回改写后的代码 */
+  function hoist(code) { return hoistEx(code).code; }
+
+  function hoistEx(code) {
+    const stmts = topSplit(String(code));
+    let allDecl = stmts.length > 0;
+    const out = stmts.map(st => {
+      const r = rewriteStmt(st);
+      if (!r.decl) allDecl = false;
+      return r.code;
+    });
+    return { code: out.join('\n'), allDecl };
   }
 
   /* 把最后一条「表达式语句」改成 return。
@@ -6629,6 +7467,12 @@ const HTScript = (() => {
     return null;
   }
 
+  /* 编译时带上 sourceURL：报错堆栈里就能看到 HTRepl.js:3:7，
+   * 而不是 blob:null/4b39…:2796:22 这种谁也看不懂的东西。 */
+  function compile(body) {
+    return new AsyncFunction(body + '\n//# sourceURL=HTRepl.js');
+  }
+
   /* 唯一的求值入口。返回「最后一个值」，语义与浏览器控制台一致：
    *   - 先当表达式求值（支持顶层 await）；
    *   - 语法不成立再当语句块执行，并把最后一条表达式作为结果；
@@ -6640,15 +7484,17 @@ const HTScript = (() => {
     const isDecl = /^\s*(?:const|let|var|function|async\s+function|class)\b/.test(src);
     if (!isDecl) {
       try {
-        return await new AsyncFunction('return (' + src + '\n)')();
+        return await compile('return (' + src + '\n)')();
       } catch (e) {
         if (!(e instanceof SyntaxError)) throw e;
       }
     }
 
-    const hoisted = hoist(src);
-    const withTail = tailReturn(hoisted);
-    return await new AsyncFunction(withTail || ('"use strict";\n' + hoisted))();
+    const hx = hoistEx(src);
+    /* 整段都是声明：不回显任何值（`const a = 1` 在浏览器控制台里就是 undefined） */
+    if (hx.allDecl) return await compile('"use strict";' + hx.code)();
+    const withTail = tailReturn(hx.code);
+    return await compile(withTail || ('"use strict";' + hx.code))();
   }
 
   function describe(v) { return inspect(v, 0, null, true); }
@@ -6663,7 +7509,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.28';
+const HT_VERSION = '0.0.1.29';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -7159,6 +8005,9 @@ spotfs 只有六个原子操作（其余命令都是它们的组合）：
 试试：
   > await ls('.bin')
   > await exec('.bin.hello')
+  > await exec('.bin.audit')      // 能力自检：25 项原生 JS / DOM / 加密
+  > open('.bin.html-particles')   // Canvas 粒子
+  > open('.bin.html-lisp')        // 页面里的 Lisp 解释器
   > cat('.home.readme')
   > hsb1()                然后   ls -la | head      或者   fastfetch
 
@@ -7183,6 +8032,91 @@ print('CPU      ', navigator.hardwareConcurrency, 'threads');
 print('内存     ', navigator.deviceMemory || '?', 'GB');
 print('存储用量 ', ((u.usage||0)/1048576).toFixed(2), 'MB /', ((u.quota||0)/1048576).toFixed(0), 'MB');
 print('cwd      ', await pwd());`
+  },
+  '.bin.expr': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"手写解释器：词法 + 递归下降 + 变量 + 函数", interpreter:'js' },
+    content:"\n/* .bin.expr —— 一个真的表达式语言：tokenizer + 递归下降 + 求值。\n * 支持 + - * / % ^、括号、一元负号、变量、赋值、函数调用。\n * 优先级：赋值 < 加减 < 乘除模 < 幂(右结合) < 一元 < 原子 */\nconst TOK = [];\nfunction lex(src) {\n  const out = [];\n  let i = 0;\n  while (i < src.length) {\n    const c = src[i];\n    if (/\\s/.test(c)) { i++; continue; }\n    if (/[0-9.]/.test(c)) {\n      let j = i;\n      while (j < src.length && /[0-9._]/.test(src[j])) j++;\n      out.push({ t: 'num', v: parseFloat(src.slice(i, j).replace(/_/g, '')) });\n      i = j; continue;\n    }\n    if (/[A-Za-z_\\u4e00-\\u9fa5]/.test(c)) {\n      let j = i;\n      while (j < src.length && /[A-Za-z0-9_\\u4e00-\\u9fa5]/.test(src[j])) j++;\n      out.push({ t: 'id', v: src.slice(i, j) });\n      i = j; continue;\n    }\n    if ('+-*/%^(),=;'.includes(c)) { out.push({ t: c }); i++; continue; }\n    throw new Error('无法识别的字符: ' + c);\n  }\n  out.push({ t: 'eof' });\n  return out;\n}\n\nconst FUNCS = {\n  sin: Math.sin, cos: Math.cos, tan: Math.tan, sqrt: Math.sqrt, abs: Math.abs,\n  log: Math.log, exp: Math.exp, floor: Math.floor, ceil: Math.ceil,\n  max: Math.max, min: Math.min, pow: Math.pow,\n  round: Math.round, sign: Math.sign\n};\nconst CONSTS = { pi: Math.PI, e: Math.E, tau: Math.PI * 2 };\n\nfunction evaluate(src, vars) {\n  const ts = lex(src);\n  let p = 0;\n  const peek = () => ts[p];\n  const eat = (t) => { if (ts[p].t !== t) throw new Error('期望 ' + t + '，得到 ' + ts[p].t); return ts[p++]; };\n\n  function primary() {\n    const tk = peek();\n    if (tk.t === 'num') { p++; return tk.v; }\n    if (tk.t === 'id') {\n      p++;\n      const name = tk.v;\n      if (peek().t === '(') {\n        p++;\n        const args = [];\n        if (peek().t !== ')') {\n          args.push(expr());\n          while (peek().t === ',') { p++; args.push(expr()); }\n        }\n        eat(')');\n        if (!FUNCS[name]) throw new Error('没有函数 ' + name);\n        return FUNCS[name](...args);\n      }\n      if (name in vars) return vars[name];\n      if (name in CONSTS) return CONSTS[name];\n      throw new Error('未定义变量 ' + name);\n    }\n    if (tk.t === '(') { p++; const v = expr(); eat(')'); return v; }\n    if (tk.t === '-') { p++; return -unary(); }\n    if (tk.t === '+') { p++; return unary(); }\n    throw new Error('意外的记号 ' + tk.t);\n  }\n  function power() {\n    const base = primary();\n    if (peek().t === '^') { p++; return Math.pow(base, power()); }   // 右结合\n    return base;\n  }\n  function unary() { return power(); }\n  function term() {\n    let v = unary();\n    while (peek().t === '*' || peek().t === '/' || peek().t === '%') {\n      const op = ts[p++].t;\n      const r = unary();\n      v = op === '*' ? v * r : op === '/' ? v / r : v % r;\n    }\n    return v;\n  }\n  function expr() {\n    let v = term();\n    while (peek().t === '+' || peek().t === '-') {\n      const op = ts[p++].t;\n      const r = term();\n      v = op === '+' ? v + r : v - r;\n    }\n    return v;\n  }\n  function statement() {\n    /* 赋值：ident = expr */\n    if (peek().t === 'id' && ts[p + 1] && ts[p + 1].t === '=') {\n      const name = ts[p].v;\n      p += 2;\n      const v = expr();\n      vars[name] = v;\n      return v;\n    }\n    return expr();\n  }\n\n  let last;\n  while (peek().t !== 'eof') {\n    last = statement();\n    if (peek().t === ';') p++;\n    else if (peek().t !== 'eof') throw new Error('多余的内容: ' + peek().t);\n  }\n  return last;\n}\n\nconst vars = {};\nconst cases = [\n  '2 + 3 * 4',\n  '(1 + 2) ^ 3',\n  '2 ^ 3 ^ 2',\n  'sin(pi / 2)',\n  'x = 5; x ^ 2 + 1',\n  'y = max(3, 7) * 2 - sqrt(81)',\n  '1_000_000 / 7',\n  'abs(-3) + round(2.6)',\n  '-2 ^ 2',\n  '0.1 + 0.2',\n  'z = x * y; z / 2'\n];\n\nconsole.log('源码'.padEnd(24) + '结果');\nconsole.log('─'.repeat(46));\nfor (const c of cases) {\n  try {\n    const v = evaluate(c, vars);\n    console.log(c.padEnd(24) + (Number.isInteger(v) ? v : v.toFixed(10).replace(/0+$/, '').replace(/\\.$/, '')));\n  } catch (e) {\n    console.log(c.padEnd(24) + '错误: ' + e.message);\n  }\n}\nconsole.log('\\n最终变量表：' + JSON.stringify(vars));\nreturn Object.keys(vars).length;\n"
+  },
+  '.bin.crypto': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"WebCrypto：SHA / HMAC / PBKDF2 / AES-GCM / 随机", interpreter:'js' },
+    content:"\n/* .bin.crypto —— 全部走 crypto.subtle（浏览器原生实现），不是 JS 自己搓的。 */\nconst enc = new TextEncoder();\nconst hex = (buf) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');\nconst b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));\n\nconsole.log('SHA-256(\"abc\") = ' + hex(await crypto.subtle.digest('SHA-256', enc.encode('abc'))));\nconsole.log('SHA-512(\"abc\") = ' + hex(await crypto.subtle.digest('SHA-512', enc.encode('abc'))).slice(0, 32) + '…');\n\nconst hk = await crypto.subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign', 'verify']);\nconst sig = await crypto.subtle.sign('HMAC', hk, enc.encode('message'));\nconsole.log('HMAC-SHA256    = ' + hex(sig).slice(0, 32) + '…');\nconsole.log('HMAC 验证      = ' + await crypto.subtle.verify('HMAC', hk, sig, enc.encode('message')));\n\nlet t0 = performance.now();\nconst pk = await crypto.subtle.importKey('raw', enc.encode('password'), 'PBKDF2', false, ['deriveBits']);\nconst bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc.encode('salt'), iterations: 100000, hash: 'SHA-256' }, pk, 256);\nconsole.log('PBKDF2 10 万次 = ' + hex(bits).slice(0, 32) + '… (' + (performance.now() - t0).toFixed(0) + 'ms)');\n\nconst key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);\nconst iv = crypto.getRandomValues(new Uint8Array(12));\nt0 = performance.now();\nconst ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode('机密：汉字编码测试'));\nconst pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);\nconsole.log('AES-GCM 密文   = ' + b64(ct).slice(0, 40) + '… (' + (performance.now() - t0).toFixed(1) + 'ms)');\nconsole.log('AES-GCM 解密   = ' + new TextDecoder().decode(pt));\n\nconst raw = crypto.getRandomValues(new Uint8Array(16));\nconsole.log('随机 16 字节   = ' + hex(raw));\nconsole.log('randomUUID     = ' + crypto.randomUUID());\nreturn 'ok';\n"
+  },
+  '.bin.async': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"异步编排：并发池 / allSettled / 超时 / 异步生成器", interpreter:'js' },
+    content:"\n/* .bin.async —— 事件循环是真的，所以这些才有意义。 */\nconst sleep2 = (ms) => new Promise(r => setTimeout(r, ms));\nconst t0 = performance.now();\nconst ts = () => (performance.now() - t0).toFixed(0).padStart(4) + 'ms';\n\n/* 1. 并发池：20 个任务，最多同时 3 个 */\nconst tasks = Array.from({ length: 20 }, (_, i) => ({\n  id: i,\n  cost: 20 + ((i * 37) % 90)\n}));\nconst results = [];\nlet running = 0, peak = 0;\nasync function workerPool(items, limit, fn) {\n  const queue = items.slice();\n  const workers = Array.from({ length: limit }, async () => {\n    while (queue.length) {\n      const item = queue.shift();\n      running++; peak = Math.max(peak, running);\n      results.push(await fn(item));\n      running--;\n    }\n  });\n  await Promise.all(workers);\n}\nconst start = performance.now();\nawait workerPool(tasks, 3, async (t) => {\n  await sleep2(t.cost);\n  return t.id;\n});\nconsole.log('并发池：20 个任务 / 限 3 / 峰值 ' + peak + ' / 用时 ' + (performance.now() - start).toFixed(0) + 'ms');\nconsole.log('  完成顺序：' + results.join(' '));\n\n/* 2. allSettled：有失败也要拿到全部结果 */\nconst settled = await Promise.allSettled([\n  sleep2(30).then(() => 'A'),\n  sleep2(10).then(() => { throw new Error('B 故意失败'); }),\n  sleep2(50).then(() => 'C')\n]);\nconsole.log('\\nallSettled：' + settled.map(s => s.status === 'fulfilled' ? '✓' + s.value : '✗' + s.reason.message).join('  '));\n\n/* 3. AbortController：给慢任务 60ms 预算 */\nasync function withTimeout(fn, ms) {\n  const ac = new AbortController();\n  const timer = setTimeout(() => ac.abort(new Error('超时 ' + ms + 'ms')), ms);\n  try { return await fn(ac.signal); }\n  finally { clearTimeout(timer); }\n}\ntry {\n  await withTimeout(async (signal) => {\n    for (let i = 0; i < 10; i++) {\n      if (signal.aborted) throw signal.reason;\n      await sleep2(20);\n    }\n    return '不应该到这里';\n  }, 60);\n} catch (e) {\n  console.log('超时控制：' + e.message + '（第 3 次循环时中止）');\n}\n\n/* 4. 异步生成器做流水线：生产者 -> 过滤 -> 取前 3 个 */\nasync function* numbers() { for (let i = 1; ; i++) { await sleep2(1); yield i; } }\nasync function* filter(src, pred) { for await (const v of src) if (pred(v)) yield v; }\nasync function* take(src, n) { let k = 0; for await (const v of src) { yield v; if (++k >= n) return; } }\nconst out = [];\nfor await (const v of take(filter(numbers(), v => v % 7 === 0), 3)) out.push(v);\nconsole.log('异步流水线：前 3 个 7 的倍数 = ' + out.join(', '));\nreturn out.length;\n"
+  },
+  '.bin.reactive': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"Proxy 响应式：依赖收集 + 自动更新 DOM", interpreter:'js' },
+    content:"\n/* .bin.reactive —— 40 行实现一个 mini Vue：Proxy 拦截读写，effect 收集依赖。 */\nlet activeEffect = null;\nconst targetMap = new WeakMap();\n\nfunction track(target, key) {\n  if (!activeEffect) return;\n  let deps = targetMap.get(target);\n  if (!deps) targetMap.set(target, deps = new Map());\n  let dep = deps.get(key);\n  if (!dep) deps.set(key, dep = new Set());\n  dep.add(activeEffect);\n}\nfunction trigger(target, key) {\n  const dep = targetMap.get(target) && targetMap.get(target).get(key);\n  if (dep) for (const fn of [...dep]) fn();\n}\nfunction reactive(obj) {\n  return new Proxy(obj, {\n    get(t, k, r) { track(t, k); return typeof t[k] === 'object' && t[k] ? reactive(t[k]) : t[k]; },\n    set(t, k, v) { const old = t[k]; t[k] = v; if (old !== v) trigger(t, k); return true; }\n  });\n}\nfunction effect(fn) { activeEffect = fn; fn(); activeEffect = null; }\nfunction computed(getter) {\n  let value, dirty = true;\n  const obj = { get value() { if (dirty) { value = getter(); dirty = false; } return value; } };\n  return obj;\n}\n\nconst state = reactive({ count: 0, name: 'HTerMinaL', nested: { n: 1 } });\n\n/* 把状态绑到一个真实 DOM 节点上 */\nconst card = document.createElement('div');\ncard.id = '__reactive_card';\ncard.style.padding = '10px';\ncard.textContent = '...';\ndocument.body.appendChild(card);\nawait sleep(60);\n\nconst label = document.createElement('span');\nconst twice = document.createElement('b');\nlet renders = 0;\n\neffect(() => {\n  renders++;\n  card.textContent = state.name + ' · count=' + state.count + ' · 双倍=' + state.count * 2 + ' · 嵌套=' + state.nested.n;\n});\n\nconsole.log('初始渲染：' + card.textContent);\nstate.count++;\nconsole.log('count++ 后：' + card.textContent);\nstate.count += 9;\nconsole.log('count+=9 后：' + card.textContent);\nstate.nested.n = 42;\nconsole.log('嵌套属性改后：' + card.textContent);\nstate.name = '一切皆文件';\nconsole.log('改名后：' + card.textContent);\nconsole.log('共触发渲染 ' + renders + ' 次（嵌套对象也被追踪到了）');\n\n/* 批量更新：默认每次 set 都触发；Vue 的 nextTick 是同一思路 */\nlet batch = 0;\neffect(() => { state.count; batch++; });\nfor (let i = 0; i < 100; i++) state.count++;\nconsole.log('连续 100 次 set：effect 被调 ' + batch + ' 次（每次 set 同步触发）');\n\nawait sleep(60);\nconst live = document.getElementById('__reactive_card');\nconsole.log('DOM 回读：' + (live ? live.textContent : '没找到'));\ncard.remove();\nreturn renders;\n"
+  },
+  '.bin.gen': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"生成器与惰性管道：无限流 / take / zip / 素数", interpreter:'js' },
+    content:"\n/* .bin.gen —— 惰性求值：无限序列也能安全地取前 n 个。 */\nfunction* nat() { let i = 1; while (true) yield i++; }\nfunction* fib() { let a = 0, b = 1; while (true) { yield a; [a, b] = [b, a + b]; } }\nfunction* primes() {\n  const seen = [];\n  for (let n = 2; ; n++) {\n    if (seen.every(p => n % p !== 0)) { seen.push(n); yield n; }\n  }\n}\nfunction* map(src, fn) { let i = 0; for (const v of src) yield fn(v, i++); }\nfunction* filter(src, fn) { for (const v of src) if (fn(v)) yield v; }\nfunction* take(src, n) { let k = 0; for (const v of src) { yield v; if (++k >= n) return; } }\nfunction* zip(a, b) { const ia = a[Symbol.iterator](), ib = b[Symbol.iterator](); while (true) { const x = ia.next(), y = ib.next(); if (x.done || y.done) return; yield [x.value, y.value]; } }\nconst toArray = (it) => [...it];\n\nconsole.log('自然数前 10：' + toArray(take(nat(), 10)).join(' '));\nconsole.log('斐波那契前 15：' + toArray(take(fib(), 15)).join(' '));\nconsole.log('素数前 20：' + toArray(take(primes(), 20)).join(' '));\n\n/* 管道：自然数 -> 平方 -> 只要奇数 -> 前 8 个 */\nconst pipe = take(filter(map(nat(), n => n * n), n => n % 2 === 1), 8);\nconsole.log('平方中的奇数前 8：' + toArray(pipe).join(' '));\n\n/* zip：斐波那契与素数配对 */\nconsole.log('斐波那契 × 素数：' + toArray(take(zip(fib(), primes()), 8)).map(([a, b]) => a + ':' + b).join('  '));\n\n/* 惰性 vs 急切：算 1e7 个数里第一个满足条件的，惰性只走到满足处 */\nconst t0 = performance.now();\nconst first = take(filter(nat(), n => n > 5 && n % 997 === 0), 1);\nconsole.log('\\n第一个 >5 且能被 997 整除的数：' + toArray(first)[0] + '（' + (performance.now() - t0).toFixed(2) + 'ms，没算到 1e7）');\n\n/* 自定义迭代器协议 + for...of 解构 */\nconst range = { from: 1, to: 5, [Symbol.iterator]() { let i = this.from; return { next: () => i <= this.to ? { value: i++, done: false } : { value: undefined, done: true } }; } };\nconsole.log('自定义 range 求和：' + [...range].reduce((a, b) => a + b, 0));\nreturn 5;\n"
+  },
+  '.bin.life': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"生命游戏：ANSI 动画 + 环形边界", interpreter:'js' },
+    content:"\n/* .bin.life —— 康威生命游戏。终端里 60 代，看清楚再退。 */\nconst W = 46, H = 20;\nlet grid = Array.from({ length: H }, () => Array(W).fill(0));\n\nconst seed = (x, y, cells) => { for (const [dx, dy] of cells) grid[(y + dy + H) % H][(x + dx + W) % W] = 1; };\nseed(6, 6, [[1, 0], [2, 0], [0, 1], [1, 1], [1, 2]]);                 // 滑翔机\nseed(24, 8, [[1, 0], [2, 0], [0, 1], [1, 1], [1, 2]]);\nseed(34, 12, [[1, 0], [2, 0], [0, 1], [1, 1], [1, 2]]);\nseed(10, 14, [[0, 0], [1, 0], [0, 1], [1, 1]]);                       // 方块\n\nconst step = () => {\n  const next = Array.from({ length: H }, () => Array(W).fill(0));\n  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {\n    let n = 0;\n    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {\n      if (!dx && !dy) continue;\n      n += grid[(y + dy + H) % H][(x + dx + W) % W];\n    }\n    next[y][x] = grid[y][x] ? (n === 2 || n === 3 ? 1 : 0) : (n === 3 ? 1 : 0);\n  }\n  grid = next;\n};\n\nconst paint = () => {\n  let s = '\\x1b[H';\n  for (let y = 0; y < H; y++) {\n    for (let x = 0; x < W; x++) s += grid[y][x] ? '\\x1b[36m█\\x1b[0m' : '\\x1b[90m·\\x1b[0m';\n    s += '\\x1b[K\\n';\n  }\n  console.log(s.replace(/\\n$/, ''));\n};\n\nconsole.log('\\x1b[2J\\x1b[H生命游戏 ' + W + 'x' + H + ' · 环形边界 · 60 代');\nfor (let i = 0; i < 60; i++) {\n  paint();\n  console.log('第 ' + String(i + 1).padStart(2) + ' 代 · 活细胞 ' + grid.flat().reduce((a, b) => a + b, 0) + ' ｜ Ctrl+C 可中断');\n  await sleep(70);\n  step();\n}\nconsole.log('\\n结束。');\nreturn 60;\n"
+  },
+  '.bin.html-lisp': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · 页面里的迷你 Lisp 解释器（读入 / 求值 / 环境）" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>迷你 Lisp</title>\n<style>\n  :root{--bg:#080b0f;--fg:#cfe;--accent:#5eead4;--dim:#6b8b89;--line:#1b2b33;--red:#f87171}\n  *{box-sizing:border-box}\n  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);\n    font:13px/1.65 ui-monospace,SFMono-Regular,monospace}\n  body{display:flex;flex-direction:column;padding:16px;gap:12px}\n  h1{margin:0;font-size:14px;font-weight:500;letter-spacing:.12em;color:var(--accent)}\n  h1 span{color:var(--dim);letter-spacing:0;font-size:11px;margin-left:10px}\n  #log{flex:1;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:12px;\n    background:#0b1015;scrollbar-width:thin}\n  .in{color:#8fb6b3}.in::before{content:'λ ';color:var(--accent)}\n  .out{color:var(--fg);padding-left:16px;white-space:pre-wrap}\n  .err{color:var(--red);padding-left:16px}\n  form{display:flex;gap:8px}\n  input{flex:1;background:#0b1015;border:1px solid var(--line);border-radius:8px;color:var(--fg);\n    padding:10px 12px;font:inherit;outline:none}\n  input:focus{border-color:#2d5a56;box-shadow:0 0 0 3px #5eead410}\n  button{background:#122023;border:1px solid var(--line);color:var(--accent);border-radius:8px;\n    padding:0 14px;font:inherit;cursor:pointer}\n  button:hover{background:#172b2e}\n  #tips{font-size:11px;color:var(--dim);display:flex;gap:8px;flex-wrap:wrap}\n  #tips b{color:#9ecfca;font-weight:400}\n  #tips span{cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:2px 7px}\n  #tips span:hover{border-color:#2d5a56;color:var(--accent)}\n</style></head>\n<body>\n<h1>迷你 Lisp <span>读入 → 展开 → 求值，全部在这 100 行里</span></h1>\n<div id=\"log\"></div>\n<div id=\"tips\">\n  <span>(+ 1 2 3)</span><span>(define (sq x) (* x x))</span><span>(sq 12)</span>\n  <span>(define fact (lambda (n) (if (&lt; n 2) 1 (* n (fact (- n 1))))))</span><span>(fact 20)</span>\n  <span>(map (lambda (x) (* x x)) (list 1 2 3 4))</span>\n</div>\n<form id=\"f\"><input id=\"q\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"输入 S-表达式，回车求值\"><button>运行</button></form>\n<script>\n/* ---------- tokenizer ---------- */\nfunction tokenize(src) {\n  const out = [];\n  const re = /\\s*(,@|[('`)]|\"(?:\\\\.|[^\\\\\"])*\"|;.*|[^\\s('`\",;)]+)/g;\n  let m;\n  while ((m = re.exec(src)) && m[1] !== '') {\n    const t = m[1];\n    if (t[0] === ';') continue;\n    out.push(t);\n  }\n  return out;\n}\n/* ---------- reader ---------- */\nfunction read(tokens, i) {\n  if (i >= tokens.length) throw new Error('意外的 EOF');\n  const t = tokens[i];\n  if (t === '(') {\n    const list = [];\n    i++;\n    while (tokens[i] !== ')') {\n      if (tokens[i] === undefined) throw new Error('缺少 )');\n      const r = read(tokens, i);\n      list.push(r[0]); i = r[1];\n    }\n    return [list, i + 1];\n  }\n  if (t === ')') throw new Error('多余的 )');\n  if (t[0] === '\"') return [t.slice(1, -1).replace(/\\\\n/g, '\\n'), i + 1];\n  if (/^-?\\d+(\\.\\d+)?$/.test(t)) return [Number(t), i + 1];\n  return [t, i + 1];\n}\nfunction parse(src) {\n  const ts = tokenize(src);\n  const out = [];\n  let i = 0;\n  while (i < ts.length) { const r = read(ts, i); out.push(r[0]); i = r[1]; }\n  return out;\n}\n\n/* ---------- 环境 ---------- */\nclass Env {\n  constructor(parms, args, outer) {\n    this.vars = new Map();\n    if (parms) parms.forEach((p, i) => this.vars.set(p, args[i]));\n    this.outer = outer || null;\n  }\n  get(k) {\n    if (this.vars.has(k)) return this.vars.get(k);\n    if (this.outer) return this.outer.get(k);\n    throw new Error('未定义: ' + k);\n  }\n  set(k, v) { this.vars.set(k, v); return v; }\n}\nconst num = (x) => { if (typeof x !== 'number') throw new Error('需要数字，得到 ' + typeof x); return x; };\nconst truthy = (x) => x !== false && x !== null && x !== undefined && x !== 0 && x !== '';\nconst fmt = (x) => Array.isArray(x) ? '(' + x.map(fmt).join(' ') + ')' : (x && x.__closure) ? '<lambda>' : typeof x === 'string' ? x : String(x);\n\nconst globalEnv = new Env();\nconst B = globalEnv.vars;\nB.set('+', (...a) => a.reduce((x, y) => x + num(y), 0));\nB.set('*', (...a) => a.reduce((x, y) => x * num(y), 1));\nB.set('-', (...a) => a.length === 1 ? -num(a[0]) : a.reduce((x, y) => x - num(y)));\nB.set('/', (...a) => a.length === 1 ? 1 / num(a[0]) : a.reduce((x, y) => x / num(y)));\nB.set('%', (a, b) => num(a) % num(b));\nB.set('<', (a, b) => a < b);\nB.set('>', (a, b) => a > b);\nB.set('<=', (a, b) => a <= b);\nB.set('>=', (a, b) => a >= b);\nB.set('=', (a, b) => a === b);\nB.set('equal?', (a, b) => JSON.stringify(a) === JSON.stringify(b));\nB.set('not', (a) => !truthy(a));\nB.set('list', (...a) => a);\nB.set('car', (a) => a[0]);\nB.set('cdr', (a) => a.slice(1));\nB.set('cons', (a, b) => [a, ...b]);\nB.set('length', (a) => a.length);\nB.set('null?', (a) => Array.isArray(a) && a.length === 0);\nB.set('number?', (a) => typeof a === 'number');\nB.set('symbol?', (a) => typeof a === 'string');\nB.set('pi', Math.PI);\nB.set('apply', (fn, args) => callProc(fn, args));\nB.set('map', (fn, arr) => arr.map(x => callProc(fn, [x])));\nB.set('filter', (fn, arr) => arr.filter(x => truthy(callProc(fn, [x]))));\nB.set('reduce', (fn, init, arr) => arr.reduce((a, b) => callProc(fn, [a, b]), init));\nB.set('range', (a, b) => { const r = []; for (let i = a; i < b; i++) r.push(i); return r; });\n\nfunction callProc(fn, args) {\n  if (typeof fn === 'function') return fn(...args);\n  if (fn && fn.__closure) return evalSeq(fn.body, new Env(fn.params, args, fn.env));\n  throw new Error('不是函数: ' + fmt(fn));\n}\n\n/* ---------- 求值 ---------- */\nfunction evalSeq(x, env) {\n  if (x === undefined) return null;\n  if (typeof x === 'number' || typeof x === 'string' && x[0] !== '(') {\n    if (typeof x === 'string') { try { return env.get(x); } catch (e) { return x; } }\n    return x;\n  }\n  if (!Array.isArray(x)) return x;\n  if (x.length === 0) return [];\n  const [op, ...args] = x;\n  if (op === 'quote') return args[0];\n  if (op === 'if') return truthy(evalSeq(args[0], env)) ? evalSeq(args[1], env) : (args[2] !== undefined ? evalSeq(args[2], env) : null);\n  if (op === 'define') {\n    if (Array.isArray(args[0])) {\n      const [name, ...params] = args[0];\n      return env.set(name, { __closure: 1, params, body: args[1], env });\n    }\n    return env.set(args[0], evalSeq(args[1], env));\n  }\n  if (op === 'lambda') return { __closure: 1, params: args[0], body: args[1], env };\n  if (op === 'begin') { let v = null; for (const a of args) v = evalSeq(a, env); return v; }\n  const fn = evalSeq(op, env);\n  return callProc(fn, args.map(a => evalSeq(a, env)));\n}\n\n/* ---------- UI ---------- */\nconst log = document.getElementById('log');\nconst input = document.getElementById('q');\nfunction line(cls, text) {\n  const d = document.createElement('div');\n  d.className = cls; d.textContent = text;\n  log.appendChild(d); log.scrollTop = log.scrollHeight;\n  return d;\n}\nfunction run(src) {\n  line('in', src);\n  try {\n    const forms = parse(src);\n    let v = null;\n    for (const f of forms) v = evalSeq(f, globalEnv);\n    line('out', '⇒ ' + fmt(v));\n    return v;\n  } catch (e) {\n    line('err', '✗ ' + e.message);\n  }\n}\ndocument.getElementById('f').addEventListener('submit', (e) => {\n  e.preventDefault();\n  const v = input.value.trim();\n  if (!v) return;\n  run(v); input.value = '';\n});\ndocument.querySelectorAll('#tips span').forEach(el => {\n  el.addEventListener('click', () => { input.value = el.textContent; input.focus(); });\n});\nline('out', '欢迎。试试下面的例子，或直接输入 (+ 1 2)。');\nrun('(define (fact n) (if (< n 2) 1 (* n (fact (- n 1)))))');\nrun('(fact 20)');\ninput.focus();\n<\/script>\n</body></html>"
+  },
+  '.bin.html-webgl': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · 手写 WebGL：着色器 + 旋转立方体 + 鼠标拖动" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>WebGL 立方体</title>\n<style>\n  html,body{margin:0;height:100%;background:#05070a;overflow:hidden;font:12px ui-monospace,monospace;color:#8fb6b3}\n  canvas{display:block;width:100%;height:100%}\n  #hud{position:fixed;left:12px;top:10px;padding:6px 10px;border-radius:8px;\n    background:#0b1218cc;border:1px solid #1b2b33;backdrop-filter:blur(8px);line-height:1.6;pointer-events:none}\n  #hud b{color:#5eead4;font-weight:500}\n</style></head>\n<body>\n<canvas id=\"c\"></canvas>\n<div id=\"hud\">WebGL 1.0 · 手写顶点/片元着色器 · <b id=\"fps\">0</b> FPS<br>鼠标拖动旋转 · 滚轮缩放</div>\n<script>\nconst c = document.getElementById('c');\nconst gl = c.getContext('webgl', { antialias: true, alpha: false });\nif (!gl) {\n  document.body.innerHTML = '<p style=\"color:#f87171;padding:20px\">这个环境不支持 WebGL。</p>';\n  throw new Error('no webgl');\n}\n\n/* 顶点：位置 + 法线 + 面颜色 */\nfunction cube() {\n  const faces = [\n    { n: [0, 0, 1], v: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, -1, 1], [1, 1, 1], [-1, 1, 1]], c: [0.37, 0.91, 0.83] },\n    { n: [0, 0, -1], v: [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1]], c: [0.16, 0.55, 0.52] },\n    { n: [1, 0, 0], v: [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1]], c: [0.24, 0.72, 0.68] },\n    { n: [-1, 0, 0], v: [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, -1, -1], [-1, 1, 1], [-1, 1, -1]], c: [0.10, 0.40, 0.39] },\n    { n: [0, 1, 0], v: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, 1], [1, 1, -1], [-1, 1, -1]], c: [0.52, 0.98, 0.90] },\n    { n: [0, -1, 0], v: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, -1], [1, -1, 1], [-1, -1, 1]], c: [0.08, 0.30, 0.30] }\n  ];\n  const pos = [], nor = [], col = [];\n  for (const f of faces) {\n    for (const p of f.v) { pos.push(...p); nor.push(...f.n); col.push(...f.c); }\n  }\n  return { pos: new Float32Array(pos), nor: new Float32Array(nor), col: new Float32Array(col) };\n}\n\nconst VS = `\nattribute vec3 aPos;\nattribute vec3 aNor;\nattribute vec3 aCol;\nuniform mat4 uMVP;\nuniform mat4 uModel;\nvarying vec3 vNor;\nvarying vec3 vCol;\nvarying vec3 vPos;\nvoid main() {\n  vNor = mat3(uModel) * aNor;\n  vCol = aCol;\n  vPos = (uModel * vec4(aPos, 1.0)).xyz;\n  gl_Position = uMVP * vec4(aPos, 1.0);\n}`;\n\nconst FS = `\nprecision mediump float;\nvarying vec3 vNor;\nvarying vec3 vCol;\nvarying vec3 vPos;\nvoid main() {\n  vec3 n = normalize(vNor);\n  vec3 l1 = normalize(vec3(0.6, 0.9, 0.7));\n  vec3 l2 = normalize(vec3(-0.7, -0.3, 0.5));\n  float d1 = max(dot(n, l1), 0.0);\n  float d2 = max(dot(n, l2), 0.0) * 0.35;\n  vec3 view = normalize(-vPos);\n  vec3 h = normalize(l1 + view);\n  float spec = pow(max(dot(n, h), 0.0), 42.0) * 0.55;\n  vec3 col = vCol * (0.16 + d1 * 0.95 + d2) + vec3(spec);\n  gl_FragColor = vec4(pow(col, vec3(0.85)), 1.0);\n}`;\n\nfunction sh(type, src) {\n  const s = gl.createShader(type);\n  gl.shaderSource(s, src); gl.compileShader(s);\n  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));\n  return s;\n}\nconst prog = gl.createProgram();\ngl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));\ngl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));\ngl.linkProgram(prog);\nif (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));\ngl.useProgram(prog);\n\nconst M = cube();\nfunction buf(data) { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); return b; }\nfunction attrib(name, data, size) {\n  const loc = gl.getAttribLocation(prog, name);\n  gl.bindBuffer(gl.ARRAY_BUFFER, buf(data));\n  gl.enableVertexAttribArray(loc);\n  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);\n}\nattrib('aPos', M.pos, 3);\nattrib('aNor', M.nor, 3);\nattrib('aCol', M.col, 3);\nconst uMVP = gl.getUniformLocation(prog, 'uMVP');\nconst uModel = gl.getUniformLocation(prog, 'uModel');\n\n/* 矩阵：列主序 */\nfunction mul(a, b) {\n  const o = new Float32Array(16);\n  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {\n    let s2 = 0; for (let k = 0; k < 4; k++) s2 += a[k * 4 + j] * b[i * 4 + k];\n    o[i * 4 + j] = s2;\n  }\n  return o;\n}\nfunction perspective(fovy, aspect, near, far) {\n  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);\n  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);\n}\nfunction rotX(a) { const c2 = Math.cos(a), s2 = Math.sin(a); return new Float32Array([1, 0, 0, 0, 0, c2, s2, 0, 0, -s2, c2, 0, 0, 0, 0, 1]); }\nfunction rotY(a) { const c2 = Math.cos(a), s2 = Math.sin(a); return new Float32Array([c2, 0, -s2, 0, 0, 1, 0, 0, s2, 0, c2, 0, 0, 0, 0, 1]); }\nfunction trans(x, y, z) { return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1]); }\n\nlet rx = -0.5, ry = 0.7, dist = 5.2;\nlet drag = false, lx = 0, ly = 0, spin = 0.004;\nc.addEventListener('pointerdown', e => { drag = true; lx = e.clientX; ly = e.clientY; c.setPointerCapture(e.pointerId); });\nc.addEventListener('pointermove', e => {\n  if (!drag) return;\n  ry += (e.clientX - lx) * 0.008; rx += (e.clientY - ly) * 0.008;\n  rx = Math.max(-1.5, Math.min(1.5, rx));\n  lx = e.clientX; ly = e.clientY;\n});\nc.addEventListener('pointerup', () => drag = false);\nc.addEventListener('wheel', e => { dist = Math.max(2.6, Math.min(12, dist + e.deltaY * 0.003)); e.preventDefault(); }, { passive: false });\n\nfunction resize() {\n  const dpr = Math.min(2, devicePixelRatio || 1);\n  c.width = innerWidth * dpr; c.height = innerHeight * dpr;\n  gl.viewport(0, 0, c.width, c.height);\n}\naddEventListener('resize', resize); resize();\n\ngl.enable(gl.DEPTH_TEST);\nlet frames = 0, ft = performance.now();\nfunction frame(now) {\n  if (!drag) ry += spin;\n  const aspect = c.width / c.height;\n  const model = mul(rotY(ry), rotX(rx));\n  const mvp = mul(perspective(0.9, aspect, 0.1, 100), mul(trans(0, 0, -dist), model));\n  gl.uniformMatrix4fv(uMVP, false, mvp);\n  gl.uniformMatrix4fv(uModel, false, model);\n  gl.clearColor(0.02, 0.03, 0.04, 1);\n  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);\n  gl.drawArrays(gl.TRIANGLES, 0, 36);\n  frames++;\n  if (now - ft > 500) { document.getElementById('fps').textContent = Math.round(frames * 1000 / (now - ft)); frames = 0; ft = now; }\n  requestAnimationFrame(frame);\n}\nrequestAnimationFrame(frame);\n<\/script>\n</body></html>"
+  },
+  '.bin.html-audio': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · Web Audio 合成器（键盘发声 + 频谱可视化）" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>Web Audio 合成器</title>\n<style>\n  html,body{margin:0;height:100%;background:#07090c;overflow:hidden;\n    font:12px/1.6 ui-monospace,monospace;color:#8fb6b3;user-select:none;-webkit-user-select:none}\n  canvas{display:block}\n  #ui{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:14px 16px;pointer-events:none}\n  #title{letter-spacing:.14em;color:#5eead4;font-size:12px}\n  #title span{color:#4b6a68;letter-spacing:0;margin-left:10px}\n  #keys{display:flex;gap:5px;justify-content:center;pointer-events:auto;flex-wrap:wrap}\n  .k{width:46px;height:64px;border-radius:8px;border:1px solid #1e3238;background:#0d1519;\n    display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;color:#7ba7a4;\n    font-size:11px;cursor:pointer;transition:.08s;position:relative}\n  .k.black{background:#070b0e;color:#5a7a78;border-color:#152329}\n  .k.on{background:#123b3a;border-color:#5eead4;color:#5eead4;box-shadow:0 0 18px #5eead433;transform:translateY(1px)}\n  .k b{position:absolute;top:5px;font-weight:400;opacity:.55;font-size:9px}\n  #hint{color:#6f918e;font-size:11px;text-align:center;margin-top:8px}\n</style></head>\n<body>\n<canvas id=\"c\"></canvas>\n<div id=\"ui\">\n  <div id=\"title\">WEB AUDIO 合成器 <span>点击/按键发声 · 三个振荡器 + 滤波 + 延迟</span></div>\n  <div>\n    <div id=\"keys\"></div>\n    <div id=\"hint\">按 A S D F G H J K 弹奏 · 空格切换波形 · 声音要点击一次页面才会解锁</div>\n  </div>\n</div>\n<script>\nconst c = document.getElementById('c');\nconst g = c.getContext('2d');\nlet W, H, DPR = Math.min(2, devicePixelRatio || 1);\nfunction resize() {\n  W = innerWidth; H = innerHeight;\n  c.width = W * DPR; c.height = H * DPR;\n  c.style.width = W + 'px'; c.style.height = H + 'px';\n  g.setTransform(DPR, 0, 0, DPR, 0, 0);\n}\naddEventListener('resize', resize); resize();\n\n/* ---------- 音频图：osc -> filter -> gain -> analyser -> destination\n * 另有一路 delay 反馈，声音不会干巴巴 */\nlet ctx = null, analyser = null, master = null, filter = null, delay = null;\nlet started = false;\nconst waves = ['sawtooth', 'square', 'triangle', 'sine'];\nlet waveIdx = 0;\n\nfunction ensureAudio() {\n  if (started) return;\n  ctx = new (window.AudioContext || window.webkitAudioContext)();\n  master = ctx.createGain(); master.gain.value = 0.22;\n  filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 1800; filter.Q.value = 6;\n  delay = ctx.createDelay(0.6); delay.delayTime.value = 0.22;\n  const fb = ctx.createGain(); fb.gain.value = 0.28;\n  const wet = ctx.createGain(); wet.gain.value = 0.35;\n  analyser = ctx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.82;\n\n  filter.connect(master);\n  filter.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(master);\n  master.connect(analyser); analyser.connect(ctx.destination);\n  started = true;\n}\n\nconst NOTES = [\n  { k: 'a', n: 'C4', f: 261.63 }, { k: 'w', n: 'C#4', f: 277.18, black: 1 },\n  { k: 's', n: 'D4', f: 293.66 }, { k: 'e', n: 'D#4', f: 311.13, black: 1 },\n  { k: 'd', n: 'E4', f: 329.63 }, { k: 'f', n: 'F4', f: 349.23 },\n  { k: 't', n: 'F#4', f: 369.99, black: 1 }, { k: 'g', n: 'G4', f: 392.00 },\n  { k: 'y', n: 'G#4', f: 415.30, black: 1 }, { k: 'h', n: 'A4', f: 440.00 },\n  { k: 'u', n: 'A#4', f: 466.16, black: 1 }, { k: 'j', n: 'B4', f: 493.88 },\n  { k: 'k', n: 'C5', f: 523.25 }\n];\nconst active = new Map();\n\nfunction noteOn(note) {\n  ensureAudio();\n  if (active.has(note.k)) return;\n  const t = ctx.currentTime;\n  const osc = ctx.createOscillator();\n  const sub = ctx.createOscillator();\n  const env = ctx.createGain();\n  osc.type = waves[waveIdx];\n  sub.type = 'sine';\n  osc.frequency.value = note.f;\n  sub.frequency.value = note.f / 2;\n  env.gain.setValueAtTime(0.0001, t);\n  env.gain.exponentialRampToValueAtTime(0.85, t + 0.012);\n  env.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);\n  osc.connect(env); sub.connect(env); env.connect(filter);\n  osc.start(t); sub.start(t);\n  osc.stop(t + 1.7); sub.stop(t + 1.7);\n  active.set(note.k, { osc, sub, env });\n  const el = document.querySelector('.k[data-k=\"' + note.k + '\"]');\n  if (el) el.classList.add('on');\n}\nfunction noteOff(k) {\n  const a = active.get(k);\n  if (!a) return;\n  const t = ctx.currentTime;\n  try {\n    a.env.gain.cancelScheduledValues(t);\n    a.env.gain.setTargetAtTime(0.0001, t, 0.05);\n    a.osc.stop(t + 0.25); a.sub.stop(t + 0.25);\n  } catch (e) {}\n  active.delete(k);\n  const el = document.querySelector('.k[data-k=\"' + k + '\"]');\n  if (el) el.classList.remove('on');\n}\n\n/* 键盘 */\nconst keysBox = document.getElementById('keys');\nfor (const n of NOTES) {\n  const d = document.createElement('div');\n  d.className = 'k' + (n.black ? ' black' : '');\n  d.dataset.k = n.k;\n  d.innerHTML = '<b>' + n.n + '</b>' + n.k.toUpperCase();\n  d.addEventListener('pointerdown', e => { e.preventDefault(); noteOn(n); });\n  d.addEventListener('pointerup', () => noteOff(n.k));\n  d.addEventListener('pointerleave', () => noteOff(n.k));\n  keysBox.appendChild(d);\n}\naddEventListener('keydown', e => {\n  if (e.repeat) return;\n  if (e.key === ' ') { waveIdx = (waveIdx + 1) % waves.length; document.getElementById('title').firstChild.textContent = 'WEB AUDIO 合成器 '; return; }\n  const n = NOTES.find(x => x.k === e.key.toLowerCase());\n  if (n) { noteOn(n); e.preventDefault(); }\n});\naddEventListener('keyup', e => {\n  const n = NOTES.find(x => x.k === e.key.toLowerCase());\n  if (n) noteOff(n.k);\n});\n\n/* 频谱 + 波形 */\nconst freq = new Uint8Array(512);\nconst wave = new Uint8Array(1024);\nfunction draw() {\n  g.fillStyle = '#07090c'; g.fillRect(0, 0, W, H);\n\n  if (analyser) {\n    analyser.getByteFrequencyData(freq);\n    analyser.getByteTimeDomainData(wave);\n\n    /* 频谱柱 */\n    const bars = 72;\n    const bw = W / bars;\n    for (let i = 0; i < bars; i++) {\n      const v = freq[Math.floor(Math.pow(i / bars, 1.6) * 380)] / 255;\n      const h = v * H * 0.42;\n      const grd = g.createLinearGradient(0, H, 0, H - h);\n      grd.addColorStop(0, 'rgba(94,234,212,.10)');\n      grd.addColorStop(.6, 'rgba(94,234,212,.55)');\n      grd.addColorStop(1, 'rgba(190,255,245,.95)');\n      g.fillStyle = grd;\n      g.fillRect(i * bw + 1, H - h, bw - 2, h);\n    }\n\n    /* 波形 */\n    g.beginPath();\n    g.strokeStyle = 'rgba(125,211,252,.75)';\n    g.lineWidth = 1.6;\n    for (let i = 0; i < wave.length; i++) {\n      const x = i / (wave.length - 1) * W;\n      const y = H * 0.5 + (wave[i] - 128) / 128 * H * 0.22;\n      i ? g.lineTo(x, y) : g.moveTo(x, y);\n    }\n    g.stroke();\n  } else {\n    g.fillStyle = '#0d1519';\n    g.font = '13px ui-monospace,monospace';\n    g.textAlign = 'center';\n    g.fillText('点击页面或按 A 键启用音频', W / 2, H / 2);\n  }\n  requestAnimationFrame(draw);\n}\nrequestAnimationFrame(draw);\n<\/script>\n</body></html>"
+  },
+  '.bin.html-particles': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · Canvas 粒子星云（鼠标斥力 + 连线 + FPS）" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>粒子星云</title>\n<style>\n  html,body{margin:0;height:100%;background:#05070a;overflow:hidden;font:12px/1.5 ui-monospace,monospace;color:#7ff}\n  canvas{display:block}\n  #hud{position:fixed;left:12px;top:10px;opacity:.75;letter-spacing:.06em;pointer-events:none}\n  #hud b{color:#5eead4;font-weight:500}\n</style></head>\n<body>\n<canvas id=\"c\"></canvas>\n<div id=\"hud\">粒子 <b id=\"n\">0</b> · FPS <b id=\"f\">0</b> · 移动鼠标推一把</div>\n<script>\nconst c = document.getElementById('c');\nconst g = c.getContext('2d');\nlet W = 0, H = 0, DPR = Math.min(2, devicePixelRatio || 1);\nconst P = [];\nconst mouse = { x: -999, y: -999 };\nlet frames = 0, fpsT = performance.now(), fps = 0;\n\nfunction resize() {\n  W = innerWidth; H = innerHeight;\n  c.width = W * DPR; c.height = H * DPR;\n  c.style.width = W + 'px'; c.style.height = H + 'px';\n  g.setTransform(DPR, 0, 0, DPR, 0, 0);\n}\naddEventListener('resize', resize); resize();\n\nconst N = Math.min(220, Math.round(W * H / 9000));\nfor (let i = 0; i < N; i++) {\n  P.push({\n    x: Math.random() * W, y: Math.random() * H,\n    vx: (Math.random() - .5) * .35, vy: (Math.random() - .5) * .35,\n    r: .8 + Math.random() * 1.8,\n    h: 160 + Math.random() * 80\n  });\n}\n\naddEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });\naddEventListener('mouseleave', () => { mouse.x = mouse.y = -999; });\naddEventListener('touchmove', e => {\n  const t = e.touches[0]; if (t) { mouse.x = t.clientX; mouse.y = t.clientY; }\n  e.preventDefault();\n}, { passive: false });\n\nfunction step(now) {\n  g.fillStyle = 'rgba(5,7,10,.28)';\n  g.fillRect(0, 0, W, H);\n\n  for (let i = 0; i < P.length; i++) {\n    const a = P[i];\n    /* 鼠标斥力：距离越近推得越狠，但有上限，不然会炸 */\n    const dx = a.x - mouse.x, dy = a.y - mouse.y;\n    const d2 = dx * dx + dy * dy;\n    if (d2 < 18000 && d2 > 1) {\n      const f = (1 - d2 / 18000) * .9;\n      const d = Math.sqrt(d2);\n      a.vx += dx / d * f; a.vy += dy / d * f;\n    }\n    a.vx *= .985; a.vy *= .985;\n    a.x += a.vx; a.y += a.vy;\n\n    if (a.x < -20) a.x = W + 20; if (a.x > W + 20) a.x = -20;\n    if (a.y < -20) a.y = H + 20; if (a.y > H + 20) a.y = -20;\n\n    g.beginPath();\n    g.fillStyle = 'hsla(' + a.h + ',80%,70%,.9)';\n    g.arc(a.x, a.y, a.r, 0, 6.2832);\n    g.fill();\n  }\n\n  /* 连线：只连足够近的，用距离决定透明度 */\n  g.lineWidth = .6;\n  for (let i = 0; i < P.length; i++) {\n    for (let j = i + 1; j < P.length; j++) {\n      const a = P[i], b = P[j];\n      const dx = a.x - b.x, dy = a.y - b.y;\n      const d2 = dx * dx + dy * dy;\n      if (d2 < 8000) {\n        g.strokeStyle = 'rgba(94,234,212,' + (0.18 * (1 - d2 / 8000)).toFixed(3) + ')';\n        g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();\n      }\n    }\n  }\n\n  frames++;\n  if (now - fpsT > 500) {\n    fps = Math.round(frames * 1000 / (now - fpsT));\n    frames = 0; fpsT = now;\n    document.getElementById('f').textContent = fps;\n    document.getElementById('n').textContent = P.length;\n  }\n  requestAnimationFrame(step);\n}\nrequestAnimationFrame(step);\n<\/script>\n</body></html>"
+  },
+  '.bin.html-snake': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · Canvas 贪吃蛇（方向键 / WASD / 触屏滑动）" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\">\n<title>贪吃蛇</title>\n<style>\n  html,body{margin:0;height:100%;background:#080b0f;color:#cfe;overflow:hidden;\n    font:14px/1.5 ui-monospace,monospace;touch-action:none;-webkit-user-select:none;user-select:none}\n  #wrap{position:fixed;inset:0;display:grid;place-items:center}\n  canvas{background:#0b1015;border:1px solid #1d2b31;border-radius:12px;box-shadow:0 20px 60px #0008}\n  #hud{position:fixed;left:0;right:0;top:14px;text-align:center;letter-spacing:.08em;font-size:13px;color:#8fb6b3}\n  #hud b{color:#5eead4}\n  #tip{position:fixed;left:0;right:0;bottom:14px;text-align:center;font-size:12px;color:#5b7a78}\n</style></head>\n<body>\n<div id=\"hud\">得分 <b id=\"sc\">0</b> · 最高 <b id=\"hi\">0</b> · <span id=\"st\">按方向键开始</span></div>\n<div id=\"wrap\"><canvas id=\"c\" width=\"440\" height=\"440\"></canvas></div>\n<div id=\"tip\">方向键 / WASD · 空格暂停 · R 重开</div>\n<script>\nconst CELL = 20, COLS = 22, ROWS = 22;\nconst c = document.getElementById('c');\nconst g = c.getContext('2d');\nconst S = { snake: [], dir: [1, 0], next: [1, 0], food: null, score: 0, best: +(localStorage.getItem('snake.best') || 0), alive: true, paused: false, started: false, tick: 0 };\n\nfunction reset() {\n  S.snake = [[5, 11], [4, 11], [3, 11]];\n  S.dir = [1, 0]; S.next = [1, 0];\n  S.score = 0; S.alive = true; S.paused = false; S.started = false; S.tick = 0;\n  placeFood();\n  document.getElementById('sc').textContent = 0;\n  document.getElementById('st').textContent = '按方向键开始';\n}\nfunction placeFood() {\n  for (let k = 0; k < 500; k++) {\n    const p = [1 + Math.floor(Math.random() * (COLS - 2)), 1 + Math.floor(Math.random() * (ROWS - 2))];\n    if (!S.snake.some(s => s[0] === p[0] && s[1] === p[1])) { S.food = p; return; }\n  }\n}\nfunction turn(dx, dy) {\n  S.started = true;\n  /* 不允许 180 度回头 */\n  if (S.dir[0] === -dx && S.dir[1] === -dy) return;\n  S.next = [dx, dy];\n}\naddEventListener('keydown', e => {\n  const k = e.key.toLowerCase();\n  if (k === 'arrowup' || k === 'w') turn(0, -1);\n  else if (k === 'arrowdown' || k === 's') turn(0, 1);\n  else if (k === 'arrowleft' || k === 'a') turn(-1, 0);\n  else if (k === 'arrowright' || k === 'd') turn(1, 0);\n  else if (k === ' ') { S.paused = !S.paused; document.getElementById('st').textContent = S.paused ? '已暂停' : '进行中'; }\n  else if (k === 'r') reset();\n  else return;\n  e.preventDefault();\n});\n/* 触屏滑动 */\nlet tx = 0, ty = 0;\naddEventListener('touchstart', e => { const t = e.touches[0]; tx = t.clientX; ty = t.clientY; e.preventDefault(); }, { passive: false });\naddEventListener('touchend', e => {\n  const t = e.changedTouches[0], dx = t.clientX - tx, dy = t.clientY - ty;\n  if (Math.hypot(dx, dy) < 18) { S.paused = !S.paused; return; }\n  if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : -1, 0); else turn(0, dy > 0 ? 1 : -1);\n  e.preventDefault();\n}, { passive: false });\n\nfunction update() {\n  if (!S.alive || S.paused || !S.started) return;\n  S.dir = S.next;\n  const head = [S.snake[0][0] + S.dir[0], S.snake[0][1] + S.dir[1]];\n  if (head[0] < 0 || head[1] < 0 || head[0] >= COLS || head[1] >= ROWS) return die();\n  if (S.snake.some(s => s[0] === head[0] && s[1] === head[1])) return die();\n  S.snake.unshift(head);\n  if (S.food && head[0] === S.food[0] && head[1] === S.food[1]) {\n    S.score += 10;\n    document.getElementById('sc').textContent = S.score;\n    if (S.score > S.best) { S.best = S.score; localStorage.setItem('snake.best', String(S.best)); document.getElementById('hi').textContent = S.best; }\n    placeFood();\n  } else S.snake.pop();\n}\nfunction die() {\n  S.alive = false;\n  document.getElementById('st').textContent = '撞了 · 按 R 重开';\n}\n\nfunction draw() {\n  g.fillStyle = '#0b1015'; g.fillRect(0, 0, c.width, c.height);\n  /* 细网格 */\n  g.strokeStyle = 'rgba(94,234,212,.05)'; g.lineWidth = 1;\n  for (let i = 1; i < COLS; i++) { g.beginPath(); g.moveTo(i * CELL, 0); g.lineTo(i * CELL, c.height); g.stroke(); }\n  for (let j = 1; j < ROWS; j++) { g.beginPath(); g.moveTo(0, j * CELL); g.lineTo(c.width, j * CELL); g.stroke(); }\n\n  /* 食物：脉动圆点 */\n  if (S.food) {\n    const t = performance.now() / 380;\n    const r = CELL * 0.30 + Math.sin(t) * 2;\n    g.fillStyle = '#f87171';\n    g.shadowColor = '#f87171'; g.shadowBlur = 16;\n    g.beginPath();\n    g.arc(S.food[0] * CELL + CELL / 2, S.food[1] * CELL + CELL / 2, r, 0, 6.2832);\n    g.fill();\n    g.shadowBlur = 0;\n  }\n\n  /* 蛇：越靠近头越亮 */\n  for (let i = S.snake.length - 1; i >= 0; i--) {\n    const [x, y] = S.snake[i];\n    const k = i / Math.max(1, S.snake.length);\n    g.fillStyle = 'rgba(' + Math.round(94 + 80 * (1 - k)) + ',' + Math.round(234 - 60 * k) + ',' + Math.round(212 - 40 * k) + ',' + (0.95 - k * .45) + ')';\n    const pad = i === 0 ? 1.5 : 2.5;\n    roundRect(x * CELL + pad, y * CELL + pad, CELL - pad * 2, CELL - pad * 2, i === 0 ? 6 : 4);\n    g.fill();\n  }\n  /* 眼睛 */\n  if (S.snake.length) {\n    const [hx, hy] = S.snake[0];\n    g.fillStyle = '#071013';\n    const ex = hx * CELL + CELL / 2 + S.dir[0] * 4, ey = hy * CELL + CELL / 2 + S.dir[1] * 4;\n    g.beginPath(); g.arc(ex - S.dir[1] * 3.4, ey - S.dir[0] * 3.4, 1.7, 0, 6.2832); g.fill();\n    g.beginPath(); g.arc(ex + S.dir[1] * 3.4, ey + S.dir[0] * 3.4, 1.7, 0, 6.2832); g.fill();\n  }\n\n  if (!S.alive) {\n    g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, 0, c.width, c.height);\n    g.fillStyle = '#f87171'; g.font = '600 26px ui-monospace,monospace'; g.textAlign = 'center';\n    g.fillText('GAME OVER', c.width / 2, c.height / 2 - 6);\n    g.fillStyle = '#8fb6b3'; g.font = '13px ui-monospace,monospace';\n    g.fillText('得分 ' + S.score + ' · 按 R 重开', c.width / 2, c.height / 2 + 24);\n  }\n}\nfunction roundRect(x, y, w, h, r) {\n  g.beginPath();\n  g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r);\n  g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r);\n  g.arcTo(x, y, x + w, y, r); g.closePath();\n}\n\ndocument.getElementById('hi').textContent = S.best;\nreset();\nlet last = 0;\nfunction loop(t) {\n  if (t - last > 92) { update(); last = t; }\n  draw();\n  requestAnimationFrame(loop);\n}\nrequestAnimationFrame(loop);\n<\/script>\n</body></html>"
+  },
+  '.bin.html-mandelbrot': {
+    kind:'file', mime:'text/html',
+    meta:{ hint:"HTML · Mandelbrot 分形（滚轮缩放 + 拖动平移）" },
+    content:"<!doctype html>\n<html lang=\"zh-CN\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no\">\n<title>Mandelbrot</title>\n<style>\n  html,body{margin:0;height:100%;background:#05070a;overflow:hidden;font:12px/1.5 ui-monospace,monospace;color:#9cf}\n  canvas{display:block;cursor:grab}\n  canvas.drag{cursor:grabbing}\n  #hud{position:fixed;left:12px;bottom:10px;padding:6px 10px;border-radius:8px;\n    background:#0b1218cc;border:1px solid #1b2b33;backdrop-filter:blur(8px);line-height:1.6}\n  #hud b{color:#5eead4;font-weight:500}\n</style></head>\n<body>\n<canvas id=\"c\"></canvas>\n<div id=\"hud\">中心 <b id=\"cx\">-0.5</b> + <b id=\"cy\">0</b>i · 缩放 <b id=\"z\">1</b>× · 迭代 <b id=\"it\">160</b> · 用时 <b id=\"ms\">0</b>ms<br>滚轮缩放 · 拖动平移 · 双击回原点</div>\n<script>\nconst c = document.getElementById('c');\nconst g = c.getContext('2d');\nlet W, H, DPR = Math.min(2, devicePixelRatio || 1);\nlet cx = -0.5, cy = 0, scale = 3.2, maxIter = 160;\n\nfunction resize() {\n  W = innerWidth; H = innerHeight;\n  c.width = W; c.height = H;\n  c.style.width = W + 'px'; c.style.height = H + 'px';\n  render();\n}\naddEventListener('resize', resize);\n\n/* 调色板：把逃逸次数映射成蓝绿到橙的渐变 */\nfunction palette(t) {\n  const s = Math.sin(t * 3.1), s2 = Math.sin(t * 1.7 + 2.4);\n  return [Math.round(20 + 60 * t), Math.round(60 + 120 * t + 30 * s), Math.round(90 + 120 * t + 40 * s2)];\n}\n\nlet busy = false, pending = null;\nfunction render() {\n  if (busy) { pending = true; return; }\n  busy = true;\n  const t0 = performance.now();\n  const img = g.createImageData(W, H);\n  const d = img.data;\n  const aspect = W / H;\n  const x0 = cx - scale / 2 * aspect, y0 = cy - scale / 2;\n  const dx = scale * aspect / W, dy = scale / H;\n\n  for (let py = 0; py < H; py++) {\n    const y = y0 + py * dy;\n    for (let px = 0; px < W; px++) {\n      const x = x0 + px * dx;\n      let zx = 0, zy = 0, i = 0;\n      /* 主心形快速排除：落在主心形里一定不逃逸 */\n      const q = (x - 0.25) * (x - 0.25) + y * y;\n      if (q * (q + (x - 0.25)) < 0.25 * y * y) i = maxIter;\n      else {\n        for (; i < maxIter; i++) {\n          const zx2 = zx * zx, zy2 = zy * zy;\n          if (zx2 + zy2 > 4) break;\n          zy = 2 * zx * zy + y;\n          zx = zx2 - zy2 + x;\n        }\n      }\n      const idx = (py * W + px) * 4;\n      if (i >= maxIter) { d[idx] = 4; d[idx + 1] = 7; d[idx + 2] = 10; d[idx + 3] = 255; }\n      else {\n        /* 平滑着色：用 log 去掉色带 */\n        const sm = i + 1 - Math.log(Math.log(Math.max(2, Math.sqrt(zx * zx + zy * zy)))) / Math.LN2;\n        const t = Math.min(1, sm / maxIter * 3.2);\n        const [r, gg, b] = palette(t);\n        d[idx] = r; d[idx + 1] = gg; d[idx + 2] = b; d[idx + 3] = 255;\n      }\n    }\n  }\n  g.putImageData(img, 0, 0);\n  const ms = performance.now() - t0;\n  document.getElementById('cx').textContent = cx.toFixed(9);\n  document.getElementById('cy').textContent = cy.toFixed(9);\n  document.getElementById('z').textContent = (3.2 / scale).toExponential(3);\n  document.getElementById('it').textContent = maxIter;\n  document.getElementById('ms').textContent = ms.toFixed(0);\n  busy = false;\n  if (pending) { pending = false; render(); }\n}\n\n/* 滚轮：以鼠标位置为不动点缩放 */\nc.addEventListener('wheel', e => {\n  e.preventDefault();\n  const rect = c.getBoundingClientRect();\n  const mx = e.clientX - rect.left, my = e.clientY - rect.top;\n  const aspect = W / H;\n  const wx = cx - scale / 2 * aspect + scale * aspect * mx / W;\n  const wy = cy - scale / 2 + scale * my / H;\n  const k = Math.exp(-e.deltaY * 0.0015);\n  const ns = Math.max(1e-14, Math.min(6, scale * k));\n  const f = ns / scale;\n  cx = wx + (cx - wx) * f;\n  cy = wy + (cy - wy) * f;\n  scale = ns;\n  if (scale < 0.02) maxIter = Math.min(2000, Math.round(160 + Math.log10(3.2 / scale) * 120));\n  render();\n}, { passive: false });\n\nlet dragging = false, lx = 0, ly = 0;\nc.addEventListener('pointerdown', e => { dragging = true; lx = e.clientX; ly = e.clientY; c.classList.add('drag'); c.setPointerCapture(e.pointerId); });\nc.addEventListener('pointermove', e => {\n  if (!dragging) return;\n  const aspect = W / H;\n  cx -= (e.clientX - lx) / W * scale * aspect;\n  cy -= (e.clientY - ly) / H * scale;\n  lx = e.clientX; ly = e.clientY;\n  render();\n});\nconst stop = () => { dragging = false; c.classList.remove('drag'); };\nc.addEventListener('pointerup', stop);\nc.addEventListener('pointercancel', stop);\nc.addEventListener('dblclick', () => { cx = -0.5; cy = 0; scale = 3.2; maxIter = 160; render(); });\n\nresize();\n<\/script>\n</body></html>"
+  },
+  '.bin.audit': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"能力自检：原生 JS / DOM / 异步 / 加密能不能跑", interpreter:'js' },
+    content:"\n/* .bin.audit —— 这台「JS 引擎」到底能不能跑真代码？\n * 每一项都真的执行，不看声明看结果。 */\nconst R = [];\nasync function T(name, fn) {\n  const t0 = performance.now();\n  try {\n    const v = await fn();\n    R.push([v === false ? 'FAIL' : 'OK  ', name, (performance.now() - t0).toFixed(1) + 'ms']);\n  } catch (e) {\n    R.push(['ERR ', name + ' :: ' + (e && e.message || e), '']);\n  }\n}\n\nawait T('BigInt 2^128', () => (2n ** 128n).toString(16) === '1' + '0'.repeat(32));\nawait T('生成器双向通信', () => { function* g() { const x = yield 1; yield x * 2; } const it = g(); it.next(); return it.next(21).value === 42; });\nawait T('async generator', async () => { async function* g() { yield 1; yield 2; } let s = 0; for await (const v of g()) s += v; return s === 3; });\nawait T('Proxy + Reflect', () => { const p = new Proxy({}, { get: (t, k) => k === 'x' ? 7 : 0 }); return p.x === 7 && Reflect.ownKeys({ a: 1 }).length === 1; });\nawait T('class 私有字段', () => { class A { #x = 1; get x() { return this.#x; } } return new A().x === 1; });\nawait T('static 块', () => { class B { static v; static { this.v = 9; } } return B.v === 9; });\nawait T('structuredClone', () => { const o = { a: [1, 2] }; const c = structuredClone(o); return c.a !== o.a && c.a[1] === 2; });\nawait T('Promise.withResolvers', async () => { const { promise, resolve } = Promise.withResolvers(); resolve(3); return await promise === 3; });\nawait T('Array.fromAsync', async () => (await Array.fromAsync((async function* () { yield 1; yield 2; })())).length === 2);\nawait T('Object.groupBy', () => Object.groupBy([1, 2, 3], n => n % 2 ? 'o' : 'e').o.length === 2);\nawait T('正则命名捕获/后行断言', () => /(?<y>\\d{4})/.exec('2026').groups.y === '2026' && /(?<=\\$)\\d+/.exec('$42')[0] === '42');\nawait T('正则 Unicode 属性', () => /\\p{Script=Han}/u.test('汉'));\nawait T('Intl.Segmenter 中文分词', () => [...new Intl.Segmenter('zh', { granularity: 'word' }).segment('汉字编码')].length >= 2);\nawait T('TypedArray 共享缓冲视图', () => new Uint8Array(new Uint16Array([258]).buffer)[0] === 2);\nawait T('TextEncoder 往返', () => new TextDecoder().decode(new TextEncoder().encode('汉字')) === '汉字');\nawait T('crypto.subtle SHA-256', async () => {\n  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('abc'));\n  return Array.from(new Uint8Array(b)).slice(0, 3).join(',') === '186,120,22';\n});\nawait T('crypto.subtle AES-GCM', async () => {\n  const k = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);\n  const iv = crypto.getRandomValues(new Uint8Array(12));\n  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode('secret'));\n  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, k, ct)) === 'secret';\n});\nawait T('CompressionStream gzip', async () => {\n  if (typeof CompressionStream === 'undefined') return false;\n  const s = new Blob(['x'.repeat(1000)]).stream().pipeThrough(new CompressionStream('gzip'));\n  return (await new Response(s).arrayBuffer()).byteLength > 0;\n});\nawait T('Worker + Blob URL', async () => {\n  const u = URL.createObjectURL(new Blob(['onmessage=e=>postMessage(e.data*2)'], { type: 'text/javascript' }));\n  const w = new Worker(u);\n  const v = await new Promise(r => { w.onmessage = e => r(e.data); w.postMessage(21); });\n  w.terminate(); URL.revokeObjectURL(u);\n  return v === 42;\n});\nawait T('动态 import(blob:)', async () => {\n  const u = URL.createObjectURL(new Blob(['export const x = 7;'], { type: 'text/javascript' }));\n  const m = await import(u); URL.revokeObjectURL(u);\n  return m.x === 7;\n});\nawait T('DOM 创建 / 属性 / 挂载', async () => {\n  const d = document.createElement('div');\n  d.id = '__audit_el'; d.textContent = 'hi';\n  d.setAttribute('data-k', 'v');\n  const ok1 = d.getAttribute('data-k') === 'v' && d.id === '__audit_el';\n  document.body.appendChild(d);\n  await sleep(60);\n  const got = document.getElementById('__audit_el');\n  const ok2 = !!got && got.textContent === 'hi';\n  d.remove();\n  return ok1 && ok2;\n});\nawait T('Canvas 真像素', () => {\n  const c = document.createElement('canvas'); c.width = 8; c.height = 8;\n  const x = c.getContext('2d'); x.fillStyle = '#f00'; x.fillRect(0, 0, 8, 8);\n  return x.getImageData(1, 1, 1, 1).data.join(',') === '255,0,0,255';\n});\nawait T('事件（主线程回放）', async () => {\n  const d = document.createElement('button');\n  document.body.appendChild(d);\n  let n = 0; d.addEventListener('click', () => n++);\n  await sleep(80); d.click(); await sleep(120); d.remove();\n  return n === 1;\n});\nawait T('localStorage 同步读写', () => { localStorage.setItem('__audit', '1'); const v = localStorage.getItem('__audit'); localStorage.removeItem('__audit'); return v === '1'; });\nawait T('fetch data: URL', async () => (await (await fetch('data:text/plain,hi')).text()) === 'hi');\n\nconsole.log('\\n===== 能力自检 =====');\nfor (const [k, n, d] of R) console.log(k + '  ' + n.padEnd(34, ' ') + d);\nconst ok = R.filter(x => x[0] === 'OK  ').length;\nconsole.log('\\n通过 ' + ok + ' / ' + R.length + (ok === R.length ? ' —— 全是真跑的' : ''));\nreturn ok + '/' + R.length;\n"
+  },
+  '.bin.bench': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:'基准测试：循环 / 数组 / Map / JSON / 正则 / TypedArray', interpreter:'js' },
+    content:"\n/* .bin.bench —— 不是「能跑」，是「跑得怎么样」。 */\nconst rows = [];\nfunction run(name, fn, scale) {\n  fn();                                        // 预热，别把 JIT 编译算进去\n  const t0 = performance.now();\n  const r = fn();\n  const ms = performance.now() - t0;\n  rows.push({ 项目: name, 耗时: ms.toFixed(2) + 'ms', 规模: scale, 结果: String(r).slice(0, 18) });\n}\n\nrun('for 循环累加', () => { let s = 0; for (let i = 0; i < 2e7; i++) s += i; return s; }, '2e7 次');\nrun('数组 push', () => { const a = []; for (let i = 0; i < 1e6; i++) a.push(i); return a.length; }, '1e6 个');\nrun('Map set/get', () => { const m = new Map(); for (let i = 0; i < 3e5; i++) m.set('k' + i, i); let s = 0; for (let i = 0; i < 3e5; i++) s += m.get('k' + i); return s; }, '3e5 次');\nrun('TypedArray 求和', () => { const a = new Float64Array(2e6); for (let i = 0; i < a.length; i++) a[i] = i * 0.5; let s = 0; for (let i = 0; i < a.length; i++) s += a[i]; return s.toFixed(0); }, '2e6 项');\nrun('JSON 往返', () => { const o = Array.from({ length: 5e4 }, (_, i) => ({ i, s: 'x' + i })); return JSON.parse(JSON.stringify(o)).length; }, '5e4 对象');\nrun('正则替换', () => 'a1b22c333'.repeat(20000).replace(/\\d+/g, '#').length, '2e5 字符');\nrun('排序 1e5', () => { const a = Array.from({ length: 1e5 }, () => Math.random()); a.sort((x, y) => x - y); return a[0] < a[99999]; }, '1e5 项');\nrun('字符串拼接', () => { let s = ''; for (let i = 0; i < 3e4; i++) s += 'x' + i; return s.length; }, '3e4 次');\nrun('BigInt 幂', () => { let n = 1n; for (let i = 0; i < 2000; i++) n = n * 3n % 1000000007n; return n; }, '2000 次');\n\nconsole.table(rows);\n\n/* 单线程跑分：整数 + 浮点混合 */\nconst t0 = performance.now();\nlet acc = 0;\nfor (let i = 0; i < 1e7; i++) acc = (acc + Math.sqrt(i) * 1.0000001) % 1e9;\nconst ms = performance.now() - t0;\nconsole.log('\\n混合计算 1e7 次：' + ms.toFixed(1) + 'ms（' + (1e7 / ms / 1000).toFixed(1) + ' Mops/s）· 校验和 ' + acc.toFixed(3));\nreturn rows.length + ' 项基准';\n"
+  },
+  '.bin.nqueens': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:'N 皇后：位运算回溯，统计解数与第一条解', interpreter:'js' },
+    content:"\n/* .bin.nqueens —— 递归 + 位运算。N=12 有 14200 个解。 */\nfunction solve(n, wantFirst) {\n  let count = 0, first = null;\n  const full = (1 << n) - 1;\n  const dfs = (row, cols, d1, d2, acc) => {\n    if (row === n) {\n      count++;\n      if (wantFirst && !first) first = acc.slice();\n      return;\n    }\n    let avail = full & ~(cols | d1 | d2);\n    while (avail) {\n      const bit = avail & -avail;\n      avail ^= bit;\n      const c = 31 - Math.clz32(bit);\n      acc.push(c);\n      dfs(row + 1, cols | bit, (d1 | bit) << 1, (d2 | bit) >> 1, acc);\n      acc.pop();\n    }\n  };\n  dfs(0, 0, 0, 0, []);\n  return { count, first };\n}\n\nconsole.log('N    解数        耗时');\nlet total = 0;\nfor (const n of [6, 7, 8, 9, 10, 11, 12]) {\n  const t0 = performance.now();\n  const r = solve(n, n === 8);\n  const ms = performance.now() - t0;\n  total += r.count;\n  console.log(String(n).padEnd(6) + String(r.count).padEnd(12) + ms.toFixed(1) + 'ms');\n  if (n === 8 && r.first) {\n    console.log('\\n8 皇后第一解（Q 皇后，· 空位）：');\n    for (let row = 0; row < 8; row++) {\n      let line = '  ';\n      for (let c = 0; c < 8; c++) line += (c === r.first[row] ? 'Q ' : '· ');\n      console.log(line);\n    }\n  }\n}\nconsole.log('\\n合计 ' + total + ' 个解');\nreturn total;\n"
+  },
+  '.bin.maze': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"迷宫：DFS 生成 + A* 求最短路", interpreter:'js' },
+    content:"\n/* .bin.maze —— 生成与求解都是真算法，不是画图。 */\nconst N = 12;                       // 12x12 格\nconst W = N * 2 + 1, H = N * 2 + 1;\nconst g = Array.from({ length: H }, () => Array(W).fill(1));   // 1 墙 0 路\nconst seen = Array.from({ length: N }, () => Array(N).fill(false));\n\nlet seed = 20261108;\nconst rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;\n\nconst stack = [[0, 0]];\nseen[0][0] = true;\ng[1][1] = 0;\nconst DIRS = [[0, 1], [1, 0], [0, -1], [-1, 0]];\nwhile (stack.length) {\n  const [x, y] = stack[stack.length - 1];\n  const next = DIRS.filter(([dx, dy]) => {\n    const nx = x + dx, ny = y + dy;\n    return nx >= 0 && ny >= 0 && nx < N && ny < N && !seen[ny][nx];\n  });\n  if (!next.length) { stack.pop(); continue; }\n  const [dx, dy] = next[(rnd() * next.length) | 0];\n  const nx = x + dx, ny = y + dy;\n  seen[ny][nx] = true;\n  g[ny * 2 + 1][nx * 2 + 1] = 0;\n  g[y * 2 + 1 + dy][x * 2 + 1 + dx] = 0;\n  stack.push([nx, ny]);\n}\n\n/* A*：曼哈顿距离，四邻域 */\nfunction astar(sx, sy, tx, ty) {\n  const key = (x, y) => y * W + x;\n  const open = [{ x: sx, y: sy, g: 0, f: 0, p: null }];\n  const best = new Map([[key(sx, sy), 0]]);\n  while (open.length) {\n    open.sort((a, b) => a.f - b.f);\n    const cur = open.shift();\n    if (cur.x === tx && cur.y === ty) {\n      const path = [];\n      for (let n = cur; n; n = n.p) path.push([n.x, n.y]);\n      return path.reverse();\n    }\n    for (const [dx, dy] of DIRS) {\n      const nx = cur.x + dx, ny = cur.y + dy;\n      if (nx < 0 || ny < 0 || nx >= W || ny >= H || g[ny][nx]) continue;\n      const ng = cur.g + 1;\n      const k = key(nx, ny);\n      if (best.has(k) && best.get(k) <= ng) continue;\n      best.set(k, ng);\n      open.push({ x: nx, y: ny, g: ng, f: ng + Math.abs(nx - tx) + Math.abs(ny - ty), p: cur });\n    }\n  }\n  return null;\n}\n\nconst path = astar(1, 1, W - 2, H - 2);\nconst mark = new Set(path.map(([x, y]) => y * W + x));\n\nlet out = '';\nfor (let y = 0; y < H; y++) {\n  let line = '';\n  for (let x = 0; x < W; x++) {\n    if (x === 1 && y === 1) line += 'S';\n    else if (x === W - 2 && y === H - 2) line += 'E';\n    else if (mark.has(y * W + x)) line += '\\x1b[36m·\\x1b[0m';\n    else line += g[y][x] ? '\\x1b[90m█\\x1b[0m' : ' ';\n  }\n  out += line + '\\n';\n}\nconsole.log(out);\nconsole.log('迷宫 ' + N + 'x' + N + ' · 最短路 ' + path.length + ' 步');\nreturn path.length;\n"
+  },
+  '.bin.raytrace': {
+    kind:'func', mime:'application/javascript',
+    meta:{ hint:"光线追踪：球体求交 + 兰伯特光照，ASCII 出图", interpreter:'js' },
+    content:"\n/* .bin.raytrace —— 每像素一条光线，真有交点、真有法线。 */\nconst sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];\nconst add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];\nconst mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];\nconst dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];\nconst norm = (a) => mul(a, 1 / Math.hypot(a[0], a[1], a[2]));\n\nconst SPHERES = [\n  { c: [-1.1, 0, -3.2], r: 0.85, col: 0.95 },\n  { c: [0.9, -0.25, -2.6], r: 0.55, col: 0.65 },\n  { c: [0.2, 1.1, -4.5], r: 0.7, col: 0.8 }\n];\nconst LIGHT = norm([-0.6, 0.9, 0.4]);\nconst W = 78, H = 34;\nconst CH = ' .:-=+*#%@';\n\nfunction trace(o, d) {\n  let best = Infinity, hit = null;\n  for (const s of SPHERES) {\n    const oc = sub(o, s.c);\n    const b = dot(oc, d);\n    const c = dot(oc, oc) - s.r * s.r;\n    const disc = b * b - c;\n    if (disc < 0) continue;\n    const t = -b - Math.sqrt(disc);\n    if (t > 0.001 && t < best) { best = t; hit = { s, t }; }\n  }\n  /* 地面：y = -1，取最近的一个正交点 */\n  if (Math.abs(d[1]) > 1e-6) {\n    const t = (-1 - o[1]) / d[1];\n    if (t > 0.001 && t < best) { best = t; hit = { ground: true, t }; }\n  }\n  if (!hit) return 0;\n  const p = add(o, mul(d, hit.t));\n  let n;\n  if (hit.ground) {\n    n = [0, 1, 0];\n    /* 棋盘格，不然地面是一整块灰 */\n    const k = (Math.floor(p[0]) + Math.floor(p[2])) & 1;\n    if (k) return 0.08;\n  } else n = norm(sub(p, hit.s.c));\n  const diff = Math.max(0, dot(n, LIGHT));\n  const amb = 0.12;\n  const v = hit.ground ? (amb + diff * 0.45) : (amb + diff * hit.s.col);\n  return Math.min(1, v);\n}\n\nconsole.log('渲染 ' + W + 'x' + H + ' · ' + SPHERES.length + ' 球 + 地面');\nconst t0 = performance.now();\nlet out = '';\nfor (let y = 0; y < H; y++) {\n  let line = '';\n  for (let x = 0; x < W; x++) {\n    const px = (x / W * 2 - 1) * 1.9;\n    const py = (1 - y / H * 2) * 0.95;\n    const d = norm([px, py, -1]);\n    const v = trace([0, 0.25, 0], d);\n    line += CH[Math.min(CH.length - 1, Math.round(Math.pow(v, 0.7) * (CH.length - 1)))];\n  }\n  out += line + '\\n';\n}\nconsole.log(out);\nconsole.log('光线 ' + (W * H) + ' 条 · ' + (performance.now() - t0).toFixed(1) + 'ms');\nreturn W * H;\n"
   },
   '.bin.ask': {
     kind:'func', mime:'application/javascript',
@@ -17490,10 +18424,21 @@ const DomRpc = {
         try { this._emit({ t: 'dom-event', id, ev: data }); } catch (err) {}
       }
     };
+    /* 只绑 document 的捕获阶段：click/input 这些都会从 document 下来，
+     * 再绑一份 window 会把同一个事件回放两次（脚本里 hit++ 一次点击加 2）。
+     * resize 不冒泡，单独绑 window。 */
     for (const t of types) {
       try { document.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
-      try { window.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
     }
+    try {
+      window.addEventListener('resize', (e) => {
+        if (!this._lis.size) return;
+        for (const [id, L] of this._lis) {
+          if (L.type !== 'resize') continue;
+          try { this._emit({ t:'dom-event', id, ev:{ type:'resize', target:null, path:[] } }); } catch (err) {}
+        }
+      }, true);
+    } catch (e) {}
   },
 
   async op(name, args) {
@@ -17634,6 +18579,12 @@ const DomRpc = {
         return this._tag(el);
       }
       /* ---------------- Worker 预分配 ref 的创建类（能同步返回句柄） ---------------- */
+      case 'queryId': {
+        const el = document.getElementById(String(args[0]));
+        if (!el) return null;
+        const ref = this._tag(el);
+        return this._desc(el, true);
+      }
       case 'queryAs': {
         const el = this._res(args[1]);
         if (!el) return null;

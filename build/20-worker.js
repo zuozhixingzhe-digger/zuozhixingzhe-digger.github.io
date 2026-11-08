@@ -147,6 +147,11 @@ async function callSafe(op, ...args) {
  * 只认 ASCII 的 {} () []；跳过字符串、模板串、行注释、块注释——
  * 否则 `console.log("}")` 会被当成少一个右括号。
  * open > 0 表示还有未闭合的括号，missing 是补齐需要的那串字符。 */
+/* spotfs 的路径是点分的，basename 就是最后一段。
+ * sptx 的 html 分支要拿它当窗口标题——之前这里直接引用了主线程的 baseName，
+ * Worker 里根本没有，于是「打开任何 .html 文件」都 ReferenceError。 */
+function baseName(p) { return String(p == null ? '' : p).split('.').pop(); }
+
 function scanJs(text) {
   const stack = [];
   const pairs = { '}':'{', ')':'(', ']':'[' };
@@ -976,7 +981,8 @@ function makeShell(ctx) {
     if (st.kind === 'device') { await deviceOpen(t, st); return; }
     if (st.kind === 'package') { await loadPackage(st.meta.spec || st.name); return; }
     if (st.kind === 'grant') { await call('perm.request', st.meta.perm || st.name); return; }
-    // 普通文件：文本用编辑器窗口，二进制下载
+    // 普通文件：HTML 用浏览器窗口（和「双击 .html」一致），二进制下载，其余编辑器
+    if (st.meta && /html/i.test(String(st.meta.mime || ''))) { return sptx(t); }
     if (st.meta && (st.meta.mime === 'application/octet-stream' || st.meta.binary)) {
       await call('file.download', t); return;
     }
@@ -1179,6 +1185,9 @@ function makeShell(ctx) {
       /* 不做「裸命令自动调用」：JSHeL 只按真实 JS 求值，
        * `ls` 得到函数对象本身，`ls()` 才是调用。 */
       state.last = value;
+      /* Node / 浏览器控制台的约定：`_` 就是上一次的结果。
+       * 只在有值时更新，undefined 不覆盖上一次（和 Node 一致）。 */
+      if (value !== undefined) globalThis._ = value;
     } catch (e) {
       if (e === EXIT) throw e;
       error = e;
@@ -1189,6 +1198,9 @@ function makeShell(ctx) {
        * 以前这里是偷偷把 `ls -la` 当 shell 跑掉，那才叫不可预测。 */
       /* 敲了 shell 命令却没进 shell：SyntaxError（`ls -la`）和 ReferenceError
        * （`nano x`）都会发生。这里只补一句指路，不改变求值方式。 */
+      if (e instanceof SyntaxError && /^\s*import\b/.test(String(code))) {
+        out(ANSI.gray + '提示：这里的 import 语句不能直接跑。用 await import(URL.createObjectURL(new Blob([code],{type:"text/javascript"}))) 加载模块。' + ANSI.reset + '\r\n');
+      }
       if (e instanceof SyntaxError || e instanceof ReferenceError) {
         const first = String(code).trim().split(/[\s|;>]+/)[0] || '';
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
@@ -1283,11 +1295,18 @@ function makeShell(ctx) {
       set:(k, v) => call('settings.set', String(k), v),
       all:() => call('settings.all')
     },
+    /* print 是 JSHeL 的终端输出（Python 习惯）。注意它和 window.print 不是一回事：
+     * window.print() 仍然走浏览器打印对话框（见 windowShim）。 */
+    print: (...a) => out(fmtArgs(a) + '\r\n'),
+    /* 控制台惯例：$ / $$ 是 querySelector 的简写（浏览器 devtools 里一直有）。
+     * 它们只是别名，不改变任何语义。 */
+    $: (sel) => globalThis.document.querySelector(sel),
+    $$: (sel) => [...globalThis.document.querySelectorAll(sel)],
     whoami, uname, date, echo, env, ps, kill, nuke, clear, history:historyList, help, exit,
     sleep:(ms) => new Promise(r => setTimeout(r, ms)),
     uuid:() => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2)),
     // 内建对象
-    console:con,
+    console:globalThis.console,
     fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
          sptc, sptn, spta, sptr, sptx, sptd, sptm, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
@@ -1324,15 +1343,17 @@ function makeShell(ctx) {
 
 const DOMC = {
   root: null,            // 最近一次 snap 的结果
-  nodes: new Map(),      // ref -> desc
+  nodes: new Map(),      // ref -> desc（本地影子 + 远程快照合并后的结果）
   bySel: new Map(),      // 选择器 -> desc（预取填充）
+  byId: new Map(),       // id -> ref（本地挂载/扫描出来的，同步查得到）
   lists: new Map(),      // 选择器 -> desc[]
   proxies: new Map(),    // ref -> Proxy
   refSeq: 0,
+  seqcounter: 0,         // 事件监听 id
   listeners: new Map(),  // id -> { type, fn, sel }
   chosen: new Map(),     // 回调函数 -> listener id
   newRef() { return '\u0001w' + (++this.refSeq); },
-  clear() { this.nodes.clear(); this.bySel.clear(); this.lists.clear(); this.proxies.clear(); }
+  clear() { this.nodes.clear(); this.bySel.clear(); this.byId.clear(); this.lists.clear(); this.proxies.clear(); }
 };
 
 const HTML_NS = '[object HTMLElement]';
@@ -1344,6 +1365,152 @@ function refOf(x) {
   if (typeof x === 'string') return x;
   if (x.__ref) return x.__ref;
   return null;
+}
+
+/* ================================================================
+ * 本地影子节点
+ *
+ * Worker 与主线程之间没有同步通道。原生 `el.setAttribute('x','1')` 之后
+ * 立刻 `el.getAttribute('x')` 必须拿到 '1' —— 靠「发出去再等回来」永远
+ * 做不到。所以在 Worker 里先记一份影子：写立刻改影子（因此读立刻正确），
+ * 同时异步把真操作发给主线程。主线程返回快照时只补本地不知道的部分
+ * （位置、计算样式、真实子节点），本地写过的字段不覆盖。
+ *
+ * 这不是「模拟 DOM」，是 DOM 的写通缓存：真的节点仍然在主线程上，
+ * 页面上看到的、事件命中的、F12 里查到的都是它。
+ * ================================================================ */
+function localNode(ref, tag) {
+  const d = {
+    ref, tag: String(tag || 'div').toLowerCase(), id: '', cls: '',
+    text: '', html: '', value: undefined, checked: false, selected: false,
+    attrs: {}, children: [], parent: null, connected: true,
+    rect: { x: 0, y: 0, w: 0, h: 0 }, computed: {},
+    __local: 1, __inDoc: false
+  };
+  DOMC.nodes.set(ref, d);
+  return d;
+}
+
+function isDocRoot(ref) {
+  if (ref === '\u0001doc') return true;
+  const r = DOMC.root;
+  if (!r) return false;
+  return [r.body, r.html, r.doc, r.head].some(x => x && x.ref === ref);
+}
+
+function markInDoc(ref, on) {
+  const d = DOMC.nodes.get(ref);
+  if (!d) return;
+  d.__inDoc = !!on;
+  if (on && d.id) DOMC.byId.set(d.id, ref);
+  if (!on && d.id && DOMC.byId.get(d.id) === ref) DOMC.byId.delete(d.id);
+  for (const c of (d.children || [])) markInDoc(c, on);
+}
+
+/* 远程快照回来时合并：本地写过的优先 */
+function mergeDesc(ref, remote) {
+  if (!remote) return null;
+  const cur = DOMC.nodes.get(ref);
+  if (!cur || cur === remote) { DOMC.nodes.set(ref, remote); return remote; }
+  if (cur.__local) {
+    remote.attrs = Object.assign({}, remote.attrs || {}, cur.attrs || {});
+    remote.id = cur.id || remote.id || '';
+    remote.cls = cur.cls || remote.cls || '';
+    if (cur.__dirtyText) remote.text = cur.text;
+    if (cur.__dirtyHtml) remote.html = cur.html;
+    if (cur.__canvas) remote.__canvas = cur.__canvas;
+    if (cur.children && cur.children.length) remote.children = cur.children;
+    if (cur.parent) remote.parent = cur.parent;
+    remote.__inDoc = cur.__inDoc;
+    remote.__local = 1;
+    DOMC.nodes.set(ref, remote);
+    if (remote.id) DOMC.byId.set(remote.id, ref);
+  }
+  return remote;
+}
+
+/* innerHTML 里的 id 先扫出来，异步换回真 ref 登记进 byId。
+ * 这样 `d.innerHTML = '<b id="x">'; await sleep(0); document.getElementById('x')`
+ * 就能命中——不 await 的那一瞬间仍然不行，这是跨线程的物理下限。 */
+function harvestIds(html) {
+  const src = String(html || '');
+  const re = /\bid\s*=\s*["']([^"']+)["']/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const id = m[1];
+    if (!id || DOMC.byId.has(id)) continue;
+    call('dom.op', 'queryId', [id]).then(d => {
+      if (d && d.ref) { mergeDesc(d.ref, d); DOMC.byId.set(id, d.ref); if (!DOMC.nodes.has(d.ref)) DOMC.nodes.set(d.ref, d); }
+    }).catch(() => {});
+  }
+}
+
+function applyLocalProps(d, props) {
+  if (!props || typeof props !== 'object') return;
+  for (const k of Object.keys(props)) {
+    const v = props[k];
+    try {
+      if (k === 'style') {
+        const css = typeof v === 'string' ? v : Object.keys(v || {}).map(p => p + ':' + v[p]).join(';');
+        d.attrs.style = css;
+      } else if (k === 'dataset') {
+        for (const p of Object.keys(v || {})) d.attrs['data-' + camel2kebab(p)] = String(v[p]);
+      } else if (k === 'className') { d.cls = String(v); d.attrs['class'] = String(v); }
+      else if (k === 'id') { d.id = String(v); d.attrs.id = String(v); }
+      else if (k === 'html' || k === 'innerHTML') { d.html = String(v); d.__dirtyHtml = 1; d.text = stripTags(v); }
+      else if (k === 'textContent' || k === 'text') { d.text = String(v); d.__dirtyText = 1; }
+      else if (k === 'value') d.value = v;
+      else if (k === 'checked') d.checked = !!v;
+      else d.attrs[k] = String(v);
+    } catch (e) {}
+  }
+}
+
+/* 极简去标签：只用于 textContent 的近似值，不追求 HTML 语义 */
+function stripTags(html) {
+  return String(html == null ? '' : html).replace(/<[^>]*>/g, '');
+}
+
+/* 把一个子节点挂到父节点上（本地影子 + 远程真节点）。
+ * 只有挂进文档（body / html / document）的节点才登记 id，
+ * 否则 `const d = createElement(); d.id='x'` 会污染 getElementById —— 原生不会。 */
+function linkChild(parentRef, child) {
+  const r = refOf(child);
+  if (!r) return child;
+  unlinkChild(r);
+  const pd = DOMC.nodes.get(parentRef);
+  const cd = DOMC.nodes.get(r);
+  if (pd) {
+    pd.children = pd.children || [];
+    if (!pd.children.includes(r)) pd.children.push(r);
+  }
+  if (cd) cd.parent = parentRef;
+  callDom('append', parentRef, r);
+  if ((isDocRoot(parentRef) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+  return child;
+}
+
+function unlinkChild(ref) {
+  const d = DOMC.nodes.get(ref);
+  const p = d && d.parent;
+  if (p) {
+    const pd = DOMC.nodes.get(p);
+    if (pd && pd.children) pd.children = pd.children.filter(x => x !== ref);
+    d.parent = null;
+  }
+  if (d && d.id && DOMC.byId.get(d.id) === ref) DOMC.byId.delete(d.id);
+  markInDoc(ref, false);
+  /* 父节点上还挂着的兄弟不受影响；这里只改自己这一支 */
+  if (d) d.__inDoc = false;
+}
+
+/* 本地树里找 id（只认挂进文档的节点，和原生一致） */
+function localById(id) {
+  const r = DOMC.byId.get(String(id));
+  if (!r) return null;
+  const d = DOMC.nodes.get(r);
+  if (!d) { DOMC.byId.delete(String(id)); return null; }
+  return r;
 }
 
 /* ---------------------------------------------------------------- 元素句柄 */
@@ -1432,19 +1599,71 @@ function nodeProxy(ref) {
     click: () => { callDom('click', ref); },
     focus: () => { callDom('focus', ref); },
     blur: () => { callDom('blur', ref); },
-    remove: () => { callDom('remove', ref); },
+    remove: () => { unlinkChild(ref); callDom('remove', ref); },
     getAttribute: (n) => { const d = D(); return d && d.attrs && String(n) in d.attrs ? d.attrs[String(n)] : null; },
-    setAttribute: (n, v) => { callDom('setAttr', ref, String(n), String(v)); const d = D(); if (d) { d.attrs = d.attrs || {}; d.attrs[String(n)] = String(v); } },
-    removeAttribute: (n) => { callDom('rmAttr', ref, String(n)); const d = D(); if (d && d.attrs) delete d.attrs[String(n)]; },
+    setAttribute: (n, v) => {
+      const name = String(n), val = String(v);
+      callDom('setAttr', ref, name, val);
+      const d = D();
+      if (d) {
+        d.attrs = d.attrs || {};
+        d.attrs[name] = val;
+        if (name === 'id') { d.id = val; if (d.__inDoc || isDocRoot(ref)) DOMC.byId.set(val, ref); }
+        if (name === 'class') d.cls = val;
+        if (name === 'value') d.value = val;
+        if (name === 'checked') d.checked = val !== 'false' && val !== '';
+      }
+    },
+    removeAttribute: (n) => {
+      const name = String(n);
+      callDom('rmAttr', ref, name);
+      const d = D();
+      if (d && d.attrs) delete d.attrs[name];
+      if (name === 'id') { const d2 = D(); if (d2) d2.id = ''; if (DOMC.byId.get(String(d && d.id)) === ref) DOMC.byId.delete(String(d && d.id)); }
+    },
     hasAttribute: (n) => { const d = D(); return !!(d && d.attrs && String(n) in d.attrs); },
     toggleAttribute: (n, force) => { const has = M.hasAttribute(n); const on = force === undefined ? !has : !!force; if (on) M.setAttribute(n, ''); else M.removeAttribute(n); return on; },
     getAttributeNames: () => Object.keys((D() && D().attrs) || {}),
-    appendChild: (child) => { const r = refOf(child); if (r) callDom('append', ref, r); return child; },
-    append: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('appendHtml', ref, n); else { const r = refOf(n); if (r) callDom('append', ref, r); } } },
-    prepend: (...nodes) => { for (const n of nodes) { if (typeof n === 'string') callDom('prependHtml', ref, n); else { const r = refOf(n); if (r) callDom('prepend', ref, r); } } },
-    insertBefore: (child, before) => { const r = refOf(child); if (r) callDom('insertBefore', ref, r, before ? refOf(before) : null); return child; },
-    removeChild: (child) => { const r = refOf(child); if (r) callDom('removeChild', ref, r); return child; },
-    replaceChild: (n, o) => { callDom('replaceChild', ref, refOf(n), refOf(o)); return o; },
+    appendChild: (child) => { linkChild(ref, child); return child; },
+    append: (...nodes) => {
+      for (const n of nodes) {
+        if (typeof n === 'string') { callDom('appendHtml', ref, n); harvestIds(n); }
+        else linkChild(ref, n);
+      }
+    },
+    prepend: (...nodes) => {
+      for (const n of nodes) {
+        if (typeof n === 'string') { callDom('prependHtml', ref, n); harvestIds(n); }
+        else {
+          const r = refOf(n);
+          if (!r) continue;
+          unlinkChild(r);
+          const pd = DOMC.nodes.get(ref), cd = DOMC.nodes.get(r);
+          if (pd) { pd.children = pd.children || []; pd.children.unshift(r); }
+          if (cd) cd.parent = ref;
+          callDom('prepend', ref, r);
+          if ((isDocRoot(ref) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+        }
+      }
+    },
+    insertBefore: (child, before) => {
+      const r = refOf(child);
+      if (r) {
+        unlinkChild(r);
+        const pd = DOMC.nodes.get(ref), cd = DOMC.nodes.get(r), bd = before ? DOMC.nodes.get(refOf(before)) : null;
+        if (pd) {
+          pd.children = pd.children || [];
+          const i = bd ? pd.children.indexOf(refOf(before)) : -1;
+          if (i >= 0) pd.children.splice(i, 0, r); else pd.children.push(r);
+        }
+        if (cd) cd.parent = ref;
+        callDom('insertBefore', ref, r, before ? refOf(before) : null);
+        if ((isDocRoot(ref) || (pd && pd.__inDoc)) && cd) markInDoc(r, true);
+      }
+      return child;
+    },
+    removeChild: (child) => { const r = refOf(child); if (r) { unlinkChild(r); callDom('removeChild', ref, r); } return child; },
+    replaceChild: (n, o) => { const rn = refOf(n), ro = refOf(o); if (ro) unlinkChild(ro); if (rn) linkChild(ref, n); callDom('replaceChild', ref, rn, ro); return o; },
     insertAdjacentHTML: (pos, html) => { callDom('insertHtml', ref, String(pos), String(html)); },
     insertAdjacentText: (pos, txt) => { callDom('insertHtml', ref, String(pos), String(txt).replace(/[&<>]/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m]))); },
     cloneNode: (deep) => { const r = DOMC.newRef(); callDom('cloneAs', ref, r, !!deep); return nodeProxy(r); },
@@ -1471,8 +1690,7 @@ function nodeProxy(ref) {
     setAttributeNS: (ns, n, v) => M.setAttribute(n, v),
     addEventListener: (type, fn) => {
       if (typeof fn !== 'function') return;
-      const key = ref + '|' + type + '|' + DOMC.listeners.size;
-      const id = (++DOMC.seqcounter) || (DOMC.seqcounter = 1);
+      const id = ++DOMC.seqcounter;
       DOMC.listeners.set(id, { type: String(type), fn, sel: ref });
       DOMC.chosen.set(fn, id);
       callDom('listen', ref, String(type)).then(real => {
@@ -1488,9 +1706,49 @@ function nodeProxy(ref) {
       DOMC.listeners.delete(id);
       DOMC.chosen.delete(fn);
     },
-    dispatchEvent: (ev) => { callDom('dispatch', ref, (ev && ev.type) || 'click', (ev && ev.detail)); return true; }
+    dispatchEvent: (ev) => { callDom('dispatch', ref, (ev && ev.type) || 'click', (ev && ev.detail)); return true; },
+
+    /* canvas：Worker 里没有 HTMLCanvasElement，但 OffscreenCanvas 是真的 2D/WebGL 实现。
+     * getContext 返回它，于是 `c.getContext('2d').fillRect(...)`、`getImageData` 都是真像素。
+     * 唯一差别是 toDataURL 只能异步（OffscreenCanvas 没有同步编码器）。 */
+    getContext(kind, opts) {
+      const d = D();
+      if (!d) return null;
+      if (!d.__canvas && typeof OffscreenCanvas !== 'undefined') {
+        const w = Number(d.attrs && d.attrs.width) || 300;
+        const h = Number(d.attrs && d.attrs.height) || 150;
+        d.__canvas = new OffscreenCanvas(w, h);
+      }
+      if (!d.__canvas) return null;
+      d.__canvas.width = Number((d.attrs && d.attrs.width) || d.__canvas.width) || 300;
+      d.__canvas.height = Number((d.attrs && d.attrs.height) || d.__canvas.height) || 150;
+      try { return d.__canvas.getContext(String(kind || '2d'), opts); } catch (e) { return null; }
+    },
+    toDataURL(type, q) {
+      const d = D();
+      if (d && d.__canvas && d.__canvas.convertToBlob) {
+        return d.__canvas.convertToBlob({ type: type || 'image/png', quality: q }).then(async (b) => {
+          const buf = new Uint8Array(await b.arrayBuffer());
+          let bin = '';
+          for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
+          return 'data:' + (type || 'image/png') + ';base64,' + btoa(bin);
+        });
+      }
+      return Promise.resolve('');
+    },
+    toBlob(cb, type, q) {
+      const p = this.toDataURL(type, q);
+      p.then(u => {
+        const m = /^data:([^;]+);base64,(.*)$/.exec(u);
+        if (!m) return;
+        const bin = atob(m[2]);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        if (typeof cb === 'function') cb(new Blob([arr], { type: m[1] }));
+      });
+      return p;
+    }
   };
-  DOMC.seqcounter = DOMC.seqcounter || 0;
 
   const handler = {
     get(t, k) {
@@ -1517,6 +1775,8 @@ function nodeProxy(ref) {
         case 'textContent':
         case 'innerText': return d ? (d.text || '') : '';
         case 'value': return d && d.value !== undefined ? d.value : '';
+        case 'width': return d && d.__canvas ? d.__canvas.width : (d && d.attrs ? Number(d.attrs.width) || 0 : 0);
+        case 'height': return d && d.__canvas ? d.__canvas.height : (d && d.attrs ? Number(d.attrs.height) || 0 : 0);
         case 'checked': return !!(d && d.checked);
         case 'selected': return !!(d && d.selected);
         case 'id': return d ? (d.id || '') : '';
@@ -1572,11 +1832,31 @@ function nodeProxy(ref) {
     },
     set(t, k, v) {
       if (typeof k === 'symbol') return true;
-      if (k === 'innerHTML') { callDom('setHtml', ref, String(v)); const d = D(); if (d) d.html = String(v); return true; }
+      if (k === 'innerHTML') { callDom('setHtml', ref, String(v)); const d = D(); if (d) { d.html = String(v); d.__dirtyHtml = 1; d.text = stripTags(v); } harvestIds(v); return true; }
       if (k === 'outerHTML') { callDom('setOuter', ref, String(v)); return true; }
-      if (k === 'textContent' || k === 'innerText') { callDom('setText', ref, String(v)); const d = D(); if (d) d.text = String(v); return true; }
-      if (k === 'className') { callDom('setProp', ref, 'className', String(v)); const d = D(); if (d) d.cls = String(v); return true; }
-      if (k === 'id') { callDom('setProp', ref, 'id', String(v)); const d = D(); if (d) d.id = String(v); return true; }
+      if (k === 'textContent' || k === 'innerText') {
+        callDom('setText', ref, String(v));
+        const d = D();
+        if (d) { d.text = String(v); d.__dirtyText = 1; }
+        return true;
+      }
+      if (k === 'className') { callDom('setProp', ref, 'className', String(v)); const d = D(); if (d) { d.cls = String(v); d.attrs = d.attrs || {}; d.attrs['class'] = String(v); } return true; }
+      if (k === 'id') {
+        callDom('setProp', ref, 'id', String(v));
+        const d = D();
+        if (d) {
+          d.id = String(v); d.attrs = d.attrs || {}; d.attrs.id = String(v);
+          if (d.__inDoc || isDocRoot(ref)) DOMC.byId.set(d.id, ref);
+        }
+        return true;
+      }
+      if ((k === 'width' || k === 'height') && D() && D().__canvas) {
+        const d0 = D();
+        d0.attrs = d0.attrs || {};
+        d0.attrs[k] = String(v);
+        if (k === 'width') d0.__canvas.width = Number(v) || 0; else d0.__canvas.height = Number(v) || 0;
+        return true;
+      }
       if (k === 'style') { callDom('setProp', ref, 'style', String(v)); return true; }
       if (k === 'value') { callDom('setProp', ref, 'value', v); const d = D(); if (d) d.value = v; return true; }
       if (k === 'checked') { callDom('setProp', ref, 'checked', !!v); const d = D(); if (d) d.checked = !!v; return true; }
@@ -1687,12 +1967,30 @@ async function prefetchDom(code) {
 function makeDocument() {
   const c = (op, ...args) => call('dom.op', op, args);
   const docRef = '\u0001doc';
+  const selectionShim = {
+    rangeCount: 0, type: 'None', isCollapsed: true, anchorNode: null, focusNode: null,
+    anchorOffset: 0, focusOffset: 0,
+    toString() { return ''; },
+    getRangeAt() { return document.createRange(); },
+    removeAllRanges() {}, addRange() {}, empty() {},
+    collapse() {}, collapseToStart() {}, collapseToEnd() {},
+    selectAllChildren() {}, removeRange() {}, extend() {}, setBaseAndExtent() {},
+    containsNode() { return false; }
+  };
 
   const elsFromSel = (sel) => {
     const d = DOMC.bySel.get(sel);
     if (d && d.ref) return nodeProxy(d.ref);
     const r = DOMC.newRef();
-    call('dom.op', 'queryAs', [r, String(sel)]).then(x => { if (x && x.ref) { DOMC.nodes.set(x.ref, x); DOMC.bySel.set(sel, x); } }).catch(() => {});
+    /* 先在表里占住这个 ref：同一个选择器第二次、第三次访问拿到的还是它，
+     * 于是 RPC 一回来，之前拿到的 proxy 立刻就能读到值（不用重新查）。 */
+    const placeholder = { ref: r, __pending: true };
+    DOMC.nodes.set(r, placeholder);
+    DOMC.bySel.set(sel, placeholder);
+    call('dom.op', 'queryAs', [r, String(sel)]).then(x => {
+      if (x && x.ref) { DOMC.nodes.set(x.ref, x); DOMC.bySel.set(sel, x); if (x.id) DOMC.byId.set(x.id, x.ref); }
+      else { DOMC.bySel.delete(sel); DOMC.nodes.delete(r); }
+    }).catch(() => {});
     return nodeProxy(r);
   };
 
@@ -1716,16 +2014,39 @@ function makeDocument() {
     get dir() { return 'ltr'; },
     hasFocus: () => true,
 
-    /* ---- 树根 ---- */
-    get documentElement() { return elsFromSel('html'); },
-    get body() { return elsFromSel('body'); },
-    get head() { return elsFromSel('head'); },
+    /* ---- 树根 ----
+     * 优先用快照里的那个 ref：这样 `document.body.appendChild(x)` 和
+     * `isDocRoot()` 认的是同一个节点，本地 id 索引才能正确判断「进没进文档」。
+     * （每次重新 query 会拿到新 ref，两个句柄指向同一个真节点，但本地树会把
+     *  它们当成两个爸爸。） */
+    get documentElement() {
+      const h = DOMC.root && DOMC.root.html;
+      if (h && h.ref) { if (!DOMC.nodes.has(h.ref)) DOMC.nodes.set(h.ref, h); return nodeProxy(h.ref); }
+      return elsFromSel('html');
+    },
+    get body() {
+      const b = DOMC.root && DOMC.root.body;
+      if (b && b.ref) { if (!DOMC.nodes.has(b.ref)) DOMC.nodes.set(b.ref, b); return nodeProxy(b.ref); }
+      return elsFromSel('body');
+    },
+    get head() {
+      const h = DOMC.root && DOMC.root.head;
+      if (h && h.ref) { if (!DOMC.nodes.has(h.ref)) DOMC.nodes.set(h.ref, h); return nodeProxy(h.ref); }
+      return elsFromSel('head');
+    },
     get activeElement() { return DOMC.root && DOMC.root.active ? nodeProxy(DOMC.root.active.ref) : elsFromSel('body'); },
     get scrollingElement() { return elsFromSel('html'); },
     get children() { const h = DOMC.root && (DOMC.root.html || DOMC.root.doc); return h ? [nodeProxy(h.ref)] : []; },
 
     /* ---- 查询 ---- */
-    querySelector: (sel) => { try { return elsFromSel(String(sel)); } catch (e) { throw new Error('querySelector: ' + sel + ' 不是有效选择器'); } },
+    querySelector: (sel) => {
+      try {
+        const q = String(sel).trim();
+        const m = /^#([\w\u00a0-\uffff-]+)$/.exec(q);
+        if (m) { const r = localById(m[1]); if (r) return nodeProxy(r); }
+        return elsFromSel(q);
+      } catch (e) { throw new Error('querySelector: ' + sel + ' 不是有效选择器'); }
+    },
     querySelectorAll: (sel) => {
       const key = String(sel);
       const cached = DOMC.lists.get(key);
@@ -1743,29 +2064,61 @@ function makeDocument() {
       arr.item = (i) => arr[i] || null;
       return arr;
     },
-    getElementById: (id) => elsFromSel('#' + String(id).replace(/[^\w\u00a0-\uffff-]/g, '\\$&')),
+    getElementById: (id) => {
+      /* 先查本地索引：刚 append 的元素、刚 setHtml 扫到的 id 都在里面，
+       * 这一步是同步的，原生什么时序这里就是什么时序。 */
+      const r = localById(id);
+      if (r) return nodeProxy(r);
+      return elsFromSel('#' + String(id).replace(/[^\w\u00a0-\uffff-]/g, '\\$&'));
+    },
     getElementsByClassName: (cls) => document.querySelectorAll('.' + String(cls).trim().split(/\s+/).join('.')),
     getElementsByTagName: (tag) => document.querySelectorAll(String(tag) === '*' ? '*' : String(tag)),
     getElementsByName: (n) => document.querySelectorAll('[name="' + String(n).replace(/"/g, '\\"') + '"]'),
+
+    /* 老式集合：原生返回 HTMLCollection（可迭代、有 length / item / namedItem）。
+     * 这里返回 querySelectorAll 的数组，可迭代、有 length，够脚本用。 */
+    get forms() { return document.querySelectorAll('form'); },
+    get images() { return document.querySelectorAll('img'); },
+    get links() { return document.querySelectorAll('a[href],area[href]'); },
+    get scripts() { return document.querySelectorAll('script'); },
+    get embeds() { return document.querySelectorAll('embed,object'); },
+    get styleSheets() { return []; },
+    get fonts() { return { ready: Promise.resolve(), check() { return true; }, load() { return Promise.resolve([]); } }; },
+    get timeline() { return { currentTime: (typeof performance !== 'undefined' ? performance.now() : Date.now()) }; },
+    get currentScript() { return null; },
+    get doctype() { return { name: 'html' }; },
     elementFromPoint: (x, y) => { const r = DOMC.newRef(); call('dom.op', 'fromPoint', [r, x, y]).catch(() => {}); return nodeProxy(r); },
 
     /* ---- 创建 ---- */
     createElement: (tag, opts) => {
       const r = DOMC.newRef();
+      const name = String(tag).toLowerCase();
       let props = null, html = null;
       if (typeof opts === 'string') html = opts;
       else if (opts && typeof opts === 'object') props = opts;
-      call('dom.op', 'createAs', [r, String(tag), props, html]).catch(() => {});
+      /* 先建本地影子：`const d = document.createElement('div'); d.id='x'` 之后
+       * 立刻 `d.id` / `d.getAttribute('id')` 就是 'x'，不用等主线程。 */
+      const d = localNode(r, name);
+      if (name === 'canvas' && typeof OffscreenCanvas !== 'undefined') {
+        d.__canvas = new OffscreenCanvas(300, 150);
+      }
+      if (props) applyLocalProps(d, props);
+      if (html != null) { d.html = String(html); d.__dirtyHtml = 1; d.text = stripTags(html); harvestIds(html); }
+      call('dom.op', 'createAs', [r, name, props, html]).then(x => { if (x) mergeDesc(r, x); }).catch(() => {});
       return nodeProxy(r);
     },
     createElementNS: (ns, tag) => document.createElement(String(tag).replace(/^.*:/, '')),
     createTextNode: (t) => {
       const r = DOMC.newRef();
-      call('dom.op', 'createTextAs', [r, String(t == null ? '' : t)]).catch(() => {});
+      const d = localNode(r, '#text');
+      d.text = String(t == null ? '' : t);
+      d.__dirtyText = 1;
+      call('dom.op', 'createTextAs', [r, d.text]).catch(() => {});
       return nodeProxy(r);
     },
     createDocumentFragment: () => {
       const r = DOMC.newRef();
+      localNode(r, '#fragment');
       call('dom.op', 'createFragmentAs', [r]).catch(() => {});
       return nodeProxy(r);
     },
@@ -1784,6 +2137,39 @@ function makeDocument() {
     },
     open() { call('dom.op', 'docOpen', []).then(() => DOMC.clear()).catch(() => {}); return this; },
     close() { call('dom.op', 'docClose', []).catch(() => {}); },
+
+    /* ---- 选区 ----
+     * Worker 里没有真选区（选区属于渲染进程）。这里给一个同形状的对象：
+     * toString() 返回空串，rangeCount=0。要读真实选区用 page.selection()。 */
+    getSelection() { return selectionShim; },
+    createRange() {
+      const body = elsFromSel('body');
+      return {
+        startContainer: body, endContainer: body, startOffset: 0, endOffset: 0,
+        collapsed: true, commonAncestorContainer: body,
+        setStart() {}, setEnd() {}, setStartBefore() {}, setEndAfter() {},
+        selectNode() {}, selectNodeContents() {}, collapse() {}, detach() {},
+        cloneContents() { return document.createDocumentFragment(); },
+        extractContents() { return document.createDocumentFragment(); },
+        insertNode() {}, deleteContents() {},
+        getBoundingClientRect() { return { x:0, y:0, width:0, height:0, top:0, left:0, right:0, bottom:0, toJSON(){ return this; } }; },
+        getClientRects() { return []; },
+        toString() { return ''; }
+      };
+    },
+    execCommand() { return false; },
+    queryCommandSupported() { return false; },
+    queryCommandState() { return false; },
+
+    /* ---- Document 也是 Node：原生可以 appendChild 到 document。
+     * 这里落到 body 上（document 的直接子节点只能是 html，硬塞会抛错）。 */
+    appendChild(n) { if (document.body) document.body.appendChild(n); return n; },
+    insertBefore(n, b) { if (document.body) document.body.insertBefore(n, b); return n; },
+    removeChild(n) { if (document.body) document.body.removeChild(n); return n; },
+    replaceChild(n, o) { if (document.body) document.body.replaceChild(n, o); return o; },
+    contains(n) { const r = refOf(n); if (!r) return false; const d = DOMC.nodes.get(r); return !!(d && (d.__inDoc || isDocRoot(r))); },
+    cloneNode() { return document.createElement('html'); },
+    hasChildNodes() { return !!(document.documentElement); },
 
     /* ---- 事件 ---- */
     addEventListener: (type, fn) => { if (typeof fn === 'function') addWorkerListener(docRef, String(type), fn); },
@@ -1986,6 +2372,10 @@ function installDomProxy(call_) {
     scrollTo(x, y) { const n = typeof x === 'object' && x ? x : { left: x, top: y }; return nat('scrollTo', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     scrollBy(dx, dy) { const n = typeof dx === 'object' && dx ? dx : { left: dx, top: dy }; return nat('scrollBy', [{ left:n.left || 0, top:n.top || 0, behavior:(n.behavior || 'auto') }]); },
     getComputedStyle, matchMedia,
+    getSelection: () => document.getSelection(),
+    createRange: () => document.createRange(),
+    scrollIntoView: () => {},
+    get scrollbars() { return { visible: false }; },
     /* ---- 原生 API：一律转回主线程调真的，不在 Worker 里另造一个 ----
      *
      * 以前 alert 变成一条 toast、confirm 变成自绘对话框、open 变成内部窗口，
@@ -2040,7 +2430,8 @@ async function bootShell(init) {
     globalThis.window = globalThis;
     const KEYS = ['document','localStorage','page','location','history',
       'alert','confirm','prompt','print','open','close','focus','blur','stop',
-      'getComputedStyle','matchMedia',
+      'getComputedStyle','matchMedia','getSelection',
+      'createRange','scrollIntoView',
       'innerWidth','innerHeight','outerWidth','outerHeight','devicePixelRatio',
       'scrollX','scrollY','pageXOffset','pageYOffset','scrollTo','scrollBy','screen',
       'requestAnimationFrame','cancelAnimationFrame',
@@ -2059,17 +2450,60 @@ async function bootShell(init) {
     globalThis.window = globalThis;
     globalThis.page = null;
   }
+  /* console 不是一个「打印函数集合」，它有状态：计时器、计数器、缩进。
+   * 以前 time/timeEnd/assert 是空函数，脚本里 console.time('x') 之后什么都看不到。 */
+  const conTimers = new Map();
+  const conCounts = new Map();
+  let conIndent = 0;
+  const conPad = () => '  '.repeat(Math.max(0, conIndent));
   globalThis.console = {
-    log: (...a) => out(fmtArgs(a) + '\r\n'),
-    info: (...a) => out(ANSI.blue + fmtArgs(a) + ANSI.reset + '\r\n'),
-    warn: (...a) => out(ANSI.yellow + fmtArgs(a) + ANSI.reset + '\r\n'),
-    error: (...a) => out(ANSI.red + fmtArgs(a) + ANSI.reset + '\r\n'),
-    debug: (...a) => out(ANSI.gray + fmtArgs(a) + ANSI.reset + '\r\n'),
-    dir: (o) => out(inspect(o, 1) + '\r\n'),
-    table: (o) => out(inspect(o, 1) + '\r\n'),
+    log: (...a) => out(conPad() + fmtArgs(a) + '\r\n'),
+    info: (...a) => out(ANSI.blue + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    warn: (...a) => out(ANSI.yellow + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    error: (...a) => out(ANSI.red + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    debug: (...a) => out(ANSI.gray + conPad() + fmtArgs(a) + ANSI.reset + '\r\n'),
+    dir: (o) => out(conPad() + inspect(o, 1) + '\r\n'),
+    dirxml: (o) => out(conPad() + inspect(o, 1) + '\r\n'),
+    table: (o) => {
+      /* 简易表格：数组套对象 → 列对齐；其它退回 inspect */
+      try {
+        if (!Array.isArray(o) || !o.length || typeof o[0] !== 'object') { out(conPad() + inspect(o, 1) + '\r\n'); return; }
+        const cols = [...new Set(o.flatMap(x => Object.keys(x || {})))].slice(0, 12);
+        if (!cols.length) { out(conPad() + inspect(o, 1) + '\r\n'); return; }
+        const w = cols.map(c => Math.max(c.length, ...o.map(x => String(x && x[c] != null ? x[c] : '').length)));
+        const line = (cells) => conPad() + '│ ' + cells.map((v, i) => String(v).padEnd(w[i])).join(' │ ') + ' │';
+        out(line(cols) + '\r\n');
+        out(conPad() + '├' + w.map(n => '─'.repeat(n + 2)).join('┼') + '┤\r\n');
+        for (const row of o) out(line(cols.map(c => row && row[c] != null ? row[c] : '')) + '\r\n');
+      } catch (e) { out(conPad() + inspect(o, 1) + '\r\n'); }
+    },
     clear: () => out('\x1b[2J\x1b[H'),
-    trace: (...a) => out(ANSI.gray + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
-    time: () => {}, timeEnd: () => {}, assert: () => {}
+    trace: (...a) => out(ANSI.gray + conPad() + fmtArgs(a) + '\r\n' + new Error().stack + ANSI.reset + '\r\n'),
+    time: (label) => { conTimers.set(String(label == null ? 'default' : label), performance.now()); },
+    timeLog: (label, ...a) => {
+      const k = String(label == null ? 'default' : label);
+      const t = conTimers.get(k);
+      if (t == null) { out(ANSI.yellow + 'console.timeLog: 计时器 ' + k + ' 不存在' + ANSI.reset + '\r\n'); return; }
+      out(ANSI.gray + k + ': ' + (performance.now() - t).toFixed(3) + ' ms' + ANSI.reset + (a.length ? ' ' + fmtArgs(a) : '') + '\r\n');
+    },
+    timeEnd: (label) => {
+      const k = String(label == null ? 'default' : label);
+      const t = conTimers.get(k);
+      if (t == null) { out(ANSI.yellow + 'console.timeEnd: 计时器 ' + k + ' 不存在' + ANSI.reset + '\r\n'); return; }
+      conTimers.delete(k);
+      out(ANSI.gray + k + ': ' + (performance.now() - t).toFixed(3) + ' ms' + ANSI.reset + '\r\n');
+    },
+    count: (label) => {
+      const k = String(label == null ? 'default' : label);
+      const n = (conCounts.get(k) || 0) + 1;
+      conCounts.set(k, n);
+      out(conPad() + k + ': ' + n + '\r\n');
+    },
+    countReset: (label) => { conCounts.delete(String(label == null ? 'default' : label)); },
+    group: (...a) => { if (a.length) out(conPad() + fmtArgs(a) + '\r\n'); conIndent++; },
+    groupCollapsed: (...a) => { if (a.length) out(conPad() + fmtArgs(a) + '\r\n'); conIndent++; },
+    groupEnd: () => { conIndent = Math.max(0, conIndent - 1); },
+    assert: (cond, ...a) => { if (!cond) out(ANSI.red + 'Assertion failed' + (a.length ? ': ' + fmtArgs(a) : '') + ANSI.reset + '\r\n'); }
   };
   /* print 不是「往终端打印」的别名：浏览器里 window.print() 是打印对话框。
    * 以前这里把它改成了终端输出，属于抢注。要往终端输出请用 console.log。 */

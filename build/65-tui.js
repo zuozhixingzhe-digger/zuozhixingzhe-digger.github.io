@@ -521,10 +521,21 @@ const DomRpc = {
         try { this._emit({ t: 'dom-event', id, ev: data }); } catch (err) {}
       }
     };
+    /* 只绑 document 的捕获阶段：click/input 这些都会从 document 下来，
+     * 再绑一份 window 会把同一个事件回放两次（脚本里 hit++ 一次点击加 2）。
+     * resize 不冒泡，单独绑 window。 */
     for (const t of types) {
       try { document.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
-      try { window.addEventListener(t, (e) => fire(t, e), true); } catch (e) {}
     }
+    try {
+      window.addEventListener('resize', (e) => {
+        if (!this._lis.size) return;
+        for (const [id, L] of this._lis) {
+          if (L.type !== 'resize') continue;
+          try { this._emit({ t:'dom-event', id, ev:{ type:'resize', target:null, path:[] } }); } catch (err) {}
+        }
+      }, true);
+    } catch (e) {}
   },
 
   async op(name, args) {
@@ -665,6 +676,12 @@ const DomRpc = {
         return this._tag(el);
       }
       /* ---------------- Worker 预分配 ref 的创建类（能同步返回句柄） ---------------- */
+      case 'queryId': {
+        const el = document.getElementById(String(args[0]));
+        if (!el) return null;
+        const ref = this._tag(el);
+        return this._desc(el, true);
+      }
       case 'queryAs': {
         const el = this._res(args[1]);
         if (!el) return null;
