@@ -917,10 +917,12 @@ const WindowManager = {
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
       calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', image:'看图修图', urlhash:'链接即状态',
-      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD' };
+      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD',
+      applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
       calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], image:[940, 660], urlhash:[700, 620],
-      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600] };
+      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600],
+      applist:[720, 560], hanzi:[880, 640] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     /* `jshel` 可以一层层开出新窗口，全都叫「终端」就分不清哪个是哪个了。
      * 后缀带上落地目录，cd 之后跟着变。 */
@@ -955,7 +957,7 @@ const WindowManager = {
       <div class="win-band"></div>
       <div class="win-screen"><div class="win-body"></div></div>
       <header class="win-bar">
-        <div class="win-title">${esc(opts.title || '窗口')}</div>
+        <div class="win-title">${esc(opts.title || ({ applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' }[opts.type]) || '窗口')}</div>
         <div class="win-tools"></div>
         <button class="win-dot c" data-a="close" title="关闭" aria-label="关闭">
           <svg viewBox="0 0 40 40"><g transform="translate(1.142 -1.395) scale(.16939)" fill="#000" opacity=".58">
@@ -985,7 +987,7 @@ const WindowManager = {
     document.getElementById('window-layer').appendChild(el);
 
     const win = {
-      id, el, type:opts.type || 'shell', app:opts.app || '', title:opts.title || '窗口',
+      id, el, type:opts.type || 'shell', app:opts.app || '', title:opts.title || ({ applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' }[opts.type]) || '窗口',
       body: $('.win-body', el), minimized:false, maximized:false, restoreRect:null,
       onClose:null, content:null, opts
     };
@@ -999,8 +1001,9 @@ const WindowManager = {
         if (a === 'close') this.close(id);
         else if (a === 'min') this.minimize(id);
         else if (a === 'max') this.toggleMax(id);
-        else if (a === 'back') this.sendToBack(id);
+        else if (a === 'back') this.sendDown(id);
       });
+      this._bindDotMenu(dot, id);
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
@@ -1122,6 +1125,8 @@ const WindowManager = {
         case 'audio': win.content = new AudioApp(win.body); break;
         case 'agent': win.content = new AgentApp(win.body, opts, win); break;
         case 'hsb2': win.content = new HSB2App(win.body, opts, win); break;
+        case 'applist': win.content = new AppListApp(win.body, opts); break;
+        case 'hanzi': win.content = new HanziApp(win.body, opts); break;
         case 'html': win.body.innerHTML = opts.html || ''; break;
         case 'about': win.body.classList.add('pad'); win.body.innerHTML = aboutHtml(); break;
         default: win.body.innerHTML = '<div style="padding:20px;color:var(--fg-dim)">未知应用：' + esc(win.type) + '</div>';
@@ -1386,6 +1391,99 @@ const WindowManager = {
     const w = this.focused();
     if (w) this.close(w.id);
   },
+
+  /* 色点的第二功能：右键（桌面）或长按 550ms（触屏）。
+   * 长按结束后紧跟的那次 click 必须吞掉，否则「长按红点」会先弹菜单再把窗口关了。 */
+  _bindDotMenu(dot, id) {
+    const act = dot.dataset.a;
+    let timer = null, sx = 0, sy = 0, fired = false;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    dot.addEventListener('click', e => {
+      if (!fired) return;
+      fired = false;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+    }, true);
+    dot.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      fired = false; sx = e.clientX; sy = e.clientY;
+      clear();
+      timer = setTimeout(() => { timer = null; fired = true; WinMenu.open(dot, id, act); }, 550);
+    });
+    dot.addEventListener('pointermove', e => {
+      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => dot.addEventListener(t, clear));
+    dot.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      clear(); fired = false;
+      WinMenu.open(dot, id, act);
+    });
+  },
+
+  /* 红色：关掉所有同类型窗口（「相关应用」按 type 算，不碰别的类型）。
+   * hsb2 的 dispose 会顺带停掉 v86，不需要单独处理。 */
+  closeType(type) {
+    const list = [...this.windows.values()].filter(w => w.type === type);
+    for (const w of list) this.close(w.id);
+    return list.length;
+  },
+
+  /* 蓝色：只与紧邻的下层窗口交换 z，不是「压到最底」。
+   * 交换后焦点给下层那扇窗——否则 focus 会把它重新提到最上层，等于没动。 */
+  sendDown(id) {
+    const w = this.windows.get(id);
+    if (!w) return false;
+    const z = +(w.el.style.zIndex || 0);
+    let below = null;
+    for (const o of this.windows.values()) {
+      if (o === w || o.minimized) continue;
+      const oz = +(o.el.style.zIndex || 0);
+      if (oz < z && (!below || oz > +(below.el.style.zIndex || 0))) below = o;
+    }
+    if (!below) {
+      if (window.toast) toast('已经在最下层：下面没有窗口了', 'warn');
+      return false;
+    }
+    const bz = +(below.el.style.zIndex || 0);
+    w.el.style.zIndex = bz;
+    below.el.style.zIndex = z;
+    w.el.classList.remove('focus');
+    below.el.classList.add('focus');
+    this._syncDock();
+    return true;
+  },
+
+  /* 绿色：把窗口吸到桌面的一半 / 四分之一。full 仍走 maximized 标记，
+   * 这样再点绿点能还原回原来的位置。 */
+  snap(id, pos) {
+    const w = this.windows.get(id);
+    if (!w) return;
+    const d = deskBox();
+    const hw = Math.round(d.w / 2), hh = Math.round(d.h / 2);
+    const map = {
+      full:[0,0,d.w,d.h], left:[0,0,hw,d.h], right:[hw,0,hw,d.h],
+      tl:[0,0,hw,hh], tr:[hw,0,hw,hh], bl:[0,hh,hw,hh], br:[hw,hh,hw,hh]
+    };
+    const r = map[pos];
+    if (!r) return;
+    if (!w.restoreRect) {
+      const rr = w.el.getBoundingClientRect();
+      const db = document.getElementById('desk').getBoundingClientRect();
+      w.restoreRect = { x:rr.left-db.left, y:rr.top-db.top, w:rr.width, h:rr.height };
+    }
+    w.el.classList.add('tween');
+    clearTimeout(w._tweenT);
+    w._tweenT = setTimeout(() => w.el.classList.remove('tween'), 320);
+    w.el.style.left = r[0] + 'px';
+    w.el.style.top = r[1] + 'px';
+    w.el.style.width = r[2] + 'px';
+    w.el.style.height = r[3] + 'px';
+    w.maximized = (pos === 'full');
+    w.el.classList.toggle('max', pos === 'full');
+    this.focus(id);
+    setTimeout(() => w.content && w.content.onResize && w.content.onResize(), 60);
+  },
   /* ---------------------------------------------------------------- 窗口 chrome
    * 所有尺寸都从窗口宽度按原稿比例推出来（docs/thoughts/README.md）：
    *   提手宽 43.3% · 提手高 10% · 色点 ⌀6.25% · 外点 ±0.735×提手宽 · 内点 ±0.536×提手宽
@@ -1454,9 +1552,12 @@ const WindowManager = {
   _syncDock() {
     const dock = document.getElementById('dock');
     if (!dock) return;
+    /* Dock 是否显示由设置决定；这里只管类，避免每次开窗都读一遍 localStorage */
+    const off = !!Number(Settings.get('dockHidden'));
+    document.body.classList.toggle('dock-off', off);
     const wins = [...this.windows.values()];
     const focused = this.focused();
-    if (!wins.length) { dock.hidden = true; dock.innerHTML = ''; return; }
+    if (!wins.length) { dock.hidden = true; dock.innerHTML = ''; this._syncWinList(); return; }
     dock.hidden = false;
     const iconOf = (t) => svgIcon(t === 'browser' ? 'browser' : t === 'agent' ? 'agent' : t === 'files' ? 'files' : t === 'python' ? 'python' : t === 'editor' ? 'editor' : 'term');
     dock.innerHTML = `<button class="dock-item ${!focused ? 'focus' : ''}" data-desk="1" title="桌面终端">${svgIcon('term')}<b>desktop</b><span>jshel</span></button><div class="dock-sep"></div>` +
@@ -1465,5 +1566,112 @@ const WindowManager = {
     $$('[data-win]', dock).forEach(b => b.onclick = () => this.toggleMin(b.dataset.win));
     const d = $('[data-desk]', dock);
     if (d) d.onclick = () => { for (const w of wins) this.minimize(w.id); };
+    this._syncWinList();
+    this._syncAppList();
+  },
+
+  /* 「所有应用」窗口开着时，窗口开合要让它把「打开 / 切换」重新算一遍 */
+  _syncAppList() {
+    for (const w of this.windows.values()) {
+      if (w.type === 'applist' && w.content && w.content.refresh) {
+        try { w.content.refresh(); } catch (e) {}
+      }
+    }
+  },
+
+  /* 抽屉开着时同步窗口列表；关着就等下次 open 再刷，别做无用的 DOM 重排 */
+  _syncWinList() {
+    if (typeof Drawer !== 'undefined' && Drawer.opened) {
+      try { Drawer.refreshWins(); } catch (e) {}
+    }
+  }
+};
+
+/* ---------------------------------------------------------------- 色点菜单
+ * 右键 / 长按四个色点出来的小菜单。红=关掉同类全部，黄=占位，
+ * 绿=吸边布局，蓝=层叠。菜单只读 WindowManager 的状态，不改自己的数据。 */
+const WinMenu = {
+  el: null, winId: null,
+  open(dot, id, act) {
+    this.close();
+    const w = WindowManager.windows.get(id);
+    if (!w) return;
+    const m = document.createElement('div');
+    m.className = 'winmenu';
+    m.innerHTML = this._html(w, act);
+    document.body.appendChild(m);
+
+    const r = dot.getBoundingClientRect();
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    let x = r.left + r.width / 2 - mw / 2;
+    let y = r.bottom + 8;
+    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
+    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+    y = Math.max(8, y);
+    m.style.left = x + 'px';
+    m.style.top = y + 'px';
+
+    m.addEventListener('click', e => {
+      const b = e.target.closest('[data-snap]');
+      if (b) { WindowManager.snap(id, b.dataset.snap); this.close(); return; }
+      const c = e.target.closest('[data-cmd]');
+      if (!c) return;
+      const cmd = c.dataset.cmd;
+      this.close();
+      if (cmd === 'close-type') WindowManager.closeType(w.type);
+      else if (cmd === 'close-one') WindowManager.close(id);
+      else if (cmd === 'down') WindowManager.sendDown(id);
+      else if (cmd === 'bottom') WindowManager.sendToBack(id);
+    });
+
+    this.el = m;
+    this.winId = id;
+    this._dot = dot;
+    setTimeout(() => {
+      document.addEventListener('pointerdown', this._outside, true);
+      document.addEventListener('keydown', this._esc, true);
+    }, 0);
+  },
+  _html(w, act) {
+    const t = esc(w.type);
+    if (act === 'close') {
+      const n = [...WindowManager.windows.values()].filter(x => x.type === w.type).length;
+      return `<div class="winmenu__title">红色 · 强制退出</div>
+        <button class="danger" data-cmd="close-type">关闭所有「${t}」窗口（${n}）</button>
+        <button data-cmd="close-one">只关闭这一个</button>`;
+    }
+    if (act === 'min') {
+      return `<div class="winmenu__title">黄色 · 待定</div>
+        <div class="wm-note">这个功能的定义还没定下来（需求里写的是「？，未实现」）。先把入口留在这儿，想好了再补。</div>
+        <button data-cmd="noop">知道了</button>`;
+    }
+    if (act === 'max') {
+      return `<div class="winmenu__title">绿色 · 选择位置布局</div>
+        <div class="winmenu__grid">
+          <button class="winmenu__snap" data-snap="tl" title="左上四分之一"><i></i></button>
+          <button class="winmenu__snap" data-snap="full" title="全屏"><i></i></button>
+          <button class="winmenu__snap" data-snap="tr" title="右上四分之一"><i></i></button>
+          <button class="winmenu__snap" data-snap="left" title="左半屏"><i></i></button>
+          <button class="winmenu__snap" data-snap="right" title="右半屏"><i></i></button>
+          <button class="winmenu__snap" data-snap="bl" title="左下四分之一"><i></i></button>
+          <button class="winmenu__snap" data-snap="br" title="右下四分之一"><i></i></button>
+        </div>`;
+    }
+    return `<div class="winmenu__title">蓝色 · 层叠</div>
+      <button data-cmd="down">仅下移一层</button>
+      <button data-cmd="bottom">压到最底层</button>`;
+  },
+  _outside(e) {
+    if (WinMenu.el && !WinMenu.el.contains(e.target) && !(WinMenu._dot && WinMenu._dot.contains(e.target))) WinMenu.close();
+  },
+  _esc(e) { if (e.key === 'Escape') WinMenu.close(); },
+  close() {
+    if (!this.el) return;
+    this.el.remove();
+    this.el = null;
+    this.winId = null;
+    this._dot = null;
+    document.removeEventListener('pointerdown', this._outside, true);
+    document.removeEventListener('keydown', this._esc, true);
   }
 };

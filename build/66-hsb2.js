@@ -613,6 +613,13 @@ class HSB2App {
 
   screenContainer() { return this.screenEl; }
 
+  /* 窗口关闭 = 虚拟机停止。少这一句的话，点红点只是把画面扔了，
+   * v86 还在后台跑 256MB 内存 + 一个 CPU 线程。 */
+  dispose() {
+    try { if (typeof HSB2 !== 'undefined') HSB2.stop(); } catch (e) {}
+    this.emu = null;
+  }
+
   onEmulator(emu) {
     this.emu = emu;
     /* 起来了就把提示全部收掉：警告条、进度条、日志、状态栏 */

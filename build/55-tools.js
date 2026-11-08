@@ -910,3 +910,113 @@ class MdApp {
   }
 }
 
+
+/* ---------------------------------------------------------------- 所有应用
+ * 目录不另写一份：图标和名字直接从启动器 DOM 里取，保证两边永远一致。
+ * 这里只补一句人话说明和分组。 */
+const APP_DESC = {
+  shell:'新开一个终端会话，独立 cwd', browser:'内嵌浏览器，可开本地页面',
+  files:'文件管理器，支持拖入 / 拖出', editor:'文本编辑器，带语法高亮',
+  python:'Python 交互环境（Pyodide）', agent:'智能体对话窗口',
+  calc:'科学计算器，带历史', data:'Base64 / 哈希 / 编码转换',
+  color:'取色、配色与对比度检查', markdown:'Markdown 编辑与预览',
+  shot:'页面内截图与裁剪', image:'看图、旋转、简单标注',
+  urlhash:'把界面状态编码进 URL', recorder:'录音（维护中）',
+  geo:'定位（维护中）', view3d:'3D 视图（维护中）', audio:'音频播放（维护中）',
+  hsb2:'WASM 里的 FreeBSD 12.0（可选）', applist:'所有应用，就是这一页',
+  hanzi:'十六进制 ↔ 汉字，三种方案自动识别',
+};
+
+class AppListApp {
+  constructor(body, opts) {
+    this.body = body;
+    this.q = '';
+    this._build();
+  }
+
+  _catalog() {
+    const box = document.getElementById('launcher');
+    if (!box) return [];
+    return [...box.querySelectorAll('[data-app]')].map(b => {
+      const type = b.dataset.app;
+      const name = [...b.childNodes].filter(n => n.nodeType === 3)
+        .map(n => n.textContent).join('').trim();
+      const svg = b.querySelector('svg');
+      return {
+        type, name: name || type,
+        icon: svg ? svg.outerHTML : '',
+        soon: b.classList.contains('soon'),
+        hint: (b.querySelector('i') || {}).textContent || '',
+        desc: APP_DESC[type] || '',
+      };
+    });
+  }
+
+  _build() {
+    this.body.classList.add('applist');
+    this.body.innerHTML = `
+      <div class="al-head">
+        <input id="alQ" type="search" placeholder="搜索应用 / 关键字" autocomplete="off" spellcheck="false" aria-label="搜索应用">
+        <span id="alCount"></span>
+      </div>
+      <div class="al-body" id="alBody"></div>`;
+    this.body.querySelector('#alQ').addEventListener('input', e => {
+      this.q = e.target.value.trim().toLowerCase();
+      this._render();
+    });
+    this._render();
+  }
+
+  _open(type, ev) {
+    const ex = [...WindowManager.windows.values()].find(w => w.type === type);
+    if (ex) {
+      if (ex.minimized) WindowManager.restore(ex.id);
+      else WindowManager.focus(ex.id);
+      return;
+    }
+    const r = ev && ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
+    WindowManager.open({ type, from: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined });
+  }
+
+  /* 只改「打开 / 切换」两个字，绝不重建列表：
+   * 重建会替换按钮节点，正在进行的点击会丢，滚动位置也会跳回顶部。 */
+  refresh() {
+    const box = this.body.querySelector('#alBody');
+    if (!box) return;
+    const openTypes = new Set([...WindowManager.windows.values()].map(w => w.type));
+    for (const b of box.querySelectorAll('[data-t]')) {
+      if (b.classList.contains('soon')) continue;
+      const act = b.querySelector('.al-act');
+      if (act) act.textContent = openTypes.has(b.dataset.t) ? '切换' : '打开';
+    }
+  }
+
+  _render() {
+    const box = this.body.querySelector('#alBody');
+    if (!box) return;
+    const all = this._catalog();
+    const list = all.filter(a => !this.q ||
+      (a.name + ' ' + a.type + ' ' + a.desc + ' ' + a.hint).toLowerCase().includes(this.q));
+    const count = this.body.querySelector('#alCount');
+    if (count) count.textContent = list.length + ' / ' + all.length;
+    if (!list.length) { box.innerHTML = '<div class="al-empty">没有匹配的应用</div>'; return; }
+
+    const group = (title, arr) => arr.length ? `<div class="al-sec">${title}</div>
+      <div class="al-grid">${arr.map(a => {
+        const open = [...WindowManager.windows.values()].some(w => w.type === a.type);
+        return `<button class="al-card ${a.soon ? 'soon' : ''}" data-t="${esc(a.type)}">
+          <span class="al-ico">${a.icon || '▣'}</span>
+          <span class="al-name">${esc(a.name)}</span>
+          <span class="al-desc">${esc(a.desc)}</span>
+          <span class="al-act">${a.soon ? '维护中' : (open ? '切换' : '打开')}</span>
+        </button>`;
+      }).join('')}</div>` : '';
+    box.innerHTML = group('可用', list.filter(a => !a.soon)) + group('维护中', list.filter(a => a.soon));
+    box.querySelectorAll('[data-t]').forEach(b => b.onclick = e => {
+      const type = b.dataset.t;
+      const a = all.find(x => x.type === type);
+      if (a && a.soon) { toast('「' + a.name + '」还在维护中', 'warn'); return; }
+      this._open(type, e);
+    });
+  }
+}

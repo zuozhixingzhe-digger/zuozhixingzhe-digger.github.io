@@ -364,6 +364,12 @@ const Drawer = {
       el.addEventListener('change', () => Settings.set(key, el.checked ? onVal : offVal));
     };
     if ($('#setCdn')) $('#setCdn').onchange = e => Settings.set('cdn', e.target.value);
+    const dockSw = $('#setDock');
+    if (dockSw) dockSw.onchange = () => {
+      Settings.set('dockHidden', dockSw.checked ? 0 : 1);
+      WindowManager._syncDock();
+      toast(dockSw.checked ? '底部 Dock 已显示' : '底部 Dock 已收起，可从「窗口」这一栏切回');
+    };
     // 智能体：后端 / 直连 二选一 → 开关；直连时才显示密钥与模型
     bindSwitch('setAgentDirect', 'agentMode', 'direct', 'backend');
     bindSwitch('setAgentThinking', 'agentThinking', '1', '0');
@@ -386,6 +392,7 @@ const Drawer = {
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
     $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
     $('#btnOpenFiles').onclick = () => WindowManager.open({ type:'files' });
+    if ($('#btnAllApps')) $('#btnAllApps').onclick = () => { this.close(); WindowManager.open({ type:'applist' }); };
     $('#btnExportFs').onclick = () => this.exportFs();
     $('#btnImportFs').onclick = () => this.importFs();
     $('#btnSaveLs').onclick = () => this.exportLs();
@@ -423,6 +430,7 @@ const Drawer = {
     $('#setAgentModel').value = Settings.get('agentModel');
     $('#setAgentSteps').value = Settings.get('agentSteps');
     if ($('#setFileToken')) $('#setFileToken').value = FileToken.get();
+    if ($('#setDock')) $('#setDock').checked = !Number(Settings.get('dockHidden'));
     this.syncAgentMode();
     applyTheme();   // 顺带把「主题」那行的取值刷新成当前系统主题
     $('#stVersion').textContent = 'v' + HT_VERSION;
@@ -443,6 +451,7 @@ const Drawer = {
     $('#drawer-overlay').classList.add('on');
     this.syncControls();
     this.refresh();
+    this.refreshWins();
     this.checkBackend();
     if (section) {
       setTimeout(() => {
@@ -460,6 +469,28 @@ const Drawer = {
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-overlay').classList.remove('on');
     if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
+  },
+  /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
+   * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
+  refreshWins() {
+    const box = $('#drWins');
+    if (!box) return;
+    const wins = [...WindowManager.windows.values()].filter(w => w.el && w.el.isConnected);
+    if (!wins.length) {
+      box.innerHTML = '<div class="drawer__item"><span>没有打开的窗口</span></div>';
+      return;
+    }
+    const cur = WindowManager.focused();
+    wins.sort((a, b) => (+b.el.style.zIndex || 0) - (+a.el.style.zIndex || 0));
+    box.innerHTML = wins.map(w => `<button class="drawer__win ${w.minimized ? 'is-min' : ''} ${cur && cur.id === w.id ? 'is-focus' : ''}" data-w="${esc(w.id)}">
+      <b>${esc(w.title || w.type)}</b><span>${w.minimized ? '最小化' : (w.maximized ? '最大化' : w.type)}</span></button>`).join('');
+    $$('[data-w]', box).forEach(b => b.onclick = () => {
+      const w = WindowManager.windows.get(b.dataset.w);
+      if (!w) return;
+      if (w.minimized) WindowManager.restore(w.id);
+      else WindowManager.focus(w.id);
+      this.close();
+    });
   },
   async refresh() {
     /* 页面可能已经被 document.write / body.innerHTML 整个拆掉了——那是用户
@@ -1001,6 +1032,8 @@ async function boot() {
 
     step('启动底层终端', 12);
     TerminalManager.bootDesktop();
+    /* 应用「Dock 是否显示」：刷新后也要保持上次的收起状态 */
+    WindowManager._syncDock();
 
     step('完成', 10);
     if (sub) sub.textContent = '就绪 · 输入 help 开始';

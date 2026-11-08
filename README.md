@@ -2010,7 +2010,7 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 入口有三个，都是同一个东西：
 
 ```text
-顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 看图修图 / 链接即状态
+顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / 汉字码 / Markdown / 截图 / 看图修图 / 链接即状态 / 所有应用
 终端里        → tool calc        （不带参数敲 tools 看清单）
 文件系统      → .app.calc 也能 open
 ```
@@ -2027,6 +2027,8 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 | **录音机** `recorder` | 完整 | `MediaRecorder` + `AudioContext` 实时波形、暂停/继续、计时、设备选择；停止后试听、存进 `.home`、下载。关窗即停音轨 |
 | **定位** `geo` | 完整 | 单次 / `watchPosition` 持续跟踪，纬度、经度、精度、海拔、速度、方向、时间；复制坐标、存成 `.home.geo-json`、在浏览器里打开 OSM |
 | **3D 视图** `view3d` | 完整 | 自写 WebGL（不引 three.js）：环面结 / 立方体 / 球 / 二十面体，轨道相机（拖动旋转、滚轮缩放）、自转、线框、fps |
+| **汉字码** `hanzi` | 完整 | hex ↔ 汉字三种方案：4096 字（3 hex/字）、2048 字（11 bit/字）、按读音（1379 个带调音节做 1379 进制，同音字随机取、解码只认读音）；末尾标记字自动识别方案，解码不用选 |
+| **所有应用** `applist` | 完整 | 卡片列出全部应用（含维护中）、搜索、已打开显示「切换」；启动器与「更多」抽屉都有入口 |
 | **音频播放** `audio` | 完整 | 拖入或选择文件，WebAudio 解码出波形（可点击定位）、播放/暂停、进度、音量、0.5–2× 速度、循环；存进 `.home`、下载 |
 
 > 这四个此前一直挂着「维护中」。不做不是「忘了」，而是每道都有一道浏览器给的硬边界：
@@ -3007,6 +3009,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.27 | 2026-11-08 | **Dock 可收起 + 四色菜单 + 粘贴续行 + 汉字码 + 所有应用**：①底部 Dock 可在「更多」抽屉里关掉，抽屉新增「窗口」栏列出全部窗口（点标题切换、最小化自动还原），Dock 收起后仍能从那里操作。②四个色点支持右键 / 长按 550ms：红=关闭所有同类型窗口（hsb2 顺带停虚拟机）、黄=占位待定、绿=Windows Snap 式七种布局（左/右半、四个角、全屏）、蓝=仅与紧邻下层交换 z（不再是压到底）。③终端粘贴多行 JS 时按 `{}()[]` 是否闭合判断完整性（跳过字符串/注释/模板串）：没闭合只缓冲并提示缺什么，补齐后整段一次执行；Esc/Ctrl+C 放弃。④新增「汉字码」应用：A 4096 字（3 hex/字）、B 2048 字（11 bit/字）、C 按读音（1379 个带调音节做 1379 进制，同音字随机取、解码只认读音），末尾标记字自动识别方案，不需要用户选；A 方案 64/512 hex → 23/172 字，自检 210 组往返通过。⑤新增「所有应用」窗口：卡片列出全部应用（含维护中）、搜索、已开显示「切换」，启动器与抽屉都有入口。⑥hsb2 窗口关闭时真正 stop + 释放 v86。 |
 | 0.0.1.26 | 2026-11-08 | **全线改名 hsb + 键盘修好三处**：①`hsl` / `hsl1` / `hsl2` 统一为 `hsb` / `hsb1` / `hsb2`（HSB = Html Subsystem for FreeBSD）：命令、`HSB2` 命名空间、CSS 类（`.hsb2-*`）、窗口 type、构建文件名 `build/66-hsb2.js` 全部改到位，老命令不再注册；IndexedDB 换到 `ht-hsb2`，启动时从 `ht-hsl2` **一次性搬缓存**（失败就重下，不阻塞启动），不让用户为改名重下 16 MB 镜像。②**手机软键盘退格修复**：输入框空着时安卓/iOS 的退格既不派发 keydown 也不派发 input，表现就是「点不动」；键盘桥固定留一个零宽哨兵字符，退格必然改变 value，再配合 `beforeinput` 的 `deleteContentBackward` 与 `input` 兜底，三层任意一层命中都发 0x0E，发完把哨兵补回、光标放末尾。③**顶栏 Ctrl 在 hsb2 里生效**：原来顶栏按键只认 `w.content.term`（xterm 会话），hsb2 没有 term，于是 Ctrl / Esc / Tab / 摇杆全发给了桌面终端；现在 `sendKeyToTerm` / `keepTermFocus` 识别 hsb2，改走它的键盘通道。④键盘转发统一成 `typeTermSeq()`：终端字节串 → PS/2 扫描码（Ctrl+A–Z、方向、Home/End、Delete、PgUp/PgDn、Esc/Tab/Enter/Backspace），顶栏和实体键盘同一条路；Ctrl 从原来只认 c/d/l/z/a/e 扩到全字母。 |
 | 0.0.1.25 | 2026-11-08 | **窗口 chrome 落地（提手 + 四色点）+ hsb2 三处修复**：①窗口从「矩形标题栏」改为设计源里的「画面向上凸出提手」：`.win` 不再裁剪，新增 `.win-handle`（SVG 实体，填 `--panel-solid`，底边与 `.win-screen` 顶边咬合 1px，无接缝）、`.win-screen`（圆角/边框/阴影/backdrop 全部搬到这里）、`.win-band`（最大化时的毛玻璃带）。②四个色点按原稿语义：红=关、黄=最小化、绿=最大化、蓝=置于底层（新增 `WindowManager.sendToBack()`）；字形直接内联 `docs/thoughts/*.svg` 的路径。③尺寸全部由窗口宽度按原稿比例算出（提手 43.3%、高 10%、色点 ⌀6.25%、外点 ±0.735×提手宽），`ResizeObserver` 跟随缩放；窄到 280px 仍分得开。④标题塞不下时**中间截断**（`midEllipsis` 二分测量），提手尺寸永不因标题变化。⑤**hsb2 启动后收起全部提示**：警告条、进度条、日志、状态栏在 `is-live` 后全部 `display:none`，控制条收成右上角悬浮药丸（触屏常驻、桌面 hover 出现），画面铺满。⑥**手机键盘修复**：`.hsb2-view` 是 `div[tabindex]`，移动端聚焦不会唤起软键盘；新增 1px 透明 `textarea` 键盘桥，`pointerdown` 里 `preventDefault()+focus()`（iOS 要求在用户手势内同步聚焦），字符从 `input` 事件取、特殊键走 `keydown`，`font-size:16px` 防 iOS 自动放大。⑦**修「必须开后端」的真因**：`indexedDB.open()` 在 Safari 无痕 / `file://` 受限 / 隐私策略下会抛 `SecurityError`，旧代码在 `FS.init()` 第一句 `await IDB.open()` 就抛，整个终端起不来——和 hsb2、和后端都无关；`IDB` 改为失败即切内存模式（`memMode`，读写走 `Map`），hsb2 的 `dbGet/dbPut` 同样降级，无存储环境仍能完整启动 FreeBSD（只是不缓存）。⑧版本号从 0.0.1.22 补齐到 0.0.1.25（23/24 的记录写了但 `HT_VERSION` 没改）。 |
 | 0.0.1.24 | 2026-11-04 | **hsb2 真身：WASM + v86 + FreeBSD 12.0（可选组件）**：①新增 `build/66-hsb2.js`——v86 0.5.473 从 jsdelivr 加载，FreeBSD 12.0 的 2 GB 分块盘与 ~16 MB zstd state 快照从 v86 官方镜像 CDN 加载，全部经 **IndexedDB（`ht-hsb2`）缓存**；`XHR.prototype` 上做**按 CDN 前缀生效的拦截**，v86 看到的仍是原始 URL（`.zst` 后缀、1 MB 分块命名不变），解压逻辑不受影响。②**不启动不加载**：`index.html` 里没有任何相关 `<script>` / `<link>`，只有敲 `hsb2()`（JSHeL）或 `hsb2`（hsb1）才发第一个请求；`hsb2()` / `hsb2.stop()` / `hsb2.clear()` / `hsb2.status()` 与 hsb1 的 `hsb2 --cold`。③窗口系统注册 `hsb2` 类型，风险提示条 + 进度 + 日志 + 停止/重启/清缓存；v86 全局键盘监听创建后立刻 `destroy()`，改由窗口聚焦时转发（普通字符 / keyCode / scancode），不抢全局快捷键。④**许可证合规**：补 `licenses/LICENSE.v86.txt`（BSD-2-Clause）与 `licenses/LICENSE.freebsd.txt`（FreeBSD COPYRIGHT），`licenses/README.md` 新增「hsb2：额外说明（风险，必读）」，`check-licenses.sh` 登记 `v86@0.5.473`；README §5.4 由「规划中」整节改写为实现说明 + 风险复核。⑤四条硬约束落实：可选不用、不分发任何源码或二进制、不启动不加载、CDN + IndexedDB。⑥`build.sh` 把 `66-hsb2.js` 拼进产物。 |

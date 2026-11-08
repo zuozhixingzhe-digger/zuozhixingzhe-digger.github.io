@@ -143,6 +143,47 @@ async function callSafe(op, ...args) {
 }
 
 /* ---------------------------------------------------------------- 行编辑器 */
+/* 粘贴进来的多行文本，先看它是不是「还没写完的 JS」。
+ * 只认 ASCII 的 {} () []；跳过字符串、模板串、行注释、块注释——
+ * 否则 `console.log("}")` 会被当成少一个右括号。
+ * open > 0 表示还有未闭合的括号，missing 是补齐需要的那串字符。 */
+function scanJs(text) {
+  const stack = [];
+  const pairs = { '}':'{', ')':'(', ']':'[' };
+  let i = 0, code = false, broken = false;
+  while (i < text.length) {
+    const c = text[i], n = text[i + 1];
+    if (c === '/' && n === '/') {
+      const k = text.indexOf('\n', i);
+      i = k < 0 ? text.length : k;
+      continue;
+    }
+    if (c === '/' && n === '*') {
+      const k = text.indexOf('*/', i + 2);
+      i = k < 0 ? text.length : k + 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c;
+      i++;
+      while (i < text.length) {
+        if (text[i] === '\\') { i += 2; continue; }
+        if (text[i] === q) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (c === '{' || c === '(' || c === '[') { stack.push(c); code = true; }
+    else if (pairs[c]) {
+      code = true;
+      if (stack.pop() !== pairs[c]) broken = true;
+    }
+    i++;
+  }
+  const missing = stack.map(x => x === '{' ? '}' : x === '(' ? ')' : ']').join('');
+  return { code, open: stack.length, missing, broken };
+}
+
 class LineEditor {
   constructor(opts) {
     this.o = opts;
@@ -162,6 +203,9 @@ class LineEditor {
     this._rows = 0;
     this._curRow = 0;
     this._pending = '';
+    /* 多行粘贴还在等右括号时的暂存。和 _pending 分开：
+     * 那个是「等输出时空敲的字」，reopen 会把它插回输入行，语义完全不同。 */
+    this._pasteBuf = '';
   }
   /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
   get cols() {
@@ -272,17 +316,39 @@ class LineEditor {
   }
   insert(text) {
     text = text.replace(/\r\n?/g, '\n');
-    if (text.includes('\n')) {
-      const merged = (this.buf + text).replace(/\n+$/, '');
-      this.buf = ''; this.cur = 0;
-      /* 先把自己画的那一块擦掉，否则「[粘贴 N 行]」会插在输入中间，
-       * 上面几行输入就永远留在屏幕上了。 */
+    const hasNL = text.includes('\n');
+
+    /* 单行、也没有半截代码在等：照旧直接插进输入行。
+     * 单行但以 { / ( 结尾（粘贴了半截函数）也走下面的缓冲分支。 */
+    if (!hasNL && !this._pasteBuf) {
+      const one = scanJs(this.buf + text);
+      if (!(one.code && one.open > 0)) { this.insertText(text); return; }
+    }
+
+    const base = this._pasteBuf ? this._pasteBuf + '\n' : this.buf;
+    const merged = (base + text).replace(/\n+$/, '');
+    const sc = scanJs(merged);
+
+    /* 括号没闭合：不执行，也不逐行跑。等下一段粘贴补齐。
+     * 这是「粘一段函数体」最常见的场景——原来的实现会把它当 N 条命令，
+     * 第一条就 SyntaxError，后面全乱。 */
+    if (sc.code && sc.open > 0 && !sc.broken) {
+      this._pasteBuf = merged;
+      this.buf = '';
+      this.cur = 0;
       this.erase();
-      out(ANSI.gray + '[粘贴 ' + merged.split('\n').length + ' 行]' + ANSI.reset);
-      this.enqueueText(merged);
+      out('\r\n' + ANSI.gray + '[已缓冲 ' + merged.split('\n').length + ' 行 · 还缺 '
+        + sc.missing + '，补齐后再执行；Esc 放弃]' + ANSI.reset + '\r\n');
+      this.reopen();
       return;
     }
-    this.insertText(text);
+
+    this._pasteBuf = '';
+    this.buf = '';
+    this.cur = 0;
+    this.erase();
+    out(ANSI.gray + '[粘贴 ' + merged.split('\n').length + ' 行]' + ANSI.reset);
+    this.enqueueText(merged);
   }
   insertText(text) {
     if (!text) return;
@@ -478,6 +544,14 @@ class LineEditor {
           continue;
         }
         if (data.slice(i, i + 2) === '\x1bO') { i += 3; continue; }
+        /* 单独一个 Esc：放弃还在等的多行粘贴 */
+        if (this._pasteBuf) {
+          this._pasteBuf = '';
+          this.erase();
+          out('\r\n' + ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n');
+          this.reopen();
+          i += 1; continue;
+        }
         i += 2; continue;
       }
       if (ch === '\r' || ch === '\n') { i += 1; this.enqueueSubmit(); continue; }
@@ -486,6 +560,7 @@ class LineEditor {
         i += 1;
         /* 先把输入块擦掉再打 ^C：否则 ^C 落在输入中间，后面那半截还留在屏幕上。 */
         this.erase();
+        if (this._pasteBuf) { this._pasteBuf = ''; out(ANSI.gray + '[已放弃缓冲]' + ANSI.reset + '\r\n'); }
         this.buf = ''; this.cur = 0;
         out('^C\r\n');
         this.reopen();
