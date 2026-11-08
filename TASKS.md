@@ -71,4 +71,4 @@
 - [x] 全部脚本实测（audit 25/25、nqueens 18092、maze、raytrace、expr、crypto、async、reactive、gen、life）
 - [x] 6 个 HTML 实测截图（WebGL 在无 GPU 的 headless 里降级提示）
 - [x] 版本 0.0.1.29 + README 开发日志
-- [ ] 提交推送
+- [x] 提交推送（ee2740c）
