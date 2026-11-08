@@ -27,16 +27,19 @@ def gb2312_chars():
 
 def main():
     root = pathlib.Path(__file__).resolve().parent.parent
-    html = pathlib.Path('/root/uploads/1794139109917486981-hex-hanzi-codec.html').read_text(encoding='utf-8')
-    m = re.search(r'const CODE_TABLE_RAW\s*=\s*"([^"]+)"', html)
-    assert m, 'CODE_TABLE_RAW 没找到'
-    table = m.group(1)
-    assert len(table) == 4096 and len(set(table)) == 4096, (len(table), len(set(table)))
-
     gb = gb2312_chars()
-    # 校验：附件码表确实来自 GB2312 前 4096 字
-    same = sum(1 for a, b in zip(table, gb[:4096]) if a == b)
-    print('gb2312 chars:', len(gb), 'table==gb2312[:4096]:', table == ''.join(gb[:4096]), 'match', same)
+    assert len(gb) >= 4096
+
+    # 码表就取 GB2312 区位序前 4096 字——可离线复现，不依赖任何外部文件。
+    # 若本机恰好有当初的参考 HTML，顺手核对一遍（不一致只告警，不阻断）。
+    table = ''.join(gb[:4096])
+    ref = pathlib.Path('/root/uploads/1794139109917486981-hex-hanzi-codec.html')
+    if ref.exists():
+        m = re.search(r'const CODE_TABLE_RAW\s*=\s*"([^"]+)"', ref.read_text(encoding='utf-8'))
+        if m and m.group(1) != table:
+            print('WARN: 参考 HTML 的码表与 GB2312 前 4096 字不一致（以 GB2312 为准）')
+    assert len(table) == 4096 and len(set(table)) == 4096, (len(table), len(set(table)))
+    print('gb2312 chars:', len(gb), 'table==gb2312[:4096]: True')
 
     # ---- 读音分组（CJK 基本区，取首读音，轻声补 5）
     groups = {}
