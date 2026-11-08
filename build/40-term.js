@@ -852,6 +852,27 @@ function exitDesktop() {
 }
 
 /* ---------------------------------------------------------------- 窗口管理 */
+/* 标题塞不下时在中间截断（"hsl2 · Fre…第 1 层"），绝不动提手尺寸。
+ * 先摘掉 max-width 量真实文本宽，再二分"前 n 字 + … + 后 n 字"。
+ * 用 scrollWidth 而不是 canvas 测：和最终渲染用的是同一套字体与字距。 */
+function midEllipsis(el, text, maxW){
+  el.dataset.full = text || '';
+  el.textContent = text || '';
+  if (!maxW || maxW <= 0) return;
+  el.style.maxWidth = 'none';
+  if (el.scrollWidth <= maxW) { el.style.maxWidth = ''; return; }
+  const ch = [...text];
+  const build = n => ch.slice(0, n).join('') + '…' + ch.slice(ch.length - n).join('');
+  let lo = 0, hi = Math.floor(ch.length / 2);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    el.textContent = build(mid);
+    if (el.scrollWidth <= maxW) lo = mid; else hi = mid - 1;
+  }
+  el.textContent = lo > 0 ? build(lo) : '…';
+  el.style.maxWidth = '';
+}
+
 const WindowManager = {
   windows: new Map(),
   z: 30,
@@ -891,7 +912,10 @@ const WindowManager = {
     const { w:vw, h:vh } = deskBox();
     const base = TYPE_SIZE[opts.type] || [780, 500];
     const defW = Math.min(opts.w || base[0], vw - 24);
-    const defH = Math.min(opts.h || base[1], vh - 32);
+    /* 高度含顶部提手：调用方给的 w/h 一直指"画面"尺寸，提手另外加，
+     * 否则窗口内容会比以前矮 44~74px。 */
+    const hh0 = clamp(Math.round(defW * 0.1), 44, 74);
+    const defH = Math.min((opts.h || base[1]) + hh0, vh - 16);
     const n = this.cascade++ % 6;
     // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
     const x = opts.x != null ? opts.x : clamp(24 + n * 46, 8, Math.max(8, vw - defW - 8));
@@ -901,12 +925,45 @@ const WindowManager = {
     el.className = 'win focus';
     el.dataset.id = id;
     el.style.cssText = `left:${x}px;top:${y}px;width:${defW}px;height:${defH}px;z-index:${++this.z}`;
-    el.innerHTML = `<header class="win-bar">
-        <div class="win-dots"><i class="c" data-a="close" title="关闭"></i><i class="m" data-a="min" title="最小化"></i><i class="x" data-a="max" title="最大化"></i></div>
+    el.innerHTML = `<svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="htHandleHi" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity=".055"/>
+          <stop offset=".55" stop-color="#fff" stop-opacity=".022"/>
+          <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path class="face" d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64 Z"/>
+        <path d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64 Z" fill="url(#htHandleHi)"/>
+        <path class="edge" d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64"
+              fill="none"/>
+      </svg>
+      <div class="win-band"></div>
+      <div class="win-screen"><div class="win-body"></div></div>
+      <header class="win-bar">
         <div class="win-title">${esc(opts.title || '窗口')}</div>
         <div class="win-tools"></div>
+        <button class="win-dot c" data-a="close" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 40 40"><g transform="translate(1.142 -1.395) scale(.16939)" fill="#000" opacity=".58">
+            <path d="M 37.726 49.562 H 181.603 V 64.726 H 56.589 V 177.534 H 149.425 V 197.876 H 37.726 Z"/>
+            <path d="M 82.479 102.822 c 0,0 111.699,-38.466 102.452,100.233 c 0,0 -19.233,-61.397 -102.452,-99.863 z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot m" data-a="min" title="最小化" aria-label="最小化">
+          <svg viewBox="0 0 40 40"><g transform="translate(-.102 -7.278) scale(.19206)" fill="#000" opacity=".58">
+            <path d="M 39.945204 74.342465 H 169.39726 V 209.71233 c 0,0 7.76712,-87.28767 -129.452056,-135.369865 z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot x" data-a="max" title="最大化" aria-label="最大化">
+          <svg viewBox="0 0 40 40"><g transform="translate(-1.710 -11.983) scale(.21997)" fill="#000" opacity=".58">
+            <path d="M 32.3 86.3 C 76.86 132.90 78.26 151.82 41.1 204.5 C 93.50 175.78 113.34 175.56 165.10 203.1 C 121.96 156.77 121.92 139.09 164.9 92.6 C 108.11 113.12 86.89 112.12 32.3 86.3 Z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot b" data-a="back" title="置于底层" aria-label="置于底层">
+          <svg viewBox="0 0 40 40"><g fill="#000" opacity=".58">
+            <path d="M 11.94 7 H 22.40 V 15.61 H 16.07 V 24.31 H 11.94 Z"/>
+            <path fill-rule="evenodd" d="M 16.87 15.61 V 33 H 28.06 V 15.61 Z M 16.87 16.41 H 22.40 V 24.21 H 16.87 Z"/>
+          </g></svg>
+        </button>
       </header>
-      <div class="win-body"></div>
       <div class="rz n"></div><div class="rz s"></div><div class="rz w"></div><div class="rz e"></div>
       <div class="rz nw"></div><div class="rz ne"></div><div class="rz sw"></div><div class="rz se"></div>`;
     document.getElementById('window-layer').appendChild(el);
@@ -918,19 +975,28 @@ const WindowManager = {
     };
     this.windows.set(id, win);
     el.addEventListener('pointerdown', () => this.focus(id), true);
-    $$('.win-dots i', el).forEach(dot => {
+    $$('.win-dot', el).forEach(dot => {
       dot.addEventListener('pointerdown', e => e.stopPropagation());
       dot.addEventListener('click', e => {
         e.stopPropagation();
         const a = dot.dataset.a;
         if (a === 'close') this.close(id);
         else if (a === 'min') this.minimize(id);
-        else this.toggleMax(id);
+        else if (a === 'max') this.toggleMax(id);
+        else if (a === 'back') this.sendToBack(id);
       });
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
-    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dots')) this.toggleMax(id); });
+    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+
+    /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
+     * 不是几档断点。ResizeObserver 盯 el 的宽度（最大化、拖边框都会触发）。 */
+    this._layoutChrome(win);
+    try {
+      win._ro = new ResizeObserver(() => this._layoutChrome(win));
+      win._ro.observe(el);
+    } catch (e) {}
     $$('.rz', el).forEach(h => h.addEventListener('pointerdown', e => this._startResize(e, win, h.classList[1])));
 
     this._render(win, opts);
@@ -1059,7 +1125,7 @@ const WindowManager = {
   _startDrag(e, win) {
     if (e.button !== 0 || win.maximized) return;
     if (e.isPrimary === false) return;
-    if (e.target.closest('.win-dots') || e.target.closest('.win-tools')) return;
+    if (e.target.closest('.win-dot') || e.target.closest('.win-tools')) return;
     const bar = e.currentTarget;
     const pid = e.pointerId;
 
@@ -1093,7 +1159,7 @@ const WindowManager = {
       const box = deskBox();
       // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
       const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
-      const ny = clamp(Math.round(oy + dy), 0, box.h - 44);
+      const ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
       win.el.style.left = nx + 'px';
       win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
@@ -1158,7 +1224,7 @@ const WindowManager = {
     };
     const sx = e.clientX, sy = e.clientY;
     let raf = 0, last = null;
-    const MINW = 280, MINH = 150;
+    const MINW = 280, MINH = 150 + (win._hh || 56);
     document.body.classList.add('win-drag');
 
     const draw = () => {
@@ -1295,6 +1361,7 @@ const WindowManager = {
     if (w.onClose) { try { w.onClose(); } catch (e) {} }
     /* 内容先 dispose，释放 worker / iframe；视觉上再慢慢溶解掉 */
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
+    if (w._ro) { try { w._ro.disconnect(); } catch (e) {} }
     this.windows.delete(id);
     this._syncDock();
     this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
@@ -1303,11 +1370,67 @@ const WindowManager = {
     const w = this.focused();
     if (w) this.close(w.id);
   },
+  /* ---------------------------------------------------------------- 窗口 chrome
+   * 所有尺寸都从窗口宽度按原稿比例推出来（docs/thoughts/README.md）：
+   *   提手宽 43.3% · 提手高 10% · 色点 ⌀6.25% · 外点 ±0.735×提手宽 · 内点 ±0.536×提手宽
+   * 上下限只防止极端尺寸下糊成一片，不改变比例关系。
+   * 这里写 CSS 变量而不是直接量元素：色点/标题都是 calc(var(--x)) 定位，
+   * 一处更新全体跟随，拖动边框时也不会抖。
+   */
+  _layoutChrome(win) {
+    const el = win.el;
+    if (!el || !el.isConnected) return;
+    const W = el.clientWidth || 640;
+    const dot = clamp(Math.round(W * 0.0625), 16, 40);
+    const hh  = clamp(Math.round(W * 0.1), 44, 74);
+    const hw  = clamp(Math.round(W * 0.433), 190, 380);
+    let offOut = hw * 0.735, offIn = hw * 0.536;
+    /* 窄窗：四个点不能跑出窗口。按可用半宽整体等比收，别只夹外点——
+     * 只夹外点会让内外两对挤在一起，看着像两个点。 */
+    const lim = W / 2 - dot / 2 - 6;
+    if (offOut > lim) { const k = lim / offOut; offOut *= k; offIn *= k; }
+    const tfs = clamp(W * 0.0263, 11.5, 15.5);
+    el.style.setProperty('--dot', dot + 'px');
+    el.style.setProperty('--hh', hh + 'px');
+    el.style.setProperty('--hw', hw + 'px');
+    el.style.setProperty('--offout', offOut.toFixed(1) + 'px');
+    el.style.setProperty('--offin', offIn.toFixed(1) + 'px');
+    el.style.setProperty('--tfs', tfs.toFixed(1) + 'px');
+    win._hh = hh;
+    this._fitTitle(win);
+  },
+
+  _fitTitle(win) {
+    const t = $('.win-title', win.el);
+    if (!t) return;
+    const maxW = parseFloat(getComputedStyle(t).maxWidth) || 0;
+    midEllipsis(t, win.title || '', maxW);
+  },
+
+  /* 蓝点：把这扇窗压到所有窗口下面，露出别人。
+   * 没有别的窗口时不做无意义的 z 调整，给一句提示。 */
+  sendToBack(id) {
+    const w = this.windows.get(id);
+    if (!w) return false;
+    const others = [...this.windows.values()].filter(x => x.id !== id && !x.minimized && x.el.isConnected);
+    if (!others.length) {
+      if (window.toast) toast('已经是最底层：没有其它窗口可以露出', 'warn');
+      return false;
+    }
+    others.sort((a, b) => (+a.el.style.zIndex || 0) - (+b.el.style.zIndex || 0));
+    let z = 1;
+    for (const o of others) o.el.style.zIndex = ++z;
+    w.el.style.zIndex = 0;
+    this.z = Math.max(this.z, z);
+    this.focus(others[others.length - 1].id);
+    return true;
+  },
+
   setTitle(id, t) {
     const w = this.windows.get(id);
     if (!w) return;
     w.title = t;
-    $('.win-title', w.el).textContent = t;
+    this._fitTitle(w);
     this._syncDock();
   },
   list() { return [...this.windows.values()].map(w => ({ id:w.id, type:w.type, title:w.title, minimized:w.minimized, maximized:w.maximized })); },

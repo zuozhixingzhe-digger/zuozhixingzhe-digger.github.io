@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.22';
+const HT_VERSION = '0.0.1.25';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -557,13 +557,26 @@ Apache-2.0 OR MIT · 由 AI 智能体生成并维护` },
 };
 
 /* ---------------------------------------------------------------- IndexedDB */
+/* IndexedDB 是"持久化"的实现，不是运行前提。
+ * 有三类环境 open() 会直接抛 SecurityError 或立刻 error：
+ *   · Safari 无痕窗口（旧版）、部分浏览器的 file:// 页面
+ *   · 企业策略 / 隐私插件关闭站点数据
+ *   · 存储被用户清空到配额为 0
+ * 以前这里拒绝 Promise，FS.init() 第一句 await 就抛，整个终端起不来 ——
+ * 表现和"必须开后端"一模一样，其实跟后端毫无关系。
+ * 现在失败就切内存模式：文件系统照常工作，只是刷新后丢失。 */
 const IDB = {
   db: null,
   NAME: 'hterm-fs', STORE: 'files',
+  mem: new Map(),          // 内存模式下的文件表（path -> rec）
+  memMode: false,          // true = 本次会话不落盘
   open() {
     if (this.db) return Promise.resolve(this.db);
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(this.NAME, 1);
+    if (this.memMode) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(this.NAME, 1); }
+      catch (e) { this.memMode = true; return resolve(null); }
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(this.STORE)) {
@@ -572,56 +585,63 @@ const IDB = {
         }
       };
       req.onsuccess = () => { this.db = req.result; resolve(this.db); };
-      req.onerror = () => reject(req.error);
+      req.onerror = () => { this.memMode = true; resolve(null); };
+      req.onblocked = () => { this.memMode = true; resolve(null); };
     });
   },
   tx(mode) { return this.db.transaction(this.STORE, mode).objectStore(this.STORE); },
   async get(path) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return this.mem.get(path) || null;
+    return new Promise((res) => {
       const r = this.tx('readonly').get(path);
       r.onsuccess = () => res(r.result || null);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(null);
     });
   },
   async put(rec) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.set(rec.path, rec); return rec; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').put(rec);
       r.onsuccess = () => res(rec);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => { this.mem.set(rec.path, rec); res(rec); };
     });
   },
   async del(path) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.delete(path); return true; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').delete(path);
       r.onsuccess = () => res(true);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(false);
     });
   },
   async all() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return [...this.mem.values()];
+    return new Promise((res) => {
       const r = this.tx('readonly').getAll();
       r.onsuccess = () => res(r.result || []);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res([]);
     });
   },
   async keys() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return [...this.mem.keys()];
+    return new Promise((res) => {
       const r = this.tx('readonly').getAllKeys();
       r.onsuccess = () => res(r.result || []);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res([]);
     });
   },
   async clear() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.clear(); return true; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').clear();
       r.onsuccess = () => res(true);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(false);
     });
   }
 };
@@ -645,6 +665,11 @@ const FS = {
     }
     this.persistIndex();
     rebuildLsMap();
+    /* 存储不可用要让人知道，否则「刷新一下文件全没了」会被当成 bug。
+     * 延迟一拍，等 toast 容器挂好。 */
+    if (IDB.memMode) setTimeout(() => {
+      try { toast('浏览器禁用了本地存储：本次会话不落盘，刷新即丢', true); } catch (e) {}
+    }, 1200);
     try {
       const s = await IDB.get('.config.settings');
       if (s && s.content && s.content !== '{}') {

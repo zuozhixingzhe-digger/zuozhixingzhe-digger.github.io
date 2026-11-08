@@ -328,22 +328,60 @@ body.light .ht-cursor--dashed{background:repeating-linear-gradient(to bottom,#0d
 
 /* =====================================================================
  * 窗口
+ * ---------------------------------------------------------------------
+ * 结构（设计源见 docs/thoughts/）：
+ *
+ *   .win                  整块（高度含顶部提手，背景透明、不裁剪）
+ *     .win-handle         向上凸出的提手（SVG 实体，填画面色）
+ *     .win-band           最大化时才出现：提手 + 两个阴角填成的毛玻璃带
+ *     .win-screen         画面（圆角 12、边框、阴影、backdrop-filter）
+ *       .win-body         应用内容
+ *     .win-bar            提手高度那一条：拖动热区 + 色点 + 标题 + 工具
+ *
+ * 提手是画面向上凸出的一块实体，不是浮在窗口外的玻璃——填画面色、
+ * 只有顶面略受光，底边正好压在 .win-screen 顶边上（-1px 咬合），
+ * 所以看不出接缝。尺寸由 JS 按窗口宽写进 --hw/--hh/--dot/--off*。
  * ===================================================================== */
 #window-layer{position:absolute; inset:0; z-index:20; pointer-events:none}
 .win{
-  position:absolute; pointer-events:auto; display:flex; flex-direction:column;
-  min-width:280px; min-height:150px; border:1px solid var(--line);
-  border-radius:var(--r); background:var(--panel); box-shadow:var(--shadow);
-  backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1);
-  overflow:hidden; animation:winIn .18s cubic-bezier(.2,.9,.3,1);
+  position:absolute; pointer-events:auto;
+  --hh:56px; --hw:300px; --dot:34px; --offin:160px; --offout:220px; --tfs:14px;
+  --handle-line:rgba(255,255,255,.16);
+  min-width:280px; min-height:calc(150px + var(--hh));
+  border:0; background:transparent; box-shadow:none;
+  overflow:visible;                     /* 提手要能露到窗口上方 */
+  animation:winIn .18s cubic-bezier(.2,.9,.3,1);
   will-change:transform,width,height;
 }
 @keyframes winIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
-.win.focus{border-color:rgba(94,234,212,.38);box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 0 1px rgba(94,234,212,.10)}
+
+/* 画面本体：所有裁剪都在这一层，窗口本身不裁 */
+.win-screen{
+  position:absolute; left:0; right:0; bottom:0; z-index:0;
+  top:calc(var(--hh) - 1px);
+  display:flex; flex-direction:column;
+  /* 顶边不画：提手就长在这条边上。画了会横着裂一条线，正是原稿要避免的。 */
+  border:1px solid var(--line); border-top-color:transparent; border-radius:var(--r);
+  background:var(--panel); box-shadow:var(--shadow);
+  backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1);
+  overflow:hidden;
+}
+.win.focus .win-screen{
+  border-color:rgba(94,234,212,.38);
+  box-shadow:0 24px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(94,234,212,.10);
+}
 /* 浅色主题关掉玻璃：backdrop-filter 的合成层在主题切换时不会重绘，
- * 会留着上一套主题的底色（深色）——表现为「切到浅色后窗口标题栏还是黑的」。
- * 浅色下面板本来就是不透明的，去掉滤镜没有任何视觉损失。 */
-body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
+ * 会留着上一套主题的底色（深色）——表现为「切到浅色后窗口标题栏还是黑的」。 */
+/* 浅色主题下提手和画面都是白，靠这条描边分开；深色用白色微光。 */
+body.light .win{--handle-line:rgba(20,60,55,.26)}
+body.light .win-title{color:rgba(22,38,35,.66)}
+body.light .win.focus .win-title{color:rgba(16,30,27,.92)}
+body.light .win-band{
+  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.28) 64%,rgba(255,255,255,.06));
+}
+body.light .win-band::after{background:rgba(20,60,55,.14)}
+body.light .win-handle{filter:drop-shadow(0 -2px 8px rgba(20,50,45,.12))}
+body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
 .win.dragging,.win.resizing{transition:none!important;user-select:none}
@@ -389,10 +427,53 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
   .win.tween{transition:none!important}
 }
 .win.max{border-radius:0}
+.win.max .win-screen{top:0;border-radius:0;border-color:transparent}
+.win.max .win-body{margin-top:var(--hh)}
+.win.max .win-band{opacity:1}
+
+/* ---------------------------------------------------------------- 提手
+ * 宽度固定为窗宽的 ~43%，窗口变宽它不变形；标题塞不下就中间截断，
+ * 绝不允许把提手撑大（用户定的硬规则）。
+ * 路径坐标 0..277 × 0..64，preserveAspectRatio:none 让它随 --hw/--hh 拉伸。
+ */
+.win-handle{
+  position:absolute; left:50%; top:0; z-index:2;
+  width:var(--hw); height:var(--hh);
+  margin-left:calc(var(--hw) / -2);
+  pointer-events:none;
+  filter:drop-shadow(0 -3px 12px rgba(0,0,0,.5));
+  transition:opacity .3s;
+}
+.win.max .win-handle{opacity:.42}
+.win-handle .face{fill:var(--panel-solid)}
+.win-handle .edge{stroke:var(--handle-line);stroke-width:1.1}
+
+/* 最大化：提手和两侧阴角一起填成一条毛玻璃带 */
+.win-band{
+  position:absolute; left:0; right:0; top:0; height:var(--hh); z-index:3;
+  border-radius:var(--r) var(--r) 0 0;
+  background:linear-gradient(180deg,rgba(255,255,255,.095),rgba(255,255,255,.052) 64%,rgba(255,255,255,.014));
+  -webkit-backdrop-filter:blur(22px) saturate(150%); backdrop-filter:blur(22px) saturate(150%);
+  opacity:0; transition:opacity .32s ease; pointer-events:none; overflow:hidden;
+}
+.win-band::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:rgba(255,255,255,.12);
+}
+.win-band::before{
+  content:"";position:absolute;inset:0;opacity:.38;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  mix-blend-mode:overlay;
+}
+.win.max .win-band{border-radius:0}
+
+/* ---------------------------------------------------------------- 标题条
+ * 整条都是拖动热区。透明，只有内容和指针在。
+ */
 .win-bar{
-  height:var(--bar); flex:0 0 var(--bar); display:flex; align-items:center; gap:8px;
-  padding:0 8px; background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);
-  border-bottom:1px solid var(--line-soft); cursor:default;
+  position:absolute; left:0; right:0; top:0; height:var(--hh); z-index:6;
+  display:flex; align-items:center; justify-content:center;
+  background:none; border:0; cursor:default;
   user-select:none; -webkit-user-select:none;
   /* 触摸设备上必须禁掉浏览器手势，否则 pointerdown 之后会被滚动手势抢走（pointercancel），
    * 表现就是「按下去纹丝不动」。拖动本身用 setPointerCapture 接管。 */
@@ -402,21 +483,42 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
  * 双保险——即使没捕获到指针，也保证指针在窗口内容上时事件仍归父文档。 */
 body.win-drag iframe{pointer-events:none!important}
 body.win-drag,body.win-drag *{cursor:grabbing!important;user-select:none!important}
-.win.focus .win-bar{background:linear-gradient(180deg,rgba(94,234,212,.055),transparent)}
-.win-dots{display:flex;gap:6px;align-items:center;flex:0 0 auto;padding:0 2px}
-.win-dots i{width:10px;height:10px;border-radius:50%;background:#2b3a3a;display:block;transition:background .15s}
-.win.focus .win-dots i.c{background:#ff5f57}
-.win.focus .win-dots i.m{background:#febc2e}
-.win.focus .win-dots i.x{background:#28c840}
-body.light .win-dots i{background:#c6d2cf}
-.win-dots i:hover{filter:brightness(1.25)}
-.win-title{
-  flex:1 1 auto; min-width:0; text-align:center; font-size:11.5px; letter-spacing:.06em;
-  color:var(--fg-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  font-family:var(--mono);
+
+/* 色点：四个，红黄绿蓝，从外到内对称排开（左右各两个）。
+ * .c=关 .m=最小化 .x=最大化 .b=置底。字形是 docs/thoughts/*.svg 的路径。 */
+.win-dot{
+  position:absolute; top:calc(var(--hh) / 2 - var(--dot) / 2);
+  left:calc(50% + var(--x) - var(--dot) / 2);
+  width:var(--dot); height:var(--dot); border-radius:50%;
+  padding:0; border:0; display:grid; place-items:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);
+  cursor:pointer; -webkit-appearance:none; appearance:none;
+  transition:transform .12s ease, filter .2s, opacity .2s, background .2s;
+  z-index:7;
 }
-.win.focus .win-title{color:var(--fg)}
-.win-tools{display:flex;gap:2px;flex:0 0 auto;align-items:center}
+.win-dot svg{display:block;width:64%;height:64%;pointer-events:none}
+.win-dot:hover{filter:brightness(1.14)}
+.win-dot:active{transform:scale(.93)}
+.win-dot.c{--x:calc(var(--offout) * -1); background:#ff1d1d}
+.win-dot.m{--x:calc(var(--offin) * -1);  background:#ffc61a}
+.win-dot.x{--x:var(--offin);             background:#25e02a}
+.win-dot.b{--x:var(--offout);            background:#19e6f0}
+/* 非活动窗口：点还在，但压暗，像 macOS 的灰点 */
+.win:not(.focus) .win-dot{filter:saturate(.42) brightness(.72);opacity:.62}
+body.light .win:not(.focus) .win-dot{filter:saturate(.5) brightness(.92)}
+
+/* 标题：塞不下就在中间截断（JS 做），max-width 随提手宽度走 */
+.win-title{
+  position:absolute; left:50%; transform:translateX(-50%);
+  top:calc(var(--hh) / 2 - var(--tfs) * .72);
+  max-width:calc(var(--hw) - var(--dot) - 40px);
+  font:500 var(--tfs)/1 var(--ui); letter-spacing:.055em;
+  color:rgba(224,232,242,.9); white-space:nowrap; overflow:hidden;
+  pointer-events:none; text-align:center;
+}
+.win.focus .win-title{color:rgba(240,246,253,.97)}
+.win-tools{position:absolute; right:10px; top:calc(var(--hh) / 2 - 12px); display:flex; gap:2px; align-items:center; z-index:7}
+.win-tools:empty{display:none}
 .win-tools button{width:24px;height:24px;border-radius:6px;color:var(--fg-mute);font-size:12px;display:grid;place-items:center}
 .win-tools button:hover{background:rgba(127,180,170,.12);color:var(--fg)}
 .win-body{flex:1 1 auto; min-height:0; position:relative; overflow:hidden; background:rgba(9,13,14,.88)}

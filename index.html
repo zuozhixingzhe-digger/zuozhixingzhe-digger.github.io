@@ -328,22 +328,60 @@ body.light .ht-cursor--dashed{background:repeating-linear-gradient(to bottom,#0d
 
 /* =====================================================================
  * 窗口
+ * ---------------------------------------------------------------------
+ * 结构（设计源见 docs/thoughts/）：
+ *
+ *   .win                  整块（高度含顶部提手，背景透明、不裁剪）
+ *     .win-handle         向上凸出的提手（SVG 实体，填画面色）
+ *     .win-band           最大化时才出现：提手 + 两个阴角填成的毛玻璃带
+ *     .win-screen         画面（圆角 12、边框、阴影、backdrop-filter）
+ *       .win-body         应用内容
+ *     .win-bar            提手高度那一条：拖动热区 + 色点 + 标题 + 工具
+ *
+ * 提手是画面向上凸出的一块实体，不是浮在窗口外的玻璃——填画面色、
+ * 只有顶面略受光，底边正好压在 .win-screen 顶边上（-1px 咬合），
+ * 所以看不出接缝。尺寸由 JS 按窗口宽写进 --hw/--hh/--dot/--off*。
  * ===================================================================== */
 #window-layer{position:absolute; inset:0; z-index:20; pointer-events:none}
 .win{
-  position:absolute; pointer-events:auto; display:flex; flex-direction:column;
-  min-width:280px; min-height:150px; border:1px solid var(--line);
-  border-radius:var(--r); background:var(--panel); box-shadow:var(--shadow);
-  backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1);
-  overflow:hidden; animation:winIn .18s cubic-bezier(.2,.9,.3,1);
+  position:absolute; pointer-events:auto;
+  --hh:56px; --hw:300px; --dot:34px; --offin:160px; --offout:220px; --tfs:14px;
+  --handle-line:rgba(255,255,255,.16);
+  min-width:280px; min-height:calc(150px + var(--hh));
+  border:0; background:transparent; box-shadow:none;
+  overflow:visible;                     /* 提手要能露到窗口上方 */
+  animation:winIn .18s cubic-bezier(.2,.9,.3,1);
   will-change:transform,width,height;
 }
 @keyframes winIn{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
-.win.focus{border-color:rgba(94,234,212,.38);box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 0 1px rgba(94,234,212,.10)}
+
+/* 画面本体：所有裁剪都在这一层，窗口本身不裁 */
+.win-screen{
+  position:absolute; left:0; right:0; bottom:0; z-index:0;
+  top:calc(var(--hh) - 1px);
+  display:flex; flex-direction:column;
+  /* 顶边不画：提手就长在这条边上。画了会横着裂一条线，正是原稿要避免的。 */
+  border:1px solid var(--line); border-top-color:transparent; border-radius:var(--r);
+  background:var(--panel); box-shadow:var(--shadow);
+  backdrop-filter:blur(18px) saturate(1.1); -webkit-backdrop-filter:blur(18px) saturate(1.1);
+  overflow:hidden;
+}
+.win.focus .win-screen{
+  border-color:rgba(94,234,212,.38);
+  box-shadow:0 24px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(94,234,212,.10);
+}
 /* 浅色主题关掉玻璃：backdrop-filter 的合成层在主题切换时不会重绘，
- * 会留着上一套主题的底色（深色）——表现为「切到浅色后窗口标题栏还是黑的」。
- * 浅色下面板本来就是不透明的，去掉滤镜没有任何视觉损失。 */
-body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
+ * 会留着上一套主题的底色（深色）——表现为「切到浅色后窗口标题栏还是黑的」。 */
+/* 浅色主题下提手和画面都是白，靠这条描边分开；深色用白色微光。 */
+body.light .win{--handle-line:rgba(20,60,55,.26)}
+body.light .win-title{color:rgba(22,38,35,.66)}
+body.light .win.focus .win-title{color:rgba(16,30,27,.92)}
+body.light .win-band{
+  background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.28) 64%,rgba(255,255,255,.06));
+}
+body.light .win-band::after{background:rgba(20,60,55,.14)}
+body.light .win-handle{filter:drop-shadow(0 -2px 8px rgba(20,50,45,.12))}
+body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
   backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
 }
 .win.dragging,.win.resizing{transition:none!important;user-select:none}
@@ -389,10 +427,53 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
   .win.tween{transition:none!important}
 }
 .win.max{border-radius:0}
+.win.max .win-screen{top:0;border-radius:0;border-color:transparent}
+.win.max .win-body{margin-top:var(--hh)}
+.win.max .win-band{opacity:1}
+
+/* ---------------------------------------------------------------- 提手
+ * 宽度固定为窗宽的 ~43%，窗口变宽它不变形；标题塞不下就中间截断，
+ * 绝不允许把提手撑大（用户定的硬规则）。
+ * 路径坐标 0..277 × 0..64，preserveAspectRatio:none 让它随 --hw/--hh 拉伸。
+ */
+.win-handle{
+  position:absolute; left:50%; top:0; z-index:2;
+  width:var(--hw); height:var(--hh);
+  margin-left:calc(var(--hw) / -2);
+  pointer-events:none;
+  filter:drop-shadow(0 -3px 12px rgba(0,0,0,.5));
+  transition:opacity .3s;
+}
+.win.max .win-handle{opacity:.42}
+.win-handle .face{fill:var(--panel-solid)}
+.win-handle .edge{stroke:var(--handle-line);stroke-width:1.1}
+
+/* 最大化：提手和两侧阴角一起填成一条毛玻璃带 */
+.win-band{
+  position:absolute; left:0; right:0; top:0; height:var(--hh); z-index:3;
+  border-radius:var(--r) var(--r) 0 0;
+  background:linear-gradient(180deg,rgba(255,255,255,.095),rgba(255,255,255,.052) 64%,rgba(255,255,255,.014));
+  -webkit-backdrop-filter:blur(22px) saturate(150%); backdrop-filter:blur(22px) saturate(150%);
+  opacity:0; transition:opacity .32s ease; pointer-events:none; overflow:hidden;
+}
+.win-band::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:rgba(255,255,255,.12);
+}
+.win-band::before{
+  content:"";position:absolute;inset:0;opacity:.38;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+  mix-blend-mode:overlay;
+}
+.win.max .win-band{border-radius:0}
+
+/* ---------------------------------------------------------------- 标题条
+ * 整条都是拖动热区。透明，只有内容和指针在。
+ */
 .win-bar{
-  height:var(--bar); flex:0 0 var(--bar); display:flex; align-items:center; gap:8px;
-  padding:0 8px; background:linear-gradient(180deg,rgba(255,255,255,.035),transparent);
-  border-bottom:1px solid var(--line-soft); cursor:default;
+  position:absolute; left:0; right:0; top:0; height:var(--hh); z-index:6;
+  display:flex; align-items:center; justify-content:center;
+  background:none; border:0; cursor:default;
   user-select:none; -webkit-user-select:none;
   /* 触摸设备上必须禁掉浏览器手势，否则 pointerdown 之后会被滚动手势抢走（pointercancel），
    * 表现就是「按下去纹丝不动」。拖动本身用 setPointerCapture 接管。 */
@@ -402,21 +483,42 @@ body.light .win,body.light #dock,body.light .drawer,body.light .launcher{
  * 双保险——即使没捕获到指针，也保证指针在窗口内容上时事件仍归父文档。 */
 body.win-drag iframe{pointer-events:none!important}
 body.win-drag,body.win-drag *{cursor:grabbing!important;user-select:none!important}
-.win.focus .win-bar{background:linear-gradient(180deg,rgba(94,234,212,.055),transparent)}
-.win-dots{display:flex;gap:6px;align-items:center;flex:0 0 auto;padding:0 2px}
-.win-dots i{width:10px;height:10px;border-radius:50%;background:#2b3a3a;display:block;transition:background .15s}
-.win.focus .win-dots i.c{background:#ff5f57}
-.win.focus .win-dots i.m{background:#febc2e}
-.win.focus .win-dots i.x{background:#28c840}
-body.light .win-dots i{background:#c6d2cf}
-.win-dots i:hover{filter:brightness(1.25)}
-.win-title{
-  flex:1 1 auto; min-width:0; text-align:center; font-size:11.5px; letter-spacing:.06em;
-  color:var(--fg-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  font-family:var(--mono);
+
+/* 色点：四个，红黄绿蓝，从外到内对称排开（左右各两个）。
+ * .c=关 .m=最小化 .x=最大化 .b=置底。字形是 docs/thoughts/*.svg 的路径。 */
+.win-dot{
+  position:absolute; top:calc(var(--hh) / 2 - var(--dot) / 2);
+  left:calc(50% + var(--x) - var(--dot) / 2);
+  width:var(--dot); height:var(--dot); border-radius:50%;
+  padding:0; border:0; display:grid; place-items:center;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.22);
+  cursor:pointer; -webkit-appearance:none; appearance:none;
+  transition:transform .12s ease, filter .2s, opacity .2s, background .2s;
+  z-index:7;
 }
-.win.focus .win-title{color:var(--fg)}
-.win-tools{display:flex;gap:2px;flex:0 0 auto;align-items:center}
+.win-dot svg{display:block;width:64%;height:64%;pointer-events:none}
+.win-dot:hover{filter:brightness(1.14)}
+.win-dot:active{transform:scale(.93)}
+.win-dot.c{--x:calc(var(--offout) * -1); background:#ff1d1d}
+.win-dot.m{--x:calc(var(--offin) * -1);  background:#ffc61a}
+.win-dot.x{--x:var(--offin);             background:#25e02a}
+.win-dot.b{--x:var(--offout);            background:#19e6f0}
+/* 非活动窗口：点还在，但压暗，像 macOS 的灰点 */
+.win:not(.focus) .win-dot{filter:saturate(.42) brightness(.72);opacity:.62}
+body.light .win:not(.focus) .win-dot{filter:saturate(.5) brightness(.92)}
+
+/* 标题：塞不下就在中间截断（JS 做），max-width 随提手宽度走 */
+.win-title{
+  position:absolute; left:50%; transform:translateX(-50%);
+  top:calc(var(--hh) / 2 - var(--tfs) * .72);
+  max-width:calc(var(--hw) - var(--dot) - 40px);
+  font:500 var(--tfs)/1 var(--ui); letter-spacing:.055em;
+  color:rgba(224,232,242,.9); white-space:nowrap; overflow:hidden;
+  pointer-events:none; text-align:center;
+}
+.win.focus .win-title{color:rgba(240,246,253,.97)}
+.win-tools{position:absolute; right:10px; top:calc(var(--hh) / 2 - 12px); display:flex; gap:2px; align-items:center; z-index:7}
+.win-tools:empty{display:none}
 .win-tools button{width:24px;height:24px;border-radius:6px;color:var(--fg-mute);font-size:12px;display:grid;place-items:center}
 .win-tools button:hover{background:rgba(127,180,170,.12);color:var(--fg)}
 .win-body{flex:1 1 auto; min-height:0; position:relative; overflow:hidden; background:rgba(9,13,14,.88)}
@@ -5857,7 +5959,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.22';
+const HT_VERSION = '0.0.1.25';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -6409,13 +6511,26 @@ Apache-2.0 OR MIT · 由 AI 智能体生成并维护` },
 };
 
 /* ---------------------------------------------------------------- IndexedDB */
+/* IndexedDB 是"持久化"的实现，不是运行前提。
+ * 有三类环境 open() 会直接抛 SecurityError 或立刻 error：
+ *   · Safari 无痕窗口（旧版）、部分浏览器的 file:// 页面
+ *   · 企业策略 / 隐私插件关闭站点数据
+ *   · 存储被用户清空到配额为 0
+ * 以前这里拒绝 Promise，FS.init() 第一句 await 就抛，整个终端起不来 ——
+ * 表现和"必须开后端"一模一样，其实跟后端毫无关系。
+ * 现在失败就切内存模式：文件系统照常工作，只是刷新后丢失。 */
 const IDB = {
   db: null,
   NAME: 'hterm-fs', STORE: 'files',
+  mem: new Map(),          // 内存模式下的文件表（path -> rec）
+  memMode: false,          // true = 本次会话不落盘
   open() {
     if (this.db) return Promise.resolve(this.db);
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(this.NAME, 1);
+    if (this.memMode) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let req;
+      try { req = indexedDB.open(this.NAME, 1); }
+      catch (e) { this.memMode = true; return resolve(null); }
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(this.STORE)) {
@@ -6424,56 +6539,63 @@ const IDB = {
         }
       };
       req.onsuccess = () => { this.db = req.result; resolve(this.db); };
-      req.onerror = () => reject(req.error);
+      req.onerror = () => { this.memMode = true; resolve(null); };
+      req.onblocked = () => { this.memMode = true; resolve(null); };
     });
   },
   tx(mode) { return this.db.transaction(this.STORE, mode).objectStore(this.STORE); },
   async get(path) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return this.mem.get(path) || null;
+    return new Promise((res) => {
       const r = this.tx('readonly').get(path);
       r.onsuccess = () => res(r.result || null);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(null);
     });
   },
   async put(rec) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.set(rec.path, rec); return rec; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').put(rec);
       r.onsuccess = () => res(rec);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => { this.mem.set(rec.path, rec); res(rec); };
     });
   },
   async del(path) {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.delete(path); return true; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').delete(path);
       r.onsuccess = () => res(true);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(false);
     });
   },
   async all() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return [...this.mem.values()];
+    return new Promise((res) => {
       const r = this.tx('readonly').getAll();
       r.onsuccess = () => res(r.result || []);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res([]);
     });
   },
   async keys() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) return [...this.mem.keys()];
+    return new Promise((res) => {
       const r = this.tx('readonly').getAllKeys();
       r.onsuccess = () => res(r.result || []);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res([]);
     });
   },
   async clear() {
-    await this.open();
-    return new Promise((res, rej) => {
+    const db = await this.open();
+    if (!db) { this.mem.clear(); return true; }
+    return new Promise((res) => {
       const r = this.tx('readwrite').clear();
       r.onsuccess = () => res(true);
-      r.onerror = () => rej(r.error);
+      r.onerror = () => res(false);
     });
   }
 };
@@ -6497,6 +6619,11 @@ const FS = {
     }
     this.persistIndex();
     rebuildLsMap();
+    /* 存储不可用要让人知道，否则「刷新一下文件全没了」会被当成 bug。
+     * 延迟一拍，等 toast 容器挂好。 */
+    if (IDB.memMode) setTimeout(() => {
+      try { toast('浏览器禁用了本地存储：本次会话不落盘，刷新即丢', true); } catch (e) {}
+    }, 1200);
     try {
       const s = await IDB.get('.config.settings');
       if (s && s.content && s.content !== '{}') {
@@ -8282,6 +8409,27 @@ function exitDesktop() {
 }
 
 /* ---------------------------------------------------------------- 窗口管理 */
+/* 标题塞不下时在中间截断（"hsl2 · Fre…第 1 层"），绝不动提手尺寸。
+ * 先摘掉 max-width 量真实文本宽，再二分"前 n 字 + … + 后 n 字"。
+ * 用 scrollWidth 而不是 canvas 测：和最终渲染用的是同一套字体与字距。 */
+function midEllipsis(el, text, maxW){
+  el.dataset.full = text || '';
+  el.textContent = text || '';
+  if (!maxW || maxW <= 0) return;
+  el.style.maxWidth = 'none';
+  if (el.scrollWidth <= maxW) { el.style.maxWidth = ''; return; }
+  const ch = [...text];
+  const build = n => ch.slice(0, n).join('') + '…' + ch.slice(ch.length - n).join('');
+  let lo = 0, hi = Math.floor(ch.length / 2);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    el.textContent = build(mid);
+    if (el.scrollWidth <= maxW) lo = mid; else hi = mid - 1;
+  }
+  el.textContent = lo > 0 ? build(lo) : '…';
+  el.style.maxWidth = '';
+}
+
 const WindowManager = {
   windows: new Map(),
   z: 30,
@@ -8321,7 +8469,10 @@ const WindowManager = {
     const { w:vw, h:vh } = deskBox();
     const base = TYPE_SIZE[opts.type] || [780, 500];
     const defW = Math.min(opts.w || base[0], vw - 24);
-    const defH = Math.min(opts.h || base[1], vh - 32);
+    /* 高度含顶部提手：调用方给的 w/h 一直指"画面"尺寸，提手另外加，
+     * 否则窗口内容会比以前矮 44~74px。 */
+    const hh0 = clamp(Math.round(defW * 0.1), 44, 74);
+    const defH = Math.min((opts.h || base[1]) + hh0, vh - 16);
     const n = this.cascade++ % 6;
     // 层叠步长要比标题栏（36px）大一点，否则两个窗口的标题栏会糊在一起像一条
     const x = opts.x != null ? opts.x : clamp(24 + n * 46, 8, Math.max(8, vw - defW - 8));
@@ -8331,12 +8482,45 @@ const WindowManager = {
     el.className = 'win focus';
     el.dataset.id = id;
     el.style.cssText = `left:${x}px;top:${y}px;width:${defW}px;height:${defH}px;z-index:${++this.z}`;
-    el.innerHTML = `<header class="win-bar">
-        <div class="win-dots"><i class="c" data-a="close" title="关闭"></i><i class="m" data-a="min" title="最小化"></i><i class="x" data-a="max" title="最大化"></i></div>
+    el.innerHTML = `<svg class="win-handle" viewBox="0 0 277 64" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="htHandleHi" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity=".055"/>
+          <stop offset=".55" stop-color="#fff" stop-opacity=".022"/>
+          <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient></defs>
+        <path class="face" d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64 Z"/>
+        <path d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64 Z" fill="url(#htHandleHi)"/>
+        <path class="edge" d="M 0 64 L 53.5 7 Q 53.5 0 60.5 0 L 216.5 0 Q 223.5 0 223.5 7 L 277 64"
+              fill="none"/>
+      </svg>
+      <div class="win-band"></div>
+      <div class="win-screen"><div class="win-body"></div></div>
+      <header class="win-bar">
         <div class="win-title">${esc(opts.title || '窗口')}</div>
         <div class="win-tools"></div>
+        <button class="win-dot c" data-a="close" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 40 40"><g transform="translate(1.142 -1.395) scale(.16939)" fill="#000" opacity=".58">
+            <path d="M 37.726 49.562 H 181.603 V 64.726 H 56.589 V 177.534 H 149.425 V 197.876 H 37.726 Z"/>
+            <path d="M 82.479 102.822 c 0,0 111.699,-38.466 102.452,100.233 c 0,0 -19.233,-61.397 -102.452,-99.863 z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot m" data-a="min" title="最小化" aria-label="最小化">
+          <svg viewBox="0 0 40 40"><g transform="translate(-.102 -7.278) scale(.19206)" fill="#000" opacity=".58">
+            <path d="M 39.945204 74.342465 H 169.39726 V 209.71233 c 0,0 7.76712,-87.28767 -129.452056,-135.369865 z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot x" data-a="max" title="最大化" aria-label="最大化">
+          <svg viewBox="0 0 40 40"><g transform="translate(-1.710 -11.983) scale(.21997)" fill="#000" opacity=".58">
+            <path d="M 32.3 86.3 C 76.86 132.90 78.26 151.82 41.1 204.5 C 93.50 175.78 113.34 175.56 165.10 203.1 C 121.96 156.77 121.92 139.09 164.9 92.6 C 108.11 113.12 86.89 112.12 32.3 86.3 Z"/>
+          </g></svg>
+        </button>
+        <button class="win-dot b" data-a="back" title="置于底层" aria-label="置于底层">
+          <svg viewBox="0 0 40 40"><g fill="#000" opacity=".58">
+            <path d="M 11.94 7 H 22.40 V 15.61 H 16.07 V 24.31 H 11.94 Z"/>
+            <path fill-rule="evenodd" d="M 16.87 15.61 V 33 H 28.06 V 15.61 Z M 16.87 16.41 H 22.40 V 24.21 H 16.87 Z"/>
+          </g></svg>
+        </button>
       </header>
-      <div class="win-body"></div>
       <div class="rz n"></div><div class="rz s"></div><div class="rz w"></div><div class="rz e"></div>
       <div class="rz nw"></div><div class="rz ne"></div><div class="rz sw"></div><div class="rz se"></div>`;
     document.getElementById('window-layer').appendChild(el);
@@ -8348,19 +8532,28 @@ const WindowManager = {
     };
     this.windows.set(id, win);
     el.addEventListener('pointerdown', () => this.focus(id), true);
-    $$('.win-dots i', el).forEach(dot => {
+    $$('.win-dot', el).forEach(dot => {
       dot.addEventListener('pointerdown', e => e.stopPropagation());
       dot.addEventListener('click', e => {
         e.stopPropagation();
         const a = dot.dataset.a;
         if (a === 'close') this.close(id);
         else if (a === 'min') this.minimize(id);
-        else this.toggleMax(id);
+        else if (a === 'max') this.toggleMax(id);
+        else if (a === 'back') this.sendToBack(id);
       });
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
-    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dots')) this.toggleMax(id); });
+    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+
+    /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
+     * 不是几档断点。ResizeObserver 盯 el 的宽度（最大化、拖边框都会触发）。 */
+    this._layoutChrome(win);
+    try {
+      win._ro = new ResizeObserver(() => this._layoutChrome(win));
+      win._ro.observe(el);
+    } catch (e) {}
     $$('.rz', el).forEach(h => h.addEventListener('pointerdown', e => this._startResize(e, win, h.classList[1])));
 
     this._render(win, opts);
@@ -8489,7 +8682,7 @@ const WindowManager = {
   _startDrag(e, win) {
     if (e.button !== 0 || win.maximized) return;
     if (e.isPrimary === false) return;
-    if (e.target.closest('.win-dots') || e.target.closest('.win-tools')) return;
+    if (e.target.closest('.win-dot') || e.target.closest('.win-tools')) return;
     const bar = e.currentTarget;
     const pid = e.pointerId;
 
@@ -8523,7 +8716,7 @@ const WindowManager = {
       const box = deskBox();
       // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
       const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
-      const ny = clamp(Math.round(oy + dy), 0, box.h - 44);
+      const ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
       win.el.style.left = nx + 'px';
       win.el.style.top = ny + 'px';
       win.el.classList.add('dragging');
@@ -8588,7 +8781,7 @@ const WindowManager = {
     };
     const sx = e.clientX, sy = e.clientY;
     let raf = 0, last = null;
-    const MINW = 280, MINH = 150;
+    const MINW = 280, MINH = 150 + (win._hh || 56);
     document.body.classList.add('win-drag');
 
     const draw = () => {
@@ -8725,6 +8918,7 @@ const WindowManager = {
     if (w.onClose) { try { w.onClose(); } catch (e) {} }
     /* 内容先 dispose，释放 worker / iframe；视觉上再慢慢溶解掉 */
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
+    if (w._ro) { try { w._ro.disconnect(); } catch (e) {} }
     this.windows.delete(id);
     this._syncDock();
     this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
@@ -8733,11 +8927,67 @@ const WindowManager = {
     const w = this.focused();
     if (w) this.close(w.id);
   },
+  /* ---------------------------------------------------------------- 窗口 chrome
+   * 所有尺寸都从窗口宽度按原稿比例推出来（docs/thoughts/README.md）：
+   *   提手宽 43.3% · 提手高 10% · 色点 ⌀6.25% · 外点 ±0.735×提手宽 · 内点 ±0.536×提手宽
+   * 上下限只防止极端尺寸下糊成一片，不改变比例关系。
+   * 这里写 CSS 变量而不是直接量元素：色点/标题都是 calc(var(--x)) 定位，
+   * 一处更新全体跟随，拖动边框时也不会抖。
+   */
+  _layoutChrome(win) {
+    const el = win.el;
+    if (!el || !el.isConnected) return;
+    const W = el.clientWidth || 640;
+    const dot = clamp(Math.round(W * 0.0625), 16, 40);
+    const hh  = clamp(Math.round(W * 0.1), 44, 74);
+    const hw  = clamp(Math.round(W * 0.433), 190, 380);
+    let offOut = hw * 0.735, offIn = hw * 0.536;
+    /* 窄窗：四个点不能跑出窗口。按可用半宽整体等比收，别只夹外点——
+     * 只夹外点会让内外两对挤在一起，看着像两个点。 */
+    const lim = W / 2 - dot / 2 - 6;
+    if (offOut > lim) { const k = lim / offOut; offOut *= k; offIn *= k; }
+    const tfs = clamp(W * 0.0263, 11.5, 15.5);
+    el.style.setProperty('--dot', dot + 'px');
+    el.style.setProperty('--hh', hh + 'px');
+    el.style.setProperty('--hw', hw + 'px');
+    el.style.setProperty('--offout', offOut.toFixed(1) + 'px');
+    el.style.setProperty('--offin', offIn.toFixed(1) + 'px');
+    el.style.setProperty('--tfs', tfs.toFixed(1) + 'px');
+    win._hh = hh;
+    this._fitTitle(win);
+  },
+
+  _fitTitle(win) {
+    const t = $('.win-title', win.el);
+    if (!t) return;
+    const maxW = parseFloat(getComputedStyle(t).maxWidth) || 0;
+    midEllipsis(t, win.title || '', maxW);
+  },
+
+  /* 蓝点：把这扇窗压到所有窗口下面，露出别人。
+   * 没有别的窗口时不做无意义的 z 调整，给一句提示。 */
+  sendToBack(id) {
+    const w = this.windows.get(id);
+    if (!w) return false;
+    const others = [...this.windows.values()].filter(x => x.id !== id && !x.minimized && x.el.isConnected);
+    if (!others.length) {
+      if (window.toast) toast('已经是最底层：没有其它窗口可以露出', 'warn');
+      return false;
+    }
+    others.sort((a, b) => (+a.el.style.zIndex || 0) - (+b.el.style.zIndex || 0));
+    let z = 1;
+    for (const o of others) o.el.style.zIndex = ++z;
+    w.el.style.zIndex = 0;
+    this.z = Math.max(this.z, z);
+    this.focus(others[others.length - 1].id);
+    return true;
+  },
+
   setTitle(id, t) {
     const w = this.windows.get(id);
     if (!w) return;
     w.title = t;
-    $('.win-title', w.el).textContent = t;
+    this._fitTitle(w);
     this._syncDock();
   },
   list() { return [...this.windows.values()].map(w => ({ id:w.id, type:w.type, title:w.title, minimized:w.minimized, maximized:w.maximized })); },
@@ -15950,6 +16200,7 @@ const HSL2 = (() => {
   const CHUNK = 1024 * 1024;
 
   const DB_NAME = 'ht-hsl2', STORE = 'assets';
+  const CACHE_MEM = new Map();   /* 本次会话的内存缓存：IndexedDB 不可用时的兜底 */
   let dbPromise = null;
   let interceptorInstalled = false;
 
@@ -15971,21 +16222,36 @@ const HSL2 = (() => {
     });
     return dbPromise;
   }
-  function dbGet(key) {
-    return db().then(d => new Promise((res, rej) => {
-      const q = d.transaction(STORE, 'readonly').objectStore(STORE).get(key);
-      q.onsuccess = () => res(q.result || null);
-      q.onerror = () => rej(q.error);
-    }));
+  /* IndexedDB 只是缓存，不是运行前提。
+   * Safari 无痕、部分浏览器在 file:// 下、企业策略禁用存储时，
+   * indexedDB.open() 会直接抛 SecurityError。以前这里会把异常抛给 loadAsset，
+   * 被上层当成"资源加载失败"——看起来就像"不开后端跑不起来"。
+   * 现在一律降级：读不到当没缓存，写不进当没写，网络照走。 */
+  async function dbGet(key) {
+    const mem = CACHE_MEM.get(key);
+    if (mem) return mem;
+    try {
+      const d = await db();
+      return await new Promise((res, rej) => {
+        const q = d.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+        q.onsuccess = () => res(q.result || null);
+        q.onerror = () => rej(q.error);
+      });
+    } catch (e) { return null; }
   }
-  function dbPut(key, buf) {
-    return db().then(d => new Promise((res, rej) => {
-      const t = d.transaction(STORE, 'readwrite');
-      t.objectStore(STORE).put(buf, key);
-      t.oncomplete = () => res(true);
-      t.onerror = () => rej(t.error);
-      t.onabort = () => rej(t.error || new Error('IndexedDB 写入被中止'));
-    }));
+  async function dbPut(key, buf) {
+    /* 缓存整个 2 GB 磁盘会撑爆内存，只给"一次启动用得上、又不大"的组件留内存副本 */
+    if (buf && buf.byteLength <= 24 * 1024 * 1024) CACHE_MEM.set(key, buf);
+    try {
+      const d = await db();
+      return await new Promise((res, rej) => {
+        const t = d.transaction(STORE, 'readwrite');
+        t.objectStore(STORE).put(buf, key);
+        t.oncomplete = () => res(true);
+        t.onerror = () => rej(t.error);
+        t.onabort = () => rej(t.error || new Error('IndexedDB 写入被中止'));
+      });
+    } catch (e) { return false; }
   }
   function dbClear() {
     return db().then(d => new Promise((res, rej) => {
@@ -16265,10 +16531,45 @@ const HSL2 = (() => {
 .hsl2-progress{height:2px;background:var(--line);flex:0 0 auto}
 .hsl2-progress i{display:block;height:100%;width:0;background:var(--green);transition:width .25s}
 .hsl2-view{flex:1 1 auto;overflow:auto;background:#000;padding:8px;outline:none;cursor:text}
-.hsl2-view:focus{box-shadow:inset 0 0 0 1px var(--fg-dim)}
+.hsl2-view:focus-within{box-shadow:inset 0 0 0 1px var(--fg-dim)}
 .hsl2-view>div{color:#ddd}
 .hsl2-log{flex:0 0 auto;max-height:60px;overflow:auto;padding:5px 10px;font:11px/1.55 monospace;
   color:var(--fg-dim);border-top:1px solid var(--line);white-space:pre-wrap}
+
+/* ---- 启动完成：把警告、进度、日志、状态栏全收起来，只留画面 ----
+ * 用户明确要求：FreeBSD 起来以后不要再挂一串提示文字。
+ * 控制条收成右上角一颗悬浮药丸，鼠标移上去（或键盘聚焦）才出现。 */
+.hsl2-app{position:relative}
+.hsl2-app.is-live .hsl2-warn,
+.hsl2-app.is-live .hsl2-progress,
+.hsl2-app.is-live .hsl2-log{display:none}
+.hsl2-app.is-live .hsl2-bar{
+  position:absolute;right:8px;top:8px;z-index:6;width:auto;
+  padding:3px 6px;border:1px solid var(--line);border-radius:8px;
+  background:rgba(10,14,16,.74);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  opacity:0;pointer-events:none;transition:opacity .18s ease;
+}
+/* 运行态不再需要"运行中/缓存 N 项"这行字，也不留那个 flex 占位——
+ * 留着它会把药丸撑成横贯窗口的一条，重新盖住画面顶部。 */
+.hsl2-app.is-live .hsl2-bar > span{display:none}
+.hsl2-app.is-live .hsl2-bar button{font-size:11px;padding:2px 7px}
+.hsl2-app.is-live:hover .hsl2-bar,
+.hsl2-app.is-live .hsl2-bar:focus-within{opacity:1;pointer-events:auto}
+/* 触屏没有 hover：留一颗常驻的淡药丸，点一下就能展开 */
+@media (hover:none){
+  /* 触屏没有 hover：药丸常驻但挪到右下角，别压住 FreeBSD 启动时刷屏的顶部几行 */
+  .hsl2-app.is-live .hsl2-bar{opacity:.55;pointer-events:auto;top:auto;bottom:8px;right:6px}
+  .hsl2-app.is-live .hsl2-bar button{font-size:10.5px;padding:1px 6px}
+}
+/* 键盘桥：一个几乎看不见的 textarea。桌面端负责接收按键，
+ * 移动端点画面时 focus() 它，软键盘才会弹出来。1px 高是为了不占版面，
+ * font-size:16px 是 iOS 的硬要求——小于 16px 聚焦时会自动放大页面。 */
+.hsl2-kbd{
+  position:absolute;left:0;bottom:0;width:100%;height:1px;z-index:5;
+  margin:0;padding:0;border:0;resize:none;overflow:hidden;
+  background:transparent;color:transparent;caret-color:transparent;
+  font-size:16px;line-height:1;opacity:.01;pointer-events:none;
+}
 `;
   document.head.appendChild(st);
 })();
@@ -16286,7 +16587,8 @@ class HSL2App {
   }
 
   _build() {
-    this.body.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;padding:0;background:#0b0b0b';
+    this.body.classList.add('hsl2-app');
+    this.body.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;padding:0;background:#0b0b0b;position:relative';
     this.body.innerHTML = `
       <div class="hsl2-warn">⚠ <b>hsl2 是可选实验组件</b>：在浏览器里用 WASM 模拟 x86、跑真实的 FreeBSD 12.0。
         FreeBSD 及其工具链存在 GPL 相关历史遗留问题，授权情况复杂；本项目<b>不分发</b>任何相关源码或二进制。
@@ -16302,6 +16604,8 @@ class HSL2App {
       <div class="hsl2-progress"><i></i></div>
       <div class="hsl2-view" tabindex="0">
         <div class="hsl2-screen"><div style="white-space:pre;font:14px monospace;line-height:14px"></div><canvas style="display:none"></canvas></div>
+        <textarea class="hsl2-kbd" autocomplete="off" autocorrect="off" autocapitalize="off"
+                  spellcheck="false" aria-label="虚拟机键盘输入"></textarea>
       </div>
       <div class="hsl2-log"></div>`;
 
@@ -16319,15 +16623,53 @@ class HSL2App {
       else if (a === 'clear') HSL2.clearCache();
     });
 
-    /* 点画面即接管键盘；失焦后按键交还给 hterminal 的全局快捷键。 */
-    this.viewEl.addEventListener('pointerdown', () => this.viewEl.focus());
-    this.viewEl.addEventListener('keydown', e => this._onKey(e));
+    this.kbdEl = this.body.querySelector('.hsl2-kbd');
+
+    /* 点画面即接管键盘；失焦后按键交还给 hterminal 的全局快捷键。
+     * 焦点必须落在 textarea 上，不能落在 div 上：
+     * 移动端只有 input/textarea/contenteditable 聚焦才会唤起软键盘，
+     * div[tabindex] 在 iOS/Android 上只会得到一个光标，键盘不出来。 */
+    this.viewEl.addEventListener('pointerdown', e => {
+      if (e.target === this.kbdEl) return;
+      /* 必须阻止默认聚焦：.hsl2-view 自己带 tabindex，点下去浏览器会把焦点
+       * 从 textarea 抢回 div，软键盘随之收起。preventDefault 之后焦点只落在 kbd 上。 */
+      e.preventDefault();
+      this._focusKbd();
+    });
+    /* 只挂在 textarea 上：keydown 会冒泡到 viewEl，两处都绑就发两遍。 */
+    this.kbdEl.addEventListener('keydown', e => this._onKey(e));
+    /* 软键盘不保证给 keydown（很多中文输入法只给 input），
+     * 所以字符统一从 input 事件取；取完立刻清空，避免越积越长。 */
+    this.kbdEl.addEventListener('input', () => {
+      const v = this.kbdEl.value;
+      this.kbdEl.value = '';
+      if (!v || !this.emu) return;
+      for (const ch of v) {
+        if (ch === '\n' || ch === '\r') HSL2.sendKeys([13]);
+        else HSL2.sendText(ch);
+      }
+    });
     this.refreshCache();
   }
 
   screenContainer() { return this.screenEl; }
 
-  onEmulator(emu) { this.emu = emu; this.viewEl.focus(); }
+  onEmulator(emu) {
+    this.emu = emu;
+    /* 起来了就把提示全部收掉：警告条、进度条、日志、状态栏 */
+    this.body.classList.add('is-live');
+    this.screenEl.style.visibility = 'visible';
+    this._focusKbd();
+  }
+
+  /* 聚焦键盘桥。桌面端 preventScroll 防止页面被拽走；
+   * 移动端必须由用户手势（pointerdown）同步调用，异步调用 iOS 会拒绝弹键盘。 */
+  _focusKbd() {
+    const el = this.kbdEl;
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); }
+    catch (e) { try { el.focus(); } catch (_) {} }
+  }
 
   reload() {
     /* 重启要走完整的窗口重建，避免 v86 往已销毁的 DOM 里继续写。 */

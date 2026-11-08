@@ -49,6 +49,7 @@ const HSL2 = (() => {
   const CHUNK = 1024 * 1024;
 
   const DB_NAME = 'ht-hsl2', STORE = 'assets';
+  const CACHE_MEM = new Map();   /* 本次会话的内存缓存：IndexedDB 不可用时的兜底 */
   let dbPromise = null;
   let interceptorInstalled = false;
 
@@ -70,21 +71,36 @@ const HSL2 = (() => {
     });
     return dbPromise;
   }
-  function dbGet(key) {
-    return db().then(d => new Promise((res, rej) => {
-      const q = d.transaction(STORE, 'readonly').objectStore(STORE).get(key);
-      q.onsuccess = () => res(q.result || null);
-      q.onerror = () => rej(q.error);
-    }));
+  /* IndexedDB 只是缓存，不是运行前提。
+   * Safari 无痕、部分浏览器在 file:// 下、企业策略禁用存储时，
+   * indexedDB.open() 会直接抛 SecurityError。以前这里会把异常抛给 loadAsset，
+   * 被上层当成"资源加载失败"——看起来就像"不开后端跑不起来"。
+   * 现在一律降级：读不到当没缓存，写不进当没写，网络照走。 */
+  async function dbGet(key) {
+    const mem = CACHE_MEM.get(key);
+    if (mem) return mem;
+    try {
+      const d = await db();
+      return await new Promise((res, rej) => {
+        const q = d.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+        q.onsuccess = () => res(q.result || null);
+        q.onerror = () => rej(q.error);
+      });
+    } catch (e) { return null; }
   }
-  function dbPut(key, buf) {
-    return db().then(d => new Promise((res, rej) => {
-      const t = d.transaction(STORE, 'readwrite');
-      t.objectStore(STORE).put(buf, key);
-      t.oncomplete = () => res(true);
-      t.onerror = () => rej(t.error);
-      t.onabort = () => rej(t.error || new Error('IndexedDB 写入被中止'));
-    }));
+  async function dbPut(key, buf) {
+    /* 缓存整个 2 GB 磁盘会撑爆内存，只给"一次启动用得上、又不大"的组件留内存副本 */
+    if (buf && buf.byteLength <= 24 * 1024 * 1024) CACHE_MEM.set(key, buf);
+    try {
+      const d = await db();
+      return await new Promise((res, rej) => {
+        const t = d.transaction(STORE, 'readwrite');
+        t.objectStore(STORE).put(buf, key);
+        t.oncomplete = () => res(true);
+        t.onerror = () => rej(t.error);
+        t.onabort = () => rej(t.error || new Error('IndexedDB 写入被中止'));
+      });
+    } catch (e) { return false; }
   }
   function dbClear() {
     return db().then(d => new Promise((res, rej) => {
@@ -364,10 +380,45 @@ const HSL2 = (() => {
 .hsl2-progress{height:2px;background:var(--line);flex:0 0 auto}
 .hsl2-progress i{display:block;height:100%;width:0;background:var(--green);transition:width .25s}
 .hsl2-view{flex:1 1 auto;overflow:auto;background:#000;padding:8px;outline:none;cursor:text}
-.hsl2-view:focus{box-shadow:inset 0 0 0 1px var(--fg-dim)}
+.hsl2-view:focus-within{box-shadow:inset 0 0 0 1px var(--fg-dim)}
 .hsl2-view>div{color:#ddd}
 .hsl2-log{flex:0 0 auto;max-height:60px;overflow:auto;padding:5px 10px;font:11px/1.55 monospace;
   color:var(--fg-dim);border-top:1px solid var(--line);white-space:pre-wrap}
+
+/* ---- 启动完成：把警告、进度、日志、状态栏全收起来，只留画面 ----
+ * 用户明确要求：FreeBSD 起来以后不要再挂一串提示文字。
+ * 控制条收成右上角一颗悬浮药丸，鼠标移上去（或键盘聚焦）才出现。 */
+.hsl2-app{position:relative}
+.hsl2-app.is-live .hsl2-warn,
+.hsl2-app.is-live .hsl2-progress,
+.hsl2-app.is-live .hsl2-log{display:none}
+.hsl2-app.is-live .hsl2-bar{
+  position:absolute;right:8px;top:8px;z-index:6;width:auto;
+  padding:3px 6px;border:1px solid var(--line);border-radius:8px;
+  background:rgba(10,14,16,.74);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  opacity:0;pointer-events:none;transition:opacity .18s ease;
+}
+/* 运行态不再需要"运行中/缓存 N 项"这行字，也不留那个 flex 占位——
+ * 留着它会把药丸撑成横贯窗口的一条，重新盖住画面顶部。 */
+.hsl2-app.is-live .hsl2-bar > span{display:none}
+.hsl2-app.is-live .hsl2-bar button{font-size:11px;padding:2px 7px}
+.hsl2-app.is-live:hover .hsl2-bar,
+.hsl2-app.is-live .hsl2-bar:focus-within{opacity:1;pointer-events:auto}
+/* 触屏没有 hover：留一颗常驻的淡药丸，点一下就能展开 */
+@media (hover:none){
+  /* 触屏没有 hover：药丸常驻但挪到右下角，别压住 FreeBSD 启动时刷屏的顶部几行 */
+  .hsl2-app.is-live .hsl2-bar{opacity:.55;pointer-events:auto;top:auto;bottom:8px;right:6px}
+  .hsl2-app.is-live .hsl2-bar button{font-size:10.5px;padding:1px 6px}
+}
+/* 键盘桥：一个几乎看不见的 textarea。桌面端负责接收按键，
+ * 移动端点画面时 focus() 它，软键盘才会弹出来。1px 高是为了不占版面，
+ * font-size:16px 是 iOS 的硬要求——小于 16px 聚焦时会自动放大页面。 */
+.hsl2-kbd{
+  position:absolute;left:0;bottom:0;width:100%;height:1px;z-index:5;
+  margin:0;padding:0;border:0;resize:none;overflow:hidden;
+  background:transparent;color:transparent;caret-color:transparent;
+  font-size:16px;line-height:1;opacity:.01;pointer-events:none;
+}
 `;
   document.head.appendChild(st);
 })();
@@ -385,7 +436,8 @@ class HSL2App {
   }
 
   _build() {
-    this.body.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;padding:0;background:#0b0b0b';
+    this.body.classList.add('hsl2-app');
+    this.body.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;padding:0;background:#0b0b0b;position:relative';
     this.body.innerHTML = `
       <div class="hsl2-warn">⚠ <b>hsl2 是可选实验组件</b>：在浏览器里用 WASM 模拟 x86、跑真实的 FreeBSD 12.0。
         FreeBSD 及其工具链存在 GPL 相关历史遗留问题，授权情况复杂；本项目<b>不分发</b>任何相关源码或二进制。
@@ -401,6 +453,8 @@ class HSL2App {
       <div class="hsl2-progress"><i></i></div>
       <div class="hsl2-view" tabindex="0">
         <div class="hsl2-screen"><div style="white-space:pre;font:14px monospace;line-height:14px"></div><canvas style="display:none"></canvas></div>
+        <textarea class="hsl2-kbd" autocomplete="off" autocorrect="off" autocapitalize="off"
+                  spellcheck="false" aria-label="虚拟机键盘输入"></textarea>
       </div>
       <div class="hsl2-log"></div>`;
 
@@ -418,15 +472,53 @@ class HSL2App {
       else if (a === 'clear') HSL2.clearCache();
     });
 
-    /* 点画面即接管键盘；失焦后按键交还给 hterminal 的全局快捷键。 */
-    this.viewEl.addEventListener('pointerdown', () => this.viewEl.focus());
-    this.viewEl.addEventListener('keydown', e => this._onKey(e));
+    this.kbdEl = this.body.querySelector('.hsl2-kbd');
+
+    /* 点画面即接管键盘；失焦后按键交还给 hterminal 的全局快捷键。
+     * 焦点必须落在 textarea 上，不能落在 div 上：
+     * 移动端只有 input/textarea/contenteditable 聚焦才会唤起软键盘，
+     * div[tabindex] 在 iOS/Android 上只会得到一个光标，键盘不出来。 */
+    this.viewEl.addEventListener('pointerdown', e => {
+      if (e.target === this.kbdEl) return;
+      /* 必须阻止默认聚焦：.hsl2-view 自己带 tabindex，点下去浏览器会把焦点
+       * 从 textarea 抢回 div，软键盘随之收起。preventDefault 之后焦点只落在 kbd 上。 */
+      e.preventDefault();
+      this._focusKbd();
+    });
+    /* 只挂在 textarea 上：keydown 会冒泡到 viewEl，两处都绑就发两遍。 */
+    this.kbdEl.addEventListener('keydown', e => this._onKey(e));
+    /* 软键盘不保证给 keydown（很多中文输入法只给 input），
+     * 所以字符统一从 input 事件取；取完立刻清空，避免越积越长。 */
+    this.kbdEl.addEventListener('input', () => {
+      const v = this.kbdEl.value;
+      this.kbdEl.value = '';
+      if (!v || !this.emu) return;
+      for (const ch of v) {
+        if (ch === '\n' || ch === '\r') HSL2.sendKeys([13]);
+        else HSL2.sendText(ch);
+      }
+    });
     this.refreshCache();
   }
 
   screenContainer() { return this.screenEl; }
 
-  onEmulator(emu) { this.emu = emu; this.viewEl.focus(); }
+  onEmulator(emu) {
+    this.emu = emu;
+    /* 起来了就把提示全部收掉：警告条、进度条、日志、状态栏 */
+    this.body.classList.add('is-live');
+    this.screenEl.style.visibility = 'visible';
+    this._focusKbd();
+  }
+
+  /* 聚焦键盘桥。桌面端 preventScroll 防止页面被拽走；
+   * 移动端必须由用户手势（pointerdown）同步调用，异步调用 iOS 会拒绝弹键盘。 */
+  _focusKbd() {
+    const el = this.kbdEl;
+    if (!el) return;
+    try { el.focus({ preventScroll: true }); }
+    catch (e) { try { el.focus(); } catch (_) {} }
+  }
 
   reload() {
     /* 重启要走完整的窗口重建，避免 v86 往已销毁的 DOM 里继续写。 */

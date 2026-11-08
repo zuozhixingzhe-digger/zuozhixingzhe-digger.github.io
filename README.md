@@ -680,6 +680,12 @@ print()                     // 真的打开打印对话框
 
 ### <a id="hsl2"></a> 5.4 hsl2：可选组件（WASM + FreeBSD + v86，风险必读）
 
+> **运行前提：不需要后端，也不需要 IndexedDB。**
+> 整套链路的每一个字节都从 CDN 直连（jsdelivr 上的 v86、i.copy.sh 上的 state 与磁盘分块），
+> 不经过任何 API、不经过 modelserver。IndexedDB 只是缓存：浏览器禁用它（Safari 无痕、
+> 隐私插件、`file://` 受限）时自动降级为内存模式，照样能开机，只是关掉页面后要重新下载。
+> 如果打不开，先看浏览器控制台是不是 `SecurityError`，不要先去开后端。
+
 > **一句话**：hsl2 用 WASM 在浏览器里模拟一台 x86 PC，跑**真实的 FreeBSD 12.0 用户态**。
 > 它是**可选的**——不敲 `hsl2()`，页面一个字节都不下载；敲了才开始经 CDN 拉组件，
 > 并缓存进 IndexedDB。FreeBSD 有 GPL 相关历史遗留问题，介意就别用（hsl1 是纯自研 MIT）。
@@ -3000,6 +3006,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.25 | 2026-11-08 | **窗口 chrome 落地（提手 + 四色点）+ hsl2 三处修复**：①窗口从「矩形标题栏」改为设计源里的「画面向上凸出提手」：`.win` 不再裁剪，新增 `.win-handle`（SVG 实体，填 `--panel-solid`，底边与 `.win-screen` 顶边咬合 1px，无接缝）、`.win-screen`（圆角/边框/阴影/backdrop 全部搬到这里）、`.win-band`（最大化时的毛玻璃带）。②四个色点按原稿语义：红=关、黄=最小化、绿=最大化、蓝=置于底层（新增 `WindowManager.sendToBack()`）；字形直接内联 `docs/thoughts/*.svg` 的路径。③尺寸全部由窗口宽度按原稿比例算出（提手 43.3%、高 10%、色点 ⌀6.25%、外点 ±0.735×提手宽），`ResizeObserver` 跟随缩放；窄到 280px 仍分得开。④标题塞不下时**中间截断**（`midEllipsis` 二分测量），提手尺寸永不因标题变化。⑤**hsl2 启动后收起全部提示**：警告条、进度条、日志、状态栏在 `is-live` 后全部 `display:none`，控制条收成右上角悬浮药丸（触屏常驻、桌面 hover 出现），画面铺满。⑥**手机键盘修复**：`.hsl2-view` 是 `div[tabindex]`，移动端聚焦不会唤起软键盘；新增 1px 透明 `textarea` 键盘桥，`pointerdown` 里 `preventDefault()+focus()`（iOS 要求在用户手势内同步聚焦），字符从 `input` 事件取、特殊键走 `keydown`，`font-size:16px` 防 iOS 自动放大。⑦**修「必须开后端」的真因**：`indexedDB.open()` 在 Safari 无痕 / `file://` 受限 / 隐私策略下会抛 `SecurityError`，旧代码在 `FS.init()` 第一句 `await IDB.open()` 就抛，整个终端起不来——和 hsl2、和后端都无关；`IDB` 改为失败即切内存模式（`memMode`，读写走 `Map`），hsl2 的 `dbGet/dbPut` 同样降级，无存储环境仍能完整启动 FreeBSD（只是不缓存）。⑧版本号从 0.0.1.22 补齐到 0.0.1.25（23/24 的记录写了但 `HT_VERSION` 没改）。 |
 | 0.0.1.24 | 2026-11-04 | **hsl2 真身：WASM + v86 + FreeBSD 12.0（可选组件）**：①新增 `build/66-hsl2.js`——v86 0.5.473 从 jsdelivr 加载，FreeBSD 12.0 的 2 GB 分块盘与 ~16 MB zstd state 快照从 v86 官方镜像 CDN 加载，全部经 **IndexedDB（`ht-hsl2`）缓存**；`XHR.prototype` 上做**按 CDN 前缀生效的拦截**，v86 看到的仍是原始 URL（`.zst` 后缀、1 MB 分块命名不变），解压逻辑不受影响。②**不启动不加载**：`index.html` 里没有任何相关 `<script>` / `<link>`，只有敲 `hsl2()`（JSHeL）或 `hsl2`（hsl1）才发第一个请求；`hsl2()` / `hsl2.stop()` / `hsl2.clear()` / `hsl2.status()` 与 hsl1 的 `hsl2 --cold`。③窗口系统注册 `hsl2` 类型，风险提示条 + 进度 + 日志 + 停止/重启/清缓存；v86 全局键盘监听创建后立刻 `destroy()`，改由窗口聚焦时转发（普通字符 / keyCode / scancode），不抢全局快捷键。④**许可证合规**：补 `licenses/LICENSE.v86.txt`（BSD-2-Clause）与 `licenses/LICENSE.freebsd.txt`（FreeBSD COPYRIGHT），`licenses/README.md` 新增「hsl2：额外说明（风险，必读）」，`check-licenses.sh` 登记 `v86@0.5.473`；README §5.4 由「规划中」整节改写为实现说明 + 风险复核。⑤四条硬约束落实：可选不用、不分发任何源码或二进制、不启动不加载、CDN + IndexedDB。⑥`build.sh` 把 `66-hsl2.js` 拼进产物。 |
 | 0.0.1.23 | 2026-11-04 | **JSHeL 纯 JS 化 + 键盘策略 + hsl1 改名 + 启动微打扰**：①JSHeL 固定提示符 `JSHeL> `、不再显示「当前目录」、删掉 `AUTO_CALL` 白名单——裸敲 `ls` 只求值为函数对象（和浏览器控制台一致），`ls()` 才真正调用。②顶栏删掉 Alt / Shift 只留 Ctrl；原 `Ctrl-Shift-*` 快捷键全改 `Alt-*`；`Ctrl` 全部留给终端（唯一例外 `Ctrl-,`，`Alt-,` 同样支持开关设置）；Alt 组合一律捕获但**直接吞掉**不交给终端，为以后的 Alt 功能预留键位；`Ctrl-Alt` 与 `Ctrl-Shift-C/V` 一律不捕获。③`hsl` 全量改名 `hsl1`（`hsl` 不再支持，颜色空间 HSL 不受影响），`hsl2` 只留壳子并写明 WASM + FreeBSD + v86 的规划与许可证风险，未实现、未加载、未分发任何组件。④启动不再弹模态框，改 toast 微打扰；设置页新增「访问令牌」专门一栏（sessionStorage，留空即清除）。⑤重建 `index.html`，Playwright 无头浏览器 23 项实测全过：提示符、裸命令、键位事件级探测、hsl1 进出、hsl2 占位、令牌存取、无 pageerror、无 WASM 组件请求。 |
 | 0.0.1.22 | 2026-11-04 | **零信任架构四条红线**：①§13 新增总纲「零信任架构：四条设计红线」（谁能请求 / 能请求啥 / 能得到啥信息 / 服务自己能做什么）＋「关于模型切换」（换模型是改参数重启的运维动作，不做运行时自动切换，避免复杂化扩大攻击面）＋「改代码前的自检」5 条，作为后续参照的约束而非功能介绍。②**按第 3 条收敛请求者可见信息**：`/health` 只回 `{"ok":true}`（删 version / service）；chat 路由**出口做白名单**（`minimize_chat` / `minimizeChat`），只放行 `choices[].message` 的必要字段，剥掉上游 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` 与转换函数自造的 `model`——这是真缺口：请求体的 model 虽已覆盖，真实模型名仍会从响应漏回去；错误体只留一句 message；Python 覆盖 `send_response` 不发 `Server` 头；所有拒绝统一回 `REJECTED`，「仅允许本机访问」「Host 只接受…」「需要令牌」等防线描述只进 stderr；内部错误不回显 URL / 异常 / 配置；429 去掉「上限 N 次/分」与 `X-RateLimit-*`，保留 `Retry-After`。三份后端一致，前端状态栏不再拼后端描述。③新增 `pentest-scripts/info_leak.py`（话特别多的假上游，84 项全过）；全量回归 9 套约 298 项全过；修掉 `lan_access.py` L26 依赖旧文案的假失败（并把 `check` 的 bytes 拼接导致的崩溃一并修）与 `file_origin_e2e.py` 自包含。④踩坑 72–73。 |
