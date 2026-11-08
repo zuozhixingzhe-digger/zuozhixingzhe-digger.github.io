@@ -61,7 +61,7 @@
       <!-- 内容示意：原稿只有 "content" 一个词，这里换成三行等宽字，尺寸与位置照原稿比例 -->
       <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
          font-size="3.2" letter-spacing=".02" xml:space="preserve">
-        <text x="35.2" y="90.2" fill="#5eead4">JSHeL&gt; <tspan fill="#cbd5e1">hsl2()</tspan></text>
+        <text x="35.2" y="90.2" fill="#5eead4">JSHeL&gt; <tspan fill="#cbd5e1">hsb2()</tspan></text>
         <text x="35.2" y="95.2" fill="#5b6b7f">  · 已缓存 6 项组件 · FreeBSD 12.0 运行中</text>
         <text x="35.2" y="102.2" fill="#7c8ea3">root@nyu:~ # <tspan fill="#cbd5e1">uname -a</tspan></text>
         <text x="35.2" y="107.2" fill="#8fa3b8">FreeBSD nyu 12.0-RELEASE r341666 GENERIC  i386</text>
@@ -106,5 +106,5 @@
   <text x="109.295" y="77.35" text-anchor="middle"
         font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif"
         font-size="4.2" font-weight="500" letter-spacing=".04"
-        fill="#e8eef6" fill-opacity=".92">hsl2 · FreeBSD 12.0</text>
+        fill="#e8eef6" fill-opacity=".92">hsb2 · FreeBSD 12.0</text>
 </svg>

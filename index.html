@@ -1634,7 +1634,7 @@ class LineEditor {
   reopen() {
     if (this.closed || this.raw) return;
     /* 先擦掉上一次画的块。正常提交后 _rows 已经是 0（光标停在新行行首），
-     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl1 进/出层、
+     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsb1 进/出层、
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
@@ -2121,7 +2121,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | hsl1（hsl1 时整行交给 COMPAT，不认 JS）
+    mode: 'jshel',          // jshel | hsb1（hsb1 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -2428,7 +2428,7 @@ function makeShell(ctx) {
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsb1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -2473,10 +2473,10 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
-      ['hsl1', 'hsl1() 进交互式 Linux 风格 shell；hsl1("ls -la") 跑一行；hsl1 里 help 看命令表'],
-      ['hsl2', '规划中的可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsl2() 看完整说明'],
+      ['hsb1', 'hsb1() 进交互式 Linux 风格 shell；hsb1("ls -la") 跑一行；hsb1 里 help 看命令表'],
+      ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
-      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsl1()。'],
+      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -2536,7 +2536,7 @@ function makeShell(ctx) {
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
         const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
         if (first && (gone || known)) {
-          out(ANSI.gray + '提示：' + first + ' 是 hsl1 命令。hsl1() 进 shell，或 hsl1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+          out(ANSI.gray + '提示：' + first + ' 是 hsb1 命令。hsb1() 进 shell，或 hsb1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
         }
       }
       if (e && e.stack) {
@@ -3438,15 +3438,15 @@ async function bootShell(init) {
 
   /* 三种模式并列，看提示符就知道自己在哪一层：
    *   `JSHeL> `          JSHeL（纯 JS 求值；固定提示符，不显示当前目录）
-   *   `/home/user $ `    hsl1（只当 shell 命令行）
+   *   `/home/user $ `    hsb1（只当 shell 命令行）
    *   `agent> `          智能体 TUI（整行发给智能体）
    */
   const AGENT_PROMPT = ANSI.cyan + 'agent' + ANSI.reset + '> ';
 
-  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 提示符用：
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsb1 提示符用：
    *   .            /              .home           /home/user
    *   .home.notes  /home/user/notes              .bin            /bin
-   * 这样 hsl1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
+   * 这样 hsb1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
   function dispPath(p) {
     if (!p || p === '.') return '/';
     if (p === '.home') return '/home/user';
@@ -3457,7 +3457,7 @@ async function bootShell(init) {
   const editor = new LineEditor({
     prompt: () => {
       if (api.__state.mode === 'agent') return AGENT_PROMPT;
-      if (api.__state.mode === 'hsl1') return dispPath(api.__state.cwd) + ' $ ';
+      if (api.__state.mode === 'hsb1') return dispPath(api.__state.cwd) + ' $ ';
       /* JSHeL 固定提示符：不显示当前目录，力求和真的 JS 控制台一致。 */
       return 'JSHeL> ';
     },
@@ -3486,7 +3486,7 @@ async function bootShell(init) {
       if (!line.trim()) return;
       /* 三条完全分开的路，中间没有「猜一下这行是什么」：
        *   agent → 整行发给智能体（不认 JS，也不认 shell）
-       *   hsl1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
+       *   hsb1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
        *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
        * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
        * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
@@ -3494,7 +3494,7 @@ async function bootShell(init) {
         await agentTui.line(line);
         return;
       }
-      if (api.__state.mode === 'hsl1') {
+      if (api.__state.mode === 'hsb1') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
@@ -3503,9 +3503,9 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- hsl1（Linux 风格 shell）
+  /* ---------------------------------------------------------------- hsb1（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 只有 mode === 'hsl1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 只有 mode === 'hsb1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
    * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
@@ -3560,9 +3560,9 @@ async function bootShell(init) {
         return undefined;
       }
       this.on = true;
-      /* 记住从哪一层进来的：hsl1 里进来就回 hsl1，否则回 JSHeL。
+      /* 记住从哪一层进来的：hsb1 里进来就回 hsb1，否则回 JSHeL。
        * 只记一个值而不是布尔——布尔表达不了「原来在第几层」。 */
-      this._back = api.__state.mode === 'hsl1' ? 'hsl1' : 'jshel';
+      this._back = api.__state.mode === 'hsb1' ? 'hsb1' : 'jshel';
       api.__state.mode = 'agent';
       editor.promptStr = AGENT_PROMPT;
 
@@ -3717,9 +3717,9 @@ async function bootShell(init) {
       this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
       this._stopSpin();
       this._busy = false;
-      /* 回原来那一层：hsl1 进的就回 hsl1，否则回 JSHeL。
+      /* 回原来那一层：hsb1 进的就回 hsb1，否则回 JSHeL。
        * 提示符由 promptText() 重算，调用方（submit 的 finally / onCtrlD）负责补上。 */
-      api.__state.mode = this._back === 'hsl1' ? 'hsl1' : 'jshel';
+      api.__state.mode = this._back === 'hsb1' ? 'hsb1' : 'jshel';
       editor.promptStr = editor.promptText();
       out(ANSI.gray + '已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）' + ANSI.reset + '\r\n');
       return true;
@@ -3741,40 +3741,40 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
-  /* hsl1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl，已全量改名；hsl 不再支持）。
+  /* hsb1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl、hsl1，现统一为 hsb1；老名字不再支持）。
    *
-   *   hsl1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
-   *   hsl1('ls -la')    跑一行，输出直接进终端
-   *   await hsl1.run(x) 跑一行但不打印，返回 { code, out, err }
+   *   hsb1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsb1('ls -la')    跑一行，输出直接进终端
+   *   await hsb1.run(x) 跑一行但不打印，返回 { code, out, err }
    *
    * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell。
-   * 注意：必须写 hsl1()；裸敲 hsl1 只会被当成普通 JS 标识符求值。 */
-  function hsl1(cmd) {
+   * 注意：必须写 hsb1()；裸敲 hsb1 只会被当成普通 JS 标识符求值。 */
+  function hsb1(cmd) {
     if (cmd === undefined || cmd === null) {
-      /* 只打印横幅，不返回值：hsl1() 不该在下面多出一个 "1" */
-      const d = COMPAT.hslPush();
-      out(ANSI.gray + 'hsl1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      /* 只打印横幅，不返回值：hsb1() 不该在下面多出一个 "1" */
+      const d = COMPAT.hsbPush();
+      out(ANSI.gray + 'hsb1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
       return undefined;
     }
     return COMPAT.execLine(String(cmd)).then(() => undefined);
   }
-  hsl1.run = (cmd) => COMPAT.execLine(String(cmd));
-  globalThis.hsl1 = hsl1;
+  hsb1.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsb1 = hsb1;
 
-  /* hsl2 —— WASM + v86 + FreeBSD 12.0 的真实入口（可选组件，用户已明确要求实现）。
+  /* hsb2 —— WASM + v86 + FreeBSD 12.0 的真实入口（可选组件，用户已明确要求实现）。
    * 这里只发一条 RPC 让主线程开窗口：v86 需要 DOM / WASM，Worker 里跑不了。
-   * 关键：不敲 hsl2() 就永远不会执行到这里，页面也就永远不会去碰那些 CDN 资源。 */
-  globalThis.hsl2 = (opts) => {
-    out(ANSI.yellow + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + ANSI.reset + '\r\n');
-    out(ANSI.gray + COMPAT.hsl2Notice() + ANSI.reset + '\r\n');
-    out(ANSI.gray + '正在打开 hsl2 窗口 …（从现在起才经 CDN 下载组件，并缓存到 IndexedDB）' + ANSI.reset + '\r\n');
-    call('hsl2.open', opts || {}).catch(e =>
-      out(ANSI.red + 'hsl2 启动失败：' + String(e && e.message || e) + ANSI.reset + '\r\n'));
+   * 关键：不敲 hsb2() 就永远不会执行到这里，页面也就永远不会去碰那些 CDN 资源。 */
+  globalThis.hsb2 = (opts) => {
+    out(ANSI.yellow + '⚠ hsb2 · 可选组件：WASM + v86 + FreeBSD 12.0' + ANSI.reset + '\r\n');
+    out(ANSI.gray + COMPAT.hsb2Notice() + ANSI.reset + '\r\n');
+    out(ANSI.gray + '正在打开 hsb2 窗口 …（从现在起才经 CDN 下载组件，并缓存到 IndexedDB）' + ANSI.reset + '\r\n');
+    call('hsb2.open', opts || {}).catch(e =>
+      out(ANSI.red + 'hsb2 启动失败：' + String(e && e.message || e) + ANSI.reset + '\r\n'));
     return undefined;
   };
-  hsl2.stop = () => call('hsl2.stop');
-  hsl2.clear = () => call('hsl2.clear');
-  hsl2.status = () => call('hsl2.status');
+  hsb2.stop = () => call('hsb2.stop');
+  hsb2.clear = () => call('hsb2.clear');
+  hsb2.status = () => call('hsb2.status');
 
   COMPAT.attach({
     out: (t) => out(t),
@@ -3792,7 +3792,7 @@ async function bootShell(init) {
     setMode: (m) => { api.__state.mode = m; },
     /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复。
      * 这里**不要**手动把 _rows 清零——reopen() 靠它判断屏上还有没有旧块，
-     * 清了就擦不掉，于是 hsl1 进出层时会出现两个提示符并排。 */
+     * 清了就擦不掉，于是 hsb1 进出层时会出现两个提示符并排。 */
     kick: () => { editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
@@ -3803,7 +3803,7 @@ async function bootShell(init) {
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
     out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl1()；hsl2() 看规划说明。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsb1()；真实 FreeBSD 用 hsb2()（可选，按需下载）。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 
@@ -4152,7 +4152,7 @@ const HTScript = (() => {
 
 
 /* ============================================================================
- * HTerMinaL · hsl1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
+ * HTerMinaL · hsb1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -4160,13 +4160,13 @@ const HTScript = (() => {
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：JSHeL 里敲 `hsl1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里敲 `await hsl1('ls -la')` 跑一行。原命令名 hsl 已不再支持。
+ * 用法：JSHeL 里敲 `hsb1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsb1('ls -la')` 跑一行。原命令名 hsl / hsl1 已统一为 hsb1，老名字不再支持。
  *
  * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
  * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
  *
- * hsl2 是可选组件：def('hsl2') 只在用户主动敲命令时才让主线程加载 WASM + FreeBSD。
+ * hsb2 是可选组件：def('hsb2') 只在用户主动敲命令时才让主线程加载 WASM + FreeBSD。
  * 真身是 v86 0.5.473（BSD-2-Clause）+ FreeBSD 12.0，全部经 CDN 按需加载并缓存到
  * IndexedDB；本项目不分发任何相关源码 / 二进制，许可证原文见 licenses/。
  * ==========================================================================*/
@@ -4249,7 +4249,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return 'hsl1';
+    if (name === 'SHELL') return 'hsb1';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -4302,7 +4302,7 @@ const COMPAT = (function () {
    *   .home.xxx 这种点分    → 绝对
    *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
    */
-  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 的 pwd / 提示符用。
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsb1 的 pwd / 提示符用。
    * 与 20-worker.js 那份同名，但 COMPAT 是独立闭包，够不着那边，这里必须自带一份。 */
   function dispPath(p) {
     if (!p || p === '.') return '/';
@@ -4385,9 +4385,9 @@ const COMPAT = (function () {
   }, '格式化输出');
 
   def('pwd', async () => {
-    /* hsl1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
+    /* hsb1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
     const p = IO.getCwd();
-    return { out: (IO.state.mode === 'hsl1' ? dispPath(p) : p) + '\n' };
+    return { out: (IO.state.mode === 'hsb1' ? dispPath(p) : p) + '\n' };
   }, '当前目录');
 
   def('cd', async (a) => {
@@ -4937,7 +4937,7 @@ const COMPAT = (function () {
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl1', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsb1', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -5083,12 +5083,12 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* help 只属于 hsl1。JSHeL 里的 help() 是另一个东西（列 JS API），
+  /* help 只属于 hsb1。JSHeL 里的 help() 是另一个东西（列 JS API），
    * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
   def('help', async () => {
     const names = Object.keys(CMDS).sort();
     const w = 78;
-    let s = CYAN + 'hsl1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let s = CYAN + 'hsb1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
     let line = '  ';
     for (const n of names) {
       const seg = n + '  ';
@@ -5096,7 +5096,7 @@ const COMPAT = (function () {
       line += seg;
     }
     s += line + '\n';
-    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 启动可选组件' + R + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsb1 再进一层 · hsb2 启动可选组件' + R + '\n';
     return { out: s };
   }, '命令表');
 
@@ -5150,7 +5150,7 @@ const COMPAT = (function () {
       version: IO.version || '0.0.0.0',
       engine: info.engine || 'n/a',
       os: info.os || 'n/a',
-      shell: 'JSHeL + hsl1',
+      shell: 'JSHeL + hsb1',
       term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
       res: info.screen || 'n/a',
       dpr: info.dpr || 1,
@@ -5555,72 +5555,72 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  /* hsl1 是一个**可嵌套**的交互层：每敲一次 hsl1 压一层，exit 弹一层。
+  /* hsb1 是一个**可嵌套**的交互层：每敲一次 hsb1 压一层，exit 弹一层。
    * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
    * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
-  const HSL = [];
-  function hslDepth() { return HSL.length; }
-  function hslPush() {
-    HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
-    IO.setMode('hsl1');
+  const HSB = [];
+  function hsbDepth() { return HSB.length; }
+  function hsbPush() {
+    HSB.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
+    IO.setMode('hsb1');
     IO.kick();
-    return HSL.length;
+    return HSB.length;
   }
-  function hslPop() {
-    const f = HSL.pop();
+  function hsbPop() {
+    const f = HSB.pop();
     if (!f) return false;
     ENV = Object.assign(Object.create(null), f.env);
     IO.setCwd(f.cwd);
-    IO.setMode(HSL.length ? 'hsl1' : 'jshel');
+    IO.setMode(HSB.length ? 'hsb1' : 'jshel');
     IO.kick();
     return true;
   }
 
-  def('hsl1', async () => {
-    const d = hslPush();
-    return { out: DIM + 'hsl1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
-  }, '再进一层 hsl1（可嵌套）');
+  def('hsb1', async () => {
+    const d = hsbPush();
+    return { out: DIM + 'hsb1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 hsb1（可嵌套）');
 
-  /* ---------------------------------------------------------------- hsl2：可选组件
+  /* ---------------------------------------------------------------- hsb2：可选组件
    * 用户已明确要求实现：WASM + v86 + 真实 FreeBSD 12.0 用户态。
-   * 四条硬约束不变（风险、可选、不分发、不启动不加载），见 HSL2_NOTICE。 */
-  const HSL2_NOTICE = [
-    'hsl2 用 WASM（v86）在浏览器里模拟 x86，跑真实的 FreeBSD 12.0 用户态。',
+   * 四条硬约束不变（风险、可选、不分发、不启动不加载），见 HSB2_NOTICE。 */
+  const HSB2_NOTICE = [
+    'hsb2 用 WASM（v86）在浏览器里模拟 x86，跑真实的 FreeBSD 12.0 用户态。',
     '',
     '风险与合规（请务必先读）：',
     '  · FreeBSD 及其工具链有 GPL 相关的历史遗留问题，授权情况复杂；',
-    '  · 因此 hsl2 是【可选的】：可以完全不用，默认功能不受任何影响；',
+    '  · 因此 hsb2 是【可选的】：可以完全不用，默认功能不受任何影响；',
     '  · 本项目【不分发】FreeBSD / v86 / WASM 相关的源码或二进制；',
-    '  · 组件只在用户【主动启动 hsl2】时才经 CDN 加载，并缓存到 IndexedDB；',
+    '  · 组件只在用户【主动启动 hsb2】时才经 CDN 加载，并缓存到 IndexedDB；',
     '    用户不启动，就不会下载、不会加载，也不占用任何空间；',
     '  · 第三方许可证原文见 licenses/，专门章节见 README §5.4。',
     '',
-    '用法：hsl2() 启动；hsl2({cold:true}) 跳过快照走冷启动；hsl2.stop() 停止；hsl2.clear() 清缓存。'
+    '用法：hsb2() 启动；hsb2({cold:true}) 跳过快照走冷启动；hsb2.stop() 停止；hsb2.clear() 清缓存。'
   ].join('\n');
 
-  def('hsl2', async (a) => {
+  def('hsb2', async (a) => {
     const cold = a.includes('--cold') || a.includes('-c');
-    const r = await IO.call('hsl2.open', cold ? { cold: true } : {}, true);
+    const r = await IO.call('hsb2.open', cold ? { cold: true } : {}, true);
     return {
-      out: YELLOW + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + R + '\n'
-         + DIM + HSL2_NOTICE + R + '\n'
-         + DIM + (r && r.reused ? '已复用 hsl2 窗口' : '已打开 hsl2 窗口') + '，组件开始按需下载。' + R + '\n'
+      out: YELLOW + '⚠ hsb2 · 可选组件：WASM + v86 + FreeBSD 12.0' + R + '\n'
+         + DIM + HSB2_NOTICE + R + '\n'
+         + DIM + (r && r.reused ? '已复用 hsb2 窗口' : '已打开 hsb2 窗口') + '，组件开始按需下载。' + R + '\n'
     };
-  }, '启动 hsl2（WASM + FreeBSD + v86，可选组件；有许可证风险，可选不用）');
+  }, '启动 hsb2（WASM + FreeBSD + v86，可选组件；有许可证风险，可选不用）');
 
-  /* 从 hsl1 里敲 jshel：与 hsl1 对称，回到 JSHeL（弹出这一层），
-   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSL、还多出来一个窗口」的困惑，
-   * 也正是「hsl1 打不开 jshel」的根源：hsl1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
+  /* 从 hsb1 里敲 jshel：与 hsb1 对称，回到 JSHeL（弹出这一层），
+   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSB、还多出来一个窗口」的困惑，
+   * 也正是「hsb1 打不开 jshel」的根源：hsb1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
    * 想开「独立 JSHeL 窗口」（旧语义：新 worker、新环境、exit 关窗互不牵连）时显式加 -n / --new。 */
   def('jshel', async (a) => {
     const newWin = a.includes('-n') || a.includes('--new');
     const dirArg = a.find(x => x !== '-n' && x !== '--new');
-    if (hslDepth() > 0 && !newWin) {
-      const d = hslDepth();
-      hslPop();
-      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsl1）' : '') + R + '\n' };
+    if (hsbDepth() > 0 && !newWin) {
+      const d = hsbDepth();
+      hsbPop();
+      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsb1）' : '') + R + '\n' };
     }
-    if (hslDepth() === 0 && !dirArg && !newWin) {
+    if (hsbDepth() === 0 && !dirArg && !newWin) {
       return { out: DIM + 'jshel: 已经是 JSHeL' + R + '\n' };
     }
     /* 开一个新的独立 JSHeL 窗口，cwd 继承当前目录（可带一个目录参数） */
@@ -5634,13 +5634,13 @@ const COMPAT = (function () {
     const r = await IO.call('shell.open', cwd, true);
     if (!r) return { code: 1, err: 'jshel: 打开窗口失败\n' };
     return { out: DIM + 'jshel: 新窗口 ' + (r.cwd || cwd) + '（独立会话，exit 关闭）' + R + '\n' };
-  }, '回到 JSHeL（与 hsl1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
+  }, '回到 JSHeL（与 hsb1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
 
   def('exit', async () => {
-    if (hslDepth()) {
-      const d = HSL.length;
-      hslPop();
-      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsl1' : 'exit: 回到 JSHeL') + R + '\n' };
+    if (hsbDepth()) {
+      const d = HSB.length;
+      hsbPop();
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsb1' : 'exit: 回到 JSHeL') + R + '\n' };
     }
     return { exit: true };
   }, '退出这一层（最外层退出终端）');
@@ -5744,7 +5744,7 @@ const COMPAT = (function () {
   }
 
   /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
-   * 以前这里会去 IO.api[name] 找同名函数，于是 hsl1 里敲 `write` 就真去写文件了，
+   * 以前这里会去 IO.api[name] 找同名函数，于是 hsb1 里敲 `write` 就真去写文件了，
    * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
   async function tryExternal(name, args) {
     for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
@@ -5774,7 +5774,7 @@ const COMPAT = (function () {
 
   function attach(io) {
     IO = io;
-    HSL.length = 0;
+    HSB.length = 0;
     ENV.PATH = '/bin:/usr/bin';
     ENV.TERM = 'xterm-256color';
     ENV.HOME = '.home';
@@ -5782,7 +5782,7 @@ const COMPAT = (function () {
 
   return {
     attach, execLine, commands: CMDS, lex,
-    hslPush, hslPop, hslDepth, hsl2Notice: () => HSL2_NOTICE,
+    hsbPush, hsbPop, hsbDepth, hsb2Notice: () => HSB2_NOTICE,
     editor: makeEditor,
     get ENV() { return ENV; }
   };
@@ -5959,7 +5959,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.25';
+const HT_VERSION = '0.0.1.26';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -6396,19 +6396,19 @@ const SEED_FILES = {
   > python()          // 在当前终端开一个 Python
   > winOpen({type:'browser', url:'https://example.com'})
   > agentOpen()       // 轻量智能体（需要本地后端）
-  > hsl1()            // 进 hsl1：Linux 风格的交互 shell
+  > hsb1()            // 进 hsb1：Linux 风格的交互 shell
 
 这一层是纯 JS 控制台（提示符固定为 JSHeL> ，没有「当前目录」），不是 shell：
 函数名只是普通 JS 标识符，裸敲 ls 求值为函数对象，ls() 才是调用；ls -la 会报语法错误。
-要敲 Linux 命令，用 hsl1() 进去，或者 hsl1('ls -la') 跑一行。
-两边是彻底分开的：JSHeL 只认 JS，hsl1 只认命令。
+要敲 Linux 命令，用 hsb1() 进去，或者 hsb1('ls -la') 跑一行。
+两边是彻底分开的：JSHeL 只认 JS，hsb1 只认命令。
 
 路径用点分隔，根是 "."。例如：
   .home.notes       根下的 home 目录里的 notes
   .bin.hello        一个可执行函数
   .localstorage.x   浏览器 localStorage 里的 x
 
-输入 help() 看 JS 侧的 API；进 hsl1 之后 help 看命令表。`
+输入 help() 看 JS 侧的 API；进 hsb1 之后 help 看命令表。`
   },
   '.home.readme': {
     kind:'file', mime:'text/plain',
@@ -6452,9 +6452,9 @@ spotfs 只有六个原子操作（其余命令都是它们的组合）：
   > await ls('.bin')
   > await exec('.bin.hello')
   > cat('.home.readme')
-  > hsl1()                然后   ls -la | head      或者   fastfetch
+  > hsb1()                然后   ls -la | head      或者   fastfetch
 
-hsl1 可以嵌套：再敲一次 hsl1 就是下一层，exit 回到上一层，
+hsb1 可以嵌套：再敲一次 hsb1 就是下一层，exit 回到上一层，
 每一层的当前目录互不影响（和真的子 shell 一样）。`
   },
   '.bin.hello': {
@@ -7778,11 +7778,27 @@ function activeSession() {
   if (w && w.content && w.content.term && !w.content.disposed) return w.content;
   return TerminalManager.desktop;
 }
+/** 聚焦窗口若是 hsb2（没有 xterm 会话），顶栏按键要走它自己的键盘通道，
+ * 否则会一路发给桌面终端——这正是「顶栏 Ctrl / Esc 在 FreeBSD 里没反应」的原因。 */
+function hsb2Focused() {
+  const w = (typeof WindowManager !== 'undefined') ? WindowManager.focused() : null;
+  const c = w && w.content;
+  return (c && typeof c.typeTermSeq === 'function' && !c.disposed) ? c : null;
+}
 function keepTermFocus() {
+  const vm = hsb2Focused();
+  if (vm) { vm.focusTerm(); return; }
   const s = activeSession();
   if (s && s.term) { try { s.term.focus(); } catch (e) {} }
 }
 function sendKeyToTerm(text) {
+  const vm = hsb2Focused();
+  if (vm) {
+    /* 顶栏的 Ctrl 是粘滞修饰键：先按终端语义改写，再交给虚拟机 */
+    if (text) vm.typeTermSeq(Keys.active('ctrl') ? Keys.shape(text) : text);
+    vm.focusTerm();
+    return;
+  }
   const s = activeSession();
   if (!s) return;
   if (text) s._post({ t:'in', data:text });
@@ -8409,7 +8425,7 @@ function exitDesktop() {
 }
 
 /* ---------------------------------------------------------------- 窗口管理 */
-/* 标题塞不下时在中间截断（"hsl2 · Fre…第 1 层"），绝不动提手尺寸。
+/* 标题塞不下时在中间截断（"hsb2 · Fre…第 1 层"），绝不动提手尺寸。
  * 先摘掉 max-width 量真实文本宽，再二分"前 n 字 + … + 后 n 字"。
  * 用 scrollWidth 而不是 canvas 测：和最终渲染用的是同一套字体与字距。 */
 function midEllipsis(el, text, maxW){
@@ -8458,10 +8474,10 @@ const WindowManager = {
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
       calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', image:'看图修图', urlhash:'链接即状态',
-      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsl2:'hsl2 · FreeBSD' };
+      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
       calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], image:[940, 660], urlhash:[700, 620],
-      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsl2:[820, 600] };
+      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     /* `jshel` 可以一层层开出新窗口，全都叫「终端」就分不清哪个是哪个了。
      * 后缀带上落地目录，cd 之后跟着变。 */
@@ -8662,7 +8678,7 @@ const WindowManager = {
         case 'view3d': win.content = new View3DApp(win.body); break;
         case 'audio': win.content = new AudioApp(win.body); break;
         case 'agent': win.content = new AgentApp(win.body, opts, win); break;
-        case 'hsl2': win.content = new HSL2App(win.body, opts, win); break;
+        case 'hsb2': win.content = new HSB2App(win.body, opts, win); break;
         case 'html': win.body.innerHTML = opts.html || ''; break;
         case 'about': win.body.classList.add('pad'); win.body.innerHTML = aboutHtml(); break;
         default: win.body.innerHTML = '<div style="padding:20px;color:var(--fg-dim)">未知应用：' + esc(win.type) + '</div>';
@@ -16149,15 +16165,15 @@ const DomRpc = {
   }
 };
 
-/* ---------------------------------------------------------------- hsl2
+/* ---------------------------------------------------------------- hsb2
  * 第二代 shell：WASM + v86 + 真实 FreeBSD 12.0 用户态。
  *
  * 这是**可选组件**，四条硬约束（用户明确要求，改之前先读）：
- *   1. 不主动加载：只有用户敲 hsl2() / 在 hsl1 里敲 hsl2，才会走下面这条链，
+ *   1. 不主动加载：只有用户敲 hsb2() / 在 hsb1 里敲 hsb2，才会走下面这条链，
  *      页面平时一个字节都不下载。index.html 里没有任何外部 <script src>。
  *   2. 不分发：本项目不附带 FreeBSD / v86 / WASM 的源码或二进制，也不打包镜像；
  *      所有资源运行时从 CDN 拉取。
- *   3. 可完全不用：不碰 hsl2，其余功能一行代码都不受影响。
+ *   3. 可完全不用：不碰 hsb2，其余功能一行代码都不受影响。
  *   4. 缓存：拉下来的资源进 IndexedDB，第二次启动优先读本地，不再走网络。
  *
  * 风险：FreeBSD 及其工具链有 GPL 相关历史遗留问题（见 README §5.4 与
@@ -16172,7 +16188,7 @@ const DomRpc = {
  * 由 AI 智能体生成并维护。
  */
 
-const HSL2 = (() => {
+const HSB2 = (() => {
   'use strict';
 
   /* 版本锁定：https://cdn.jsdelivr.net/npm/v86@0.5.473/build/libv86.js
@@ -16199,10 +16215,13 @@ const HSL2 = (() => {
   const DISK_SIZE = 2147483648;
   const CHUNK = 1024 * 1024;
 
-  const DB_NAME = 'ht-hsl2', STORE = 'assets';
+  const DB_NAME = 'ht-hsb2', STORE = 'assets';
+  /* 旧库名。只用于一次性迁移：不迁的话，改个名字就让所有用户重下 16 MB 镜像。 */
+  const DB_OLD = 'ht-hsl2';
   const CACHE_MEM = new Map();   /* 本次会话的内存缓存：IndexedDB 不可用时的兜底 */
   let dbPromise = null;
   let interceptorInstalled = false;
+  let oldCopied = false;
 
   const S = { app: null, emu: null, running: false, starting: false, cold: false };
 
@@ -16217,10 +16236,54 @@ const HSL2 = (() => {
         const d = req.result;
         if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
       };
-      req.onsuccess = () => res(req.result);
+      req.onsuccess = () => {
+        const d = req.result;
+        res(d);
+        /* 让首次读取先跑完，再去搬旧库；迁移慢一点没人等它。 */
+        setTimeout(() => copyOldCache(d), 0);
+      };
       req.onerror = () => rej(req.error || new Error('IndexedDB 打不开'));
     });
     return dbPromise;
+  }
+
+  /* 从旧库 ht-hsl2 搬一次缓存。异步、失败即放弃，绝不阻塞启动。 */
+  async function copyOldCache(d) {
+    if (oldCopied) return;
+    oldCopied = true;
+    try { if (localStorage.getItem(DB_NAME + '.mig') === '1') return; } catch (_) {}
+    let old = null;
+    try {
+      old = await new Promise((res, rej) => {
+        const r = indexedDB.open(DB_OLD);
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error || new Error('old db'));
+      });
+      if (!old.objectStoreNames.contains(STORE)) { old.close(); return; }
+      const read = (fn) => new Promise(res => {
+        const q = fn(old.transaction(STORE, 'readonly').objectStore(STORE));
+        q.onsuccess = () => res(q.result); q.onerror = () => res(null);
+      });
+      const keys = await read(s => s.getAllKeys()) || [];
+      if (!keys.length) { old.close(); return; }
+      /* 新库已经有东西就不覆盖 */
+      const now = await new Promise(res => {
+        const q = d.transaction(STORE, 'readonly').objectStore(STORE).getAllKeys();
+        q.onsuccess = () => res(q.result || []); q.onerror = () => res([]);
+      });
+      if (now && now.length) { old.close(); return; }
+      for (const k of keys) {
+        const v = await read(s => s.get(k));
+        if (!v) continue;
+        await new Promise(res => {
+          const t = d.transaction(STORE, 'readwrite');
+          t.objectStore(STORE).put(v, k);
+          t.oncomplete = () => res(); t.onerror = () => res(); t.onabort = () => res();
+        });
+      }
+      old.close();
+      try { localStorage.setItem(DB_NAME + '.mig', '1'); } catch (_) {}
+    } catch (_) { try { old && old.close(); } catch (__) {} }
   }
   /* IndexedDB 只是缓存，不是运行前提。
    * Safari 无痕、部分浏览器在 file:// 下、企业策略禁用存储时，
@@ -16259,7 +16322,21 @@ const HSL2 = (() => {
       t.objectStore(STORE).clear();
       t.oncomplete = () => res(true);
       t.onerror = () => rej(t.error);
-    }));
+    })).then(r => {
+      try { localStorage.removeItem(DB_NAME + '.mig'); } catch (_) {}
+      /* 旧库也一起清：不然「清缓存」对迁移过来的副本不起作用 */
+      try {
+        const rq = indexedDB.open(DB_OLD);
+        rq.onsuccess = () => {
+          const od = rq.result;
+          if (!od.objectStoreNames.contains(STORE)) { od.close(); return; }
+          const t = od.transaction(STORE, 'readwrite');
+          t.objectStore(STORE).clear();
+          t.oncomplete = () => od.close();
+        };
+      } catch (_) {}
+      return r;
+    });
   }
   async function usage() {
     try {
@@ -16331,28 +16408,28 @@ const HSL2 = (() => {
     const oOpen = P.open, oSend = P.send, oAbort = P.abort, oGetHeader = P.getResponseHeader;
 
     P.open = function (method, url) {
-      this.__hsl2Url = String(url || '');
+      this.__hsb2Url = String(url || '');
       return oOpen.apply(this, arguments);
     };
     P.getResponseHeader = function (name) {
-      if (this.__hsl2Url && isOurs(this.__hsl2Url)) return null;
+      if (this.__hsb2Url && isOurs(this.__hsb2Url)) return null;
       return oGetHeader.apply(this, arguments);
     };
     P.abort = function () {
-      if (this.__hsl2Url && isOurs(this.__hsl2Url)) this.__hsl2Aborted = true;
+      if (this.__hsb2Url && isOurs(this.__hsb2Url)) this.__hsb2Aborted = true;
       return oAbort.apply(this, arguments);
     };
     P.send = function () {
-      const url = this.__hsl2Url || '';
+      const url = this.__hsb2Url || '';
       if (!isOurs(url)) return oSend.apply(this, arguments);
       const x = this;
-      x.__hsl2Aborted = false;
+      x.__hsb2Aborted = false;
       (async () => {
         try {
           const r = await loadAsset(url, (got, total) => {
             if (x.onprogress) x.onprogress({ lengthComputable: !!total, loaded: got, total: total || 0 });
           });
-          if (x.__hsl2Aborted) return;
+          if (x.__hsb2Aborted) return;
           defineRO(x, 'response', r.buf);
           defineRO(x, 'responseText', '');
           defineRO(x, 'status', 200);
@@ -16379,7 +16456,7 @@ const HSL2 = (() => {
   }
   function log(msg) {
     if (S.app && S.app.log) S.app.log(msg);
-    else console.log('[hsl2] ' + msg);
+    else console.log('[hsb2] ' + msg);
   }
   function progress(msg, pct) {
     if (S.app && S.app.progress) S.app.progress(msg, pct);
@@ -16463,7 +16540,7 @@ const HSL2 = (() => {
       S.emu = emu;
       S.running = true;
       if (S.app) S.app.onEmulator(emu);
-      log('提示：state 快照恢复失败时可用 hsl2({cold:true}) 走冷启动');
+      log('提示：state 快照恢复失败时可用 hsb2({cold:true}) 走冷启动');
     } catch (e) {
       const msg = (e && e.message) || String(e);
       log('启动失败：' + msg);
@@ -16491,10 +16568,10 @@ const HSL2 = (() => {
   }
 
   function open(opts) {
-    /* 只留一个虚拟机窗口：重复敲 hsl2() 就聚焦已有窗口，别开出一堆 v86 吃内存。 */
-    const ex = [...WindowManager.windows.values()].find(w => w.type === 'hsl2');
+    /* 只留一个虚拟机窗口：重复敲 hsb2() 就聚焦已有窗口，别开出一堆 v86 吃内存。 */
+    const ex = [...WindowManager.windows.values()].find(w => w.type === 'hsb2');
     if (ex) { WindowManager.focus(ex.id); if (ex.minimized) WindowManager.restore(ex.id); return { id: ex.id, reused: true }; }
-    const w = WindowManager.open({ type: 'hsl2', title: 'hsl2 · FreeBSD 12.0 (v86)' });
+    const w = WindowManager.open({ type: 'hsb2', title: 'hsb2 · FreeBSD 12.0 (v86)' });
     return w ? { id: w.id, reused: false } : null;
   }
 
@@ -16502,7 +16579,7 @@ const HSL2 = (() => {
     A, VER, start, stop, open, clearCache, usage,
     get running() { return S.running; },
     get cold() { return S.cold; },
-    /* 供 HSL2App 转发键盘；不用 HSL2.start 直连，保持单一入口 */
+    /* 供 HSB2App 转发键盘；不用 HSB2.start 直连，保持单一入口 */
     sendText: (s) => { if (S.emu) S.emu.keyboard_send_text(s); },
     sendKeys: (a) => { if (S.emu) S.emu.keyboard_send_keys(a); },
     sendScancodes: (a) => { if (S.emu) S.emu.keyboard_send_scancodes(a); },
@@ -16510,40 +16587,40 @@ const HSL2 = (() => {
 })();
 
 /* ---------------------------------------------------------------- 窗口样式
- * 只注入一次，不进 00-head.html —— 不启动 hsl2 时连这段 CSS 都不必生效。 */
+ * 只注入一次，不进 00-head.html —— 不启动 hsb2 时连这段 CSS 都不必生效。 */
 (() => {
-  const id = 'hsl2-style';
+  const id = 'hsb2-style';
   if (document.getElementById(id)) return;
   const st = document.createElement('style');
   st.id = id;
   st.textContent = `
-.hsl2-warn{padding:8px 12px;font-size:12px;line-height:1.6;color:var(--amber);
+.hsb2-warn{padding:8px 12px;font-size:12px;line-height:1.6;color:var(--amber);
   background:rgba(255,180,60,.07);border-bottom:1px solid var(--line);flex:0 0 auto}
-.hsl2-bar{display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;
+.hsb2-bar{display:flex;align-items:center;gap:10px;padding:6px 10px;font-size:12px;
   border-bottom:1px solid var(--line);flex:0 0 auto}
-.hsl2-state{font-weight:600;color:var(--fg)}
-.hsl2-state.ok{color:var(--green)} .hsl2-state.err{color:var(--red)}
-.hsl2-state.warn{color:var(--amber)} .hsl2-state.busy{color:var(--fg-dim)}
-.hsl2-cache{color:var(--fg-dim)}
-.hsl2-bar button{font:inherit;font-size:12px;padding:3px 9px;border-radius:6px;
+.hsb2-state{font-weight:600;color:var(--fg)}
+.hsb2-state.ok{color:var(--green)} .hsb2-state.err{color:var(--red)}
+.hsb2-state.warn{color:var(--amber)} .hsb2-state.busy{color:var(--fg-dim)}
+.hsb2-cache{color:var(--fg-dim)}
+.hsb2-bar button{font:inherit;font-size:12px;padding:3px 9px;border-radius:6px;
   border:1px solid var(--line);background:var(--bg-2,transparent);color:var(--fg);cursor:pointer}
-.hsl2-bar button:hover{border-color:var(--fg-dim)}
-.hsl2-progress{height:2px;background:var(--line);flex:0 0 auto}
-.hsl2-progress i{display:block;height:100%;width:0;background:var(--green);transition:width .25s}
-.hsl2-view{flex:1 1 auto;overflow:auto;background:#000;padding:8px;outline:none;cursor:text}
-.hsl2-view:focus-within{box-shadow:inset 0 0 0 1px var(--fg-dim)}
-.hsl2-view>div{color:#ddd}
-.hsl2-log{flex:0 0 auto;max-height:60px;overflow:auto;padding:5px 10px;font:11px/1.55 monospace;
+.hsb2-bar button:hover{border-color:var(--fg-dim)}
+.hsb2-progress{height:2px;background:var(--line);flex:0 0 auto}
+.hsb2-progress i{display:block;height:100%;width:0;background:var(--green);transition:width .25s}
+.hsb2-view{flex:1 1 auto;overflow:auto;background:#000;padding:8px;outline:none;cursor:text}
+.hsb2-view:focus-within{box-shadow:inset 0 0 0 1px var(--fg-dim)}
+.hsb2-view>div{color:#ddd}
+.hsb2-log{flex:0 0 auto;max-height:60px;overflow:auto;padding:5px 10px;font:11px/1.55 monospace;
   color:var(--fg-dim);border-top:1px solid var(--line);white-space:pre-wrap}
 
 /* ---- 启动完成：把警告、进度、日志、状态栏全收起来，只留画面 ----
  * 用户明确要求：FreeBSD 起来以后不要再挂一串提示文字。
  * 控制条收成右上角一颗悬浮药丸，鼠标移上去（或键盘聚焦）才出现。 */
-.hsl2-app{position:relative}
-.hsl2-app.is-live .hsl2-warn,
-.hsl2-app.is-live .hsl2-progress,
-.hsl2-app.is-live .hsl2-log{display:none}
-.hsl2-app.is-live .hsl2-bar{
+.hsb2-app{position:relative}
+.hsb2-app.is-live .hsb2-warn,
+.hsb2-app.is-live .hsb2-progress,
+.hsb2-app.is-live .hsb2-log{display:none}
+.hsb2-app.is-live .hsb2-bar{
   position:absolute;right:8px;top:8px;z-index:6;width:auto;
   padding:3px 6px;border:1px solid var(--line);border-radius:8px;
   background:rgba(10,14,16,.74);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
@@ -16551,20 +16628,20 @@ const HSL2 = (() => {
 }
 /* 运行态不再需要"运行中/缓存 N 项"这行字，也不留那个 flex 占位——
  * 留着它会把药丸撑成横贯窗口的一条，重新盖住画面顶部。 */
-.hsl2-app.is-live .hsl2-bar > span{display:none}
-.hsl2-app.is-live .hsl2-bar button{font-size:11px;padding:2px 7px}
-.hsl2-app.is-live:hover .hsl2-bar,
-.hsl2-app.is-live .hsl2-bar:focus-within{opacity:1;pointer-events:auto}
+.hsb2-app.is-live .hsb2-bar > span{display:none}
+.hsb2-app.is-live .hsb2-bar button{font-size:11px;padding:2px 7px}
+.hsb2-app.is-live:hover .hsb2-bar,
+.hsb2-app.is-live .hsb2-bar:focus-within{opacity:1;pointer-events:auto}
 /* 触屏没有 hover：留一颗常驻的淡药丸，点一下就能展开 */
 @media (hover:none){
   /* 触屏没有 hover：药丸常驻但挪到右下角，别压住 FreeBSD 启动时刷屏的顶部几行 */
-  .hsl2-app.is-live .hsl2-bar{opacity:.55;pointer-events:auto;top:auto;bottom:42px;right:8px}
-  .hsl2-app.is-live .hsl2-bar button{font-size:10.5px;padding:1px 6px}
+  .hsb2-app.is-live .hsb2-bar{opacity:.55;pointer-events:auto;top:auto;bottom:42px;right:8px}
+  .hsb2-app.is-live .hsb2-bar button{font-size:10.5px;padding:1px 6px}
 }
 /* 键盘桥：一个几乎看不见的 textarea。桌面端负责接收按键，
  * 移动端点画面时 focus() 它，软键盘才会弹出来。1px 高是为了不占版面，
  * font-size:16px 是 iOS 的硬要求——小于 16px 聚焦时会自动放大页面。 */
-.hsl2-kbd{
+.hsb2-kbd{
   position:absolute;left:0;bottom:0;width:100%;height:1px;z-index:5;
   margin:0;padding:0;border:0;resize:none;overflow:hidden;
   background:transparent;color:transparent;caret-color:transparent;
@@ -16575,7 +16652,37 @@ const HSL2 = (() => {
 })();
 
 /* ---------------------------------------------------------------- 窗口 App */
-class HSL2App {
+
+/* 键盘桥的哨兵字符。textarea 永远留一个零宽空格：
+ * 手机软键盘的退格是「删一个字符」，输入框空的时候它连事件都不发——
+ * 表现就是点了退格没反应。留个哨兵，退格必然产生一次 input，
+ * 我们据此判定「用户按了退格」，再把哨兵补回去。 */
+const KBD_SENTINEL = '\u200B';
+
+/* 终端序列 → PS/2 set1 的 make/break。转发顶栏按键和 hsb2 自己的键盘事件都走这里，
+ * 不再经过 xterm，所以 OpenBSD/FreeBSD 控制台认的仍是真实的键位。 */
+const KBD_SCAN = {
+  Escape:   [0x01, 0x81], Tab:      [0x0F, 0x8F],
+  Enter:    [0x1C, 0x9C], Backspace:[0x0E, 0x8E],
+  Delete:   [0x53, 0xD3], ArrowUp:  [0x48, 0xC8],
+  ArrowDown:[0x50, 0xD0], ArrowLeft:[0x4B, 0xCB],
+  ArrowRight:[0x4D, 0xCD], Home:    [0x47, 0xC7],
+  End:      [0x4F, 0xCF], PageUp:   [0x49, 0xC9],
+  PageDown: [0x51, 0xD1],
+};
+/* Ctrl+字母：字母的 set1 scancode。FreeBSD 的终端 erase / kill / eof 全走这条，
+ * Ctrl-C、Ctrl-D、Ctrl-L 之外，Ctrl-U（清行）、Ctrl-W（删词）、Ctrl-K 也常用。 */
+const KBD_LETTER = {
+  a:0x1E, b:0x30, c:0x2E, d:0x20, e:0x12, f:0x21, g:0x22, h:0x23, i:0x17,
+  j:0x24, k:0x25, l:0x26, m:0x32, n:0x31, o:0x18, p:0x19, q:0x10, r:0x13,
+  s:0x1F, t:0x14, u:0x16, v:0x2F, w:0x11, x:0x2D, y:0x15, z:0x2C,
+};
+const KBD_CSI = {
+  A:'ArrowUp', B:'ArrowDown', C:'ArrowRight', D:'ArrowLeft',
+  H:'Home', F:'End',
+};
+
+class HSB2App {
   constructor(body, opts, win) {
     this.body = body;
     this.win = win;
@@ -16583,47 +16690,47 @@ class HSL2App {
     this.emu = null;
     this._focused = false;
     this._build();
-    HSL2.start(this);
+    HSB2.start(this);
   }
 
   _build() {
-    this.body.classList.add('hsl2-app');
+    this.body.classList.add('hsb2-app');
     this.body.style.cssText = 'display:flex;flex-direction:column;overflow:hidden;padding:0;background:#0b0b0b;position:relative';
     this.body.innerHTML = `
-      <div class="hsl2-warn">⚠ <b>hsl2 是可选实验组件</b>：在浏览器里用 WASM 模拟 x86、跑真实的 FreeBSD 12.0。
+      <div class="hsb2-warn">⚠ <b>hsb2 是可选实验组件</b>：在浏览器里用 WASM 模拟 x86、跑真实的 FreeBSD 12.0。
         FreeBSD 及其工具链存在 GPL 相关历史遗留问题，授权情况复杂；本项目<b>不分发</b>任何相关源码或二进制。
         组件仅在你主动启动后经 CDN 下载并缓存到 IndexedDB，不启动就不下载。完全不用它，其它功能不受影响。</div>
-      <div class="hsl2-bar">
-        <span class="hsl2-state busy">准备中</span>
-        <span class="hsl2-cache"></span>
+      <div class="hsb2-bar">
+        <span class="hsb2-state busy">准备中</span>
+        <span class="hsb2-cache"></span>
         <span style="flex:1"></span>
         <button data-a="stop">停止</button>
         <button data-a="restart">重启</button>
         <button data-a="clear">清缓存</button>
       </div>
-      <div class="hsl2-progress"><i></i></div>
-      <div class="hsl2-view" tabindex="0">
-        <div class="hsl2-screen"><div style="white-space:pre;font:14px monospace;line-height:14px"></div><canvas style="display:none"></canvas></div>
-        <textarea class="hsl2-kbd" autocomplete="off" autocorrect="off" autocapitalize="off"
+      <div class="hsb2-progress"><i></i></div>
+      <div class="hsb2-view" tabindex="0">
+        <div class="hsb2-screen"><div style="white-space:pre;font:14px monospace;line-height:14px"></div><canvas style="display:none"></canvas></div>
+        <textarea class="hsb2-kbd" autocomplete="off" autocorrect="off" autocapitalize="off"
                   spellcheck="false" aria-label="虚拟机键盘输入"></textarea>
       </div>
-      <div class="hsl2-log"></div>`;
+      <div class="hsb2-log"></div>`;
 
-    this.stateEl = this.body.querySelector('.hsl2-state');
-    this.cacheEl = this.body.querySelector('.hsl2-cache');
-    this.barEl = this.body.querySelector('.hsl2-progress i');
-    this.logEl = this.body.querySelector('.hsl2-log');
-    this.viewEl = this.body.querySelector('.hsl2-view');
-    this.screenEl = this.body.querySelector('.hsl2-screen');
+    this.stateEl = this.body.querySelector('.hsb2-state');
+    this.cacheEl = this.body.querySelector('.hsb2-cache');
+    this.barEl = this.body.querySelector('.hsb2-progress i');
+    this.logEl = this.body.querySelector('.hsb2-log');
+    this.viewEl = this.body.querySelector('.hsb2-view');
+    this.screenEl = this.body.querySelector('.hsb2-screen');
 
-    this.body.querySelector('.hsl2-bar').addEventListener('click', e => {
+    this.body.querySelector('.hsb2-bar').addEventListener('click', e => {
       const a = e.target.closest('button') && e.target.closest('button').dataset.a;
-      if (a === 'stop') HSL2.stop();
-      else if (a === 'restart') { HSL2.stop(); this.reload(); }
-      else if (a === 'clear') HSL2.clearCache();
+      if (a === 'stop') HSB2.stop();
+      else if (a === 'restart') { HSB2.stop(); this.reload(); }
+      else if (a === 'clear') HSB2.clearCache();
     });
 
-    this.kbdEl = this.body.querySelector('.hsl2-kbd');
+    this.kbdEl = this.body.querySelector('.hsb2-kbd');
 
     /* 点画面即接管键盘；失焦后按键交还给 hterminal 的全局快捷键。
      * 焦点必须落在 textarea 上，不能落在 div 上：
@@ -16631,23 +16738,42 @@ class HSL2App {
      * div[tabindex] 在 iOS/Android 上只会得到一个光标，键盘不出来。 */
     this.viewEl.addEventListener('pointerdown', e => {
       if (e.target === this.kbdEl) return;
-      /* 必须阻止默认聚焦：.hsl2-view 自己带 tabindex，点下去浏览器会把焦点
+      /* 必须阻止默认聚焦：.hsb2-view 自己带 tabindex，点下去浏览器会把焦点
        * 从 textarea 抢回 div，软键盘随之收起。preventDefault 之后焦点只落在 kbd 上。 */
       e.preventDefault();
       this._focusKbd();
     });
     /* 只挂在 textarea 上：keydown 会冒泡到 viewEl，两处都绑就发两遍。 */
     this.kbdEl.addEventListener('keydown', e => this._onKey(e));
+
+    /* 手机软键盘的退格在空输入框里可能既不发 keydown 也不发 input，
+     * 留一个哨兵字符让它「有东西可删」。这里把哨兵放好，光标挪到最后。 */
+    this._resetKbd();
+
+    /* beforeinput 是安卓上最可靠的删除信号：即使 keydown 只给 229，
+     * 这里仍会拿到 deleteContentBackward。拦掉默认行为，退格由我们自己发。 */
+    this.kbdEl.addEventListener('beforeinput', e => {
+      if (!e.inputType || e.inputType.indexOf('delete') !== 0) return;
+      e.preventDefault();
+      this._backspace();
+      this._resetKbd();
+    });
+
     /* 软键盘不保证给 keydown（很多中文输入法只给 input），
-     * 所以字符统一从 input 事件取；取完立刻清空，避免越积越长。 */
-    this.kbdEl.addEventListener('input', () => {
-      const v = this.kbdEl.value;
-      this.kbdEl.value = '';
-      if (!v || !this.emu) return;
-      for (const ch of v) {
-        if (ch === '\n' || ch === '\r') HSL2.sendKeys([13]);
-        else HSL2.sendText(ch);
+     * 所以字符统一从 input 事件取；取完立刻恢复哨兵，避免越积越长。 */
+    this.kbdEl.addEventListener('input', e => {
+      if (e.isComposing) return;              /* 拼音阶段不发，等上屏后的那次 input */
+      const type = e.inputType || '';
+      if (type.indexOf('delete') === 0) {     /* beforeinput 没兜住时的最后一道 */
+        this._backspace();
+        this._resetKbd();
+        return;
       }
+      const v = this.kbdEl.value.split(KBD_SENTINEL).join('');
+      this._resetKbd();
+      if (!v || !this.emu) return;
+      /* 走 _put：顶栏 Ctrl 锁定后，这里输入的字母也要被改写成控制字符 */
+      for (const ch of v) this._put(ch === '\n' ? '\r' : ch);
     });
     this.refreshCache();
   }
@@ -16663,24 +16789,98 @@ class HSL2App {
   }
 
   /* 聚焦键盘桥。桌面端 preventScroll 防止页面被拽走；
-   * 移动端必须由用户手势（pointerdown）同步调用，异步调用 iOS 会拒绝弹键盘。 */
+   * 移动端必须由用户手势（pointerdown）同步调用，异步调用 iOS 会拒绝弹键盘。
+   * 光标必须落在末尾：否则软键盘的退格会先删掉开头的哨兵，
+   * 我们会把它误判成一次删除，而用户看到的字符一个都没少。 */
   _focusKbd() {
     const el = this.kbdEl;
     if (!el) return;
     try { el.focus({ preventScroll: true }); }
     catch (e) { try { el.focus(); } catch (_) {} }
+    this._resetKbd();
+  }
+
+  /* 供顶栏调用：焦点回到虚拟机的键盘桥（不是桌面终端） */
+  focusTerm() { this._focusKbd(); }
+
+  /** 恢复哨兵并把光标放到末尾。 */
+  _resetKbd() {
+    const el = this.kbdEl;
+    if (!el) return;
+    if (el.value !== KBD_SENTINEL) el.value = KBD_SENTINEL;
+    try { el.setSelectionRange(KBD_SENTINEL.length, KBD_SENTINEL.length); } catch (_) {}
+  }
+
+  /** 发一次退格。beforeinput 与 input 可能同时来，40ms 内只认一次。 */
+  _backspace() {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - (this._bsAt || 0) < 40) return;
+    this._bsAt = now;
+    HSB2.sendKeys([8]);
+  }
+
+  /** 统一入口：先按顶栏的粘滞 Ctrl 改写，再交给 typeTermSeq。 */
+  _put(str) {
+    if (!str) return;
+    if (typeof Keys !== 'undefined' && Keys.anyActive && Keys.anyActive()) str = Keys.shape(str);
+    this.typeTermSeq(str);
+  }
+
+  /** 终端语义的字节串 → 虚拟机的键事件。
+   * 顶栏 Esc/Tab/方向键、Ctrl 组合、软键盘字符都从这里进。
+   * 可打印字符合并成一次 sendText（少几次中断，中文也不会被打散）。 */
+  typeTermSeq(str) {
+    if (!this.emu || !str) return;
+    let buf = '';
+    const flush = () => { if (buf) { HSB2.sendText(buf); buf = ''; } };
+    const scan = (pair) => { if (pair) HSB2.sendScancodes([pair[0], pair[1]]); };
+
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      const code = str.charCodeAt(i);
+
+      if (ch === '\x1b') {
+        flush();
+        const rest = str.slice(i);
+        const m = /^\x1b\[([0-9;]*)([A-Za-z~])/.exec(rest);
+        if (m) {
+          const name = m[2] === '~'
+            ? ({ '3':'Delete', '1':'Home', '4':'End', '5':'PageUp', '6':'PageDown' }[m[1]] || '')
+            : (KBD_CSI[m[2]] || '');
+          if (name) scan(KBD_SCAN[name]);
+          i += m[0].length - 1;
+        } else {
+          scan(KBD_SCAN.Escape);
+        }
+        continue;
+      }
+      if (ch === '\r' || ch === '\n') { flush(); scan(KBD_SCAN.Enter); continue; }
+      if (ch === '\t') { flush(); scan(KBD_SCAN.Tab); continue; }
+      if (ch === '\x7f' || ch === '\b') { flush(); scan(KBD_SCAN.Backspace); continue; }
+
+      /* 0x01–0x1A = Ctrl+A…Z（0x09/0x0A/0x0D 已在上面处理） */
+      if (code >= 1 && code <= 26) {
+        flush();
+        const letter = String.fromCharCode(code + 96);
+        const sc = KBD_LETTER[letter];
+        if (sc) HSB2.sendScancodes([0x1D, sc, sc + 0x80, 0x9D]);
+        continue;
+      }
+      buf += ch;
+    }
+    flush();
   }
 
   reload() {
     /* 重启要走完整的窗口重建，避免 v86 往已销毁的 DOM 里继续写。 */
     if (this.winId) WindowManager.close(this.winId);
-    setTimeout(() => HSL2.open(), 60);
+    setTimeout(() => HSB2.open(), 60);
   }
 
   state(msg, kind) {
     if (!this.stateEl) return;
     this.stateEl.textContent = msg;
-    this.stateEl.className = 'hsl2-state ' + (kind || '');
+    this.stateEl.className = 'hsb2-state ' + (kind || '');
   }
   progress(msg, pct) {
     if (this.barEl && typeof pct === 'number') this.barEl.style.width = Math.max(0, Math.min(100, pct)) + '%';
@@ -16695,32 +16895,48 @@ class HSL2App {
     this.logEl.scrollTop = this.logEl.scrollHeight;
   }
   async refreshCache() {
-    const n = await HSL2.usage();
+    const n = await HSB2.usage();
     if (this.cacheEl) this.cacheEl.textContent = n < 0 ? '缓存不可用' : ('缓存 ' + n + ' 项');
   }
 
   _onKey(e) {
-    if (!this.emu || e.isComposing) return;
-    const SPECIAL = {
-      Enter: 13, Backspace: 8, Tab: 9, Escape: 27, Delete: 46,
-      ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
-      Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F2: 113, F3: 114
+    if (!this.emu || e.isComposing || e.metaKey) return;
+    if (e.ctrlKey && e.altKey) return;          /* AltGr / Ctrl-Alt 交给系统 */
+    if (e.ctrlKey && e.shiftKey) return;        /* Ctrl+Shift+C/V 是浏览器复制粘贴 */
+
+    /* F 键没有对应的终端序列，仍按 keyCode 交给 v86 的映射表 */
+    const FKEY = { F1:112, F2:113, F3:114, F4:115, F5:116, F6:117,
+                   F7:118, F8:119, F9:120, F10:121, F11:122, F12:123 };
+    if (FKEY[e.key]) {
+      e.preventDefault(); e.stopPropagation();
+      HSB2.sendKeys([FKEY[e.key]]);
+      return;
+    }
+
+    const SEQ = {
+      Enter:'\r', Backspace:'\x7f', Tab:'\t', Escape:'\x1b', Delete:'\x1b[3~',
+      ArrowUp:'\x1b[A', ArrowDown:'\x1b[B', ArrowLeft:'\x1b[D', ArrowRight:'\x1b[C',
+      Home:'\x1b[H', End:'\x1b[F', PageUp:'\x1b[5~', PageDown:'\x1b[6~'
     };
-    /* Ctrl-C / Ctrl-D / Ctrl-L：走 scancode，按下 Ctrl 前后要成对。
-     * make/break：Ctrl=0x1D/0x9D，C=0x2E/0xAE，D=0x20/0xA0，L=0x26/0xA6 */
-    const CTRL_SCAN = { c: 0x2E, d: 0x20, l: 0x26, z: 0x2C, a: 0x1E, e: 0x12 };
-    if (e.ctrlKey && CTRL_SCAN[e.key.toLowerCase()]) {
-      const k = CTRL_SCAN[e.key.toLowerCase()];
-      HSL2.sendScancodes([0x1D, k, k + 0x80, 0x9D]);
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      HSL2.sendText(e.key);
-    } else if (SPECIAL[e.key] != null) {
-      HSL2.sendKeys([SPECIAL[e.key]]);
+
+    let out = null;
+    if (SEQ[e.key] != null) {
+      out = SEQ[e.key];
+    } else if (e.key.length === 1) {
+      if (e.ctrlKey) {
+        const c = e.key.toLowerCase();
+        if (c < 'a' || c > 'z') return;         /* Ctrl+数字/符号不认，别插图字符 */
+        out = String.fromCharCode(c.charCodeAt(0) - 96);
+      } else {
+        out = e.key;
+      }
     } else {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
+    /* 统一入口：顶栏 ⌃ 锁定后，这里按下的字母也要被改写成控制字符 */
+    this._put(out);
   }
 }
 
@@ -16886,11 +17102,11 @@ const RPC = {
       case 'agent.reset': return AgentTuiHost.reset();
       /* ---- 嵌套 shell / 截图 ---- */
       case 'shell.open': { const w = WindowManager.open({ type:'shell', cwd:a[0] || undefined, banner:a[1] !== false }); return w ? { id:w.id, cwd:w.cwd || a[0] || '.home' } : null; }
-      /* ---- hsl2：可选组件，只有用户敲了 hsl2() 才会走到这里（才会下载） ---- */
-      case 'hsl2.open': return HSL2.open(a[0] || {});
-      case 'hsl2.stop': HSL2.stop(); return true;
-      case 'hsl2.clear': await HSL2.clearCache(); return true;
-      case 'hsl2.status': return { running:HSL2.running, cold:HSL2.cold, cached:await HSL2.usage() };
+      /* ---- hsb2：可选组件，只有用户敲了 hsb2() 才会走到这里（才会下载） ---- */
+      case 'hsb2.open': return HSB2.open(a[0] || {});
+      case 'hsb2.stop': HSB2.stop(); return true;
+      case 'hsb2.clear': await HSB2.clearCache(); return true;
+      case 'hsb2.status': return { running:HSB2.running, cold:HSB2.cold, cached:await HSB2.usage() };
       case 'shot.page': return await shot(a[0] || null, a[1] || {});
       case 'shot.window': return await shotWindow(a[0]);
       /* ---- 依赖缓存 ---- */
@@ -16909,7 +17125,7 @@ const RPC = {
       }
       case 'util.algos': return HASH_ALGS.slice();
       /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
-       * hsl1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+       * hsb1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
       case 'util.codec': {
         const op = String(a[0] || '');
         const d = a[1];

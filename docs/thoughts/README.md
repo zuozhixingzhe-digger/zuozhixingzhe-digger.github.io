@@ -110,8 +110,8 @@ original/window.svg          original/red.svg
 ### 1. 标题塞不下：中间截断，提手不许变宽
 
 ```
-hsl2 · FreeBSD 12.0-RELEASE r341666 · 第 1 层     ← 完整，45 字符 ≈ 94mm
-hsl2 · FreeBSD 12.0…第 1 层                        ← 截断，56mm
+hsb2 · FreeBSD 12.0-RELEASE r341666 · 第 1 层     ← 完整，45 字符 ≈ 94mm
+hsb2 · FreeBSD 12.0…第 1 层                        ← 截断，56mm
 ```
 
 保留**头**（身份）和**尾**（状态），砍中间。`text-overflow: ellipsis` 只能砍尾，所以要量宽：

@@ -221,11 +221,27 @@ function activeSession() {
   if (w && w.content && w.content.term && !w.content.disposed) return w.content;
   return TerminalManager.desktop;
 }
+/** 聚焦窗口若是 hsb2（没有 xterm 会话），顶栏按键要走它自己的键盘通道，
+ * 否则会一路发给桌面终端——这正是「顶栏 Ctrl / Esc 在 FreeBSD 里没反应」的原因。 */
+function hsb2Focused() {
+  const w = (typeof WindowManager !== 'undefined') ? WindowManager.focused() : null;
+  const c = w && w.content;
+  return (c && typeof c.typeTermSeq === 'function' && !c.disposed) ? c : null;
+}
 function keepTermFocus() {
+  const vm = hsb2Focused();
+  if (vm) { vm.focusTerm(); return; }
   const s = activeSession();
   if (s && s.term) { try { s.term.focus(); } catch (e) {} }
 }
 function sendKeyToTerm(text) {
+  const vm = hsb2Focused();
+  if (vm) {
+    /* 顶栏的 Ctrl 是粘滞修饰键：先按终端语义改写，再交给虚拟机 */
+    if (text) vm.typeTermSeq(Keys.active('ctrl') ? Keys.shape(text) : text);
+    vm.focusTerm();
+    return;
+  }
   const s = activeSession();
   if (!s) return;
   if (text) s._post({ t:'in', data:text });
@@ -852,7 +868,7 @@ function exitDesktop() {
 }
 
 /* ---------------------------------------------------------------- 窗口管理 */
-/* 标题塞不下时在中间截断（"hsl2 · Fre…第 1 层"），绝不动提手尺寸。
+/* 标题塞不下时在中间截断（"hsb2 · Fre…第 1 层"），绝不动提手尺寸。
  * 先摘掉 max-width 量真实文本宽，再二分"前 n 字 + … + 后 n 字"。
  * 用 scrollWidth 而不是 canvas 测：和最终渲染用的是同一套字体与字距。 */
 function midEllipsis(el, text, maxW){
@@ -901,10 +917,10 @@ const WindowManager = {
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
       calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', image:'看图修图', urlhash:'链接即状态',
-      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsl2:'hsl2 · FreeBSD' };
+      recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
       calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], image:[940, 660], urlhash:[700, 620],
-      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsl2:[820, 600] };
+      recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
     /* `jshel` 可以一层层开出新窗口，全都叫「终端」就分不清哪个是哪个了。
      * 后缀带上落地目录，cd 之后跟着变。 */
@@ -1105,7 +1121,7 @@ const WindowManager = {
         case 'view3d': win.content = new View3DApp(win.body); break;
         case 'audio': win.content = new AudioApp(win.body); break;
         case 'agent': win.content = new AgentApp(win.body, opts, win); break;
-        case 'hsl2': win.content = new HSL2App(win.body, opts, win); break;
+        case 'hsb2': win.content = new HSB2App(win.body, opts, win); break;
         case 'html': win.body.innerHTML = opts.html || ''; break;
         case 'about': win.body.classList.add('pad'); win.body.innerHTML = aboutHtml(); break;
         default: win.body.innerHTML = '<div style="padding:20px;color:var(--fg-dim)">未知应用：' + esc(win.type) + '</div>';

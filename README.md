@@ -36,7 +36,7 @@ readme     welcome
 2. [三十秒上手](#2-三十秒上手)
 3. [界面：顶栏 / 桌面 / 更多](#3-界面顶栏--桌面--更多)
 4. [快捷键](#4-快捷键)
-5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsl2：WASM + FreeBSD + v86](#hsl2)）
+5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsb2：WASM + FreeBSD + v86](#hsb2)）
 6. [文件系统](#6-文件系统)
 7. [一切皆文件](#7-一切皆文件)
 8. [窗口与线程](#8-窗口与线程)
@@ -65,8 +65,8 @@ readme     welcome
 12. [AI 生成内容声明](#12-ai-生成内容声明)
 
 **附**：[想法池 `IDEAS.md`](IDEAS.md) —— 还没开工的点子：**移植第三方程序的许可证规则**、
-**`sptm` 挂载要先把五件事想清楚**。另：交互 shell 已由 `hsl` **全量改名 `hsl1`**（`hsl` 不再支持）；
-`hsl2` 是**可选**组件（WASM + FreeBSD + v86，有许可证风险、只在主动启动时经 CDN 加载并缓存到 IndexedDB），见 [5.4](#hsl2)。
+**`sptm` 挂载要先把五件事想清楚**。另：交互 shell 已由 `hsl` / `hsl1` **统一为 `hsb1`**（老名字不再支持）；
+`hsb2` 是**可选**组件（WASM + FreeBSD + v86，有许可证风险、只在主动启动时经 CDN 加载并缓存到 IndexedDB），见 [5.4](#hsb2)。
 
 ---
 
@@ -114,7 +114,7 @@ readme     welcome
 2. 等启动进度条走完（首次会从 CDN 拉 xterm.js，之后走缓存）。
 3. 直接敲 JS：`1 + 1`、`document.title`、`await fetch('/')`。
 4. 敲 `help()` 看 JS 侧 API，敲 `ls('.home')` 看家目录，点顶栏 `▦` 开个窗口。
-5. 想敲 Linux 命令：敲 `hsl1()` 进 shell（`ls -la`、`cat readme`、`fastfetch`），`exit` 回来。
+5. 想敲 Linux 命令：敲 `hsb1()` 进 shell（`ls -la`、`cat readme`、`fastfetch`），`exit` 回来。
    想让它说话：填一个后端（见[后端](#13-后端-modelserver)），按 `Alt+A` 开智能体。
 
 > **双击打开 ≠ 能用后端**。`file://` 页面的 Origin 是 `null`，和恶意网页里的
@@ -181,7 +181,7 @@ readme     welcome
 
 ```text
 JSHeL>  1 + 1              ← JSHeL：固定提示符，不显示当前目录，只认 JavaScript
-/home/user $  ls -la        ← hsl1：ext4 风格真实路径，只认命令（末尾多个 $）
+/home/user $  ls -la        ← hsb1：ext4 风格真实路径，只认命令（末尾多个 $）
 /bin $  cd /                ← 嵌套的第二层，自己记自己的目录
 ```
 
@@ -189,7 +189,7 @@ JSHeL 里没有「当前目录」的说法，提示符就是固定的 `JSHeL> `�
 路径记号只在文件 API 的参数里用：`@` 当前目录（`cd('@')` 原地不动、`cat('@.notes')` 读当前目录下的文件），
 `~` 是 `.home`，`..` 是上一级，`/` 与 `.` 等价。
 
-在 **hsl1** 里规则换成 shell 那一套：路径相对当前目录（`ls` 列 cwd、`cd ..` 上一级），
+在 **hsb1** 里规则换成 shell 那一套：路径相对当前目录（`ls` 列 cwd、`cd ..` 上一级），
 `.` 开头的点分路径仍按根解析。提示符末尾的 `$` 就是「我在 shell 里」的唯一标志。
 
 **光标**照参考项目的做法，不给任何设置项：一个 `div` 叠在 xterm 上（xterm 自己的光标设成全透明），
@@ -298,18 +298,18 @@ JSHeL = **JS HTML shell**。它不是一个语法，就是一个 REPL：**你敲
 
 **提示符固定为 `JSHeL> `**，不显示「当前目录」；JSHeL 力求与真实 JS 控制台一致：
 函数名只是普通标识符，**裸敲 `ls` 只求值为函数对象，不会自动执行**，`ls()` 才是调用，
-`hsl1()` 才进 shell。以前那份 `AUTO_CALL` 白名单（裸敲 `ls` / `hsl` 自动调用）已删除——
+`hsb1()` 才进 shell。以前那份 `AUTO_CALL` 白名单（裸敲 `ls` / `hsl` 自动调用）已删除——
 那等于在 JS 控制台里偷偷伪装了一个 shell。
 
 ```js
 1 + 1                       // 表达式：回显结果
 const x = await ls('.home') // 声明：提升到全局，后续可用
 help()                      // 要执行就写括号
-hsl1()                      // 进 hsl1 交互 shell
+hsb1()                      // 进 hsb1 交互 shell
 ```
 
 > 这一层**不认 shell 语法**。`ls -la`、`cat a | grep b`、`mkdir x && cd x` 都是语法错误，
-> 请用 `hsl1()` 进去敲，或者 `hsl1('ls -la')`。见 [5.1](#51-hsl1build25-compatjs)。
+> 请用 `hsb1()` 进去敲，或者 `hsb1('ls -la')`。见 [5.1](#51-hsb1build25-compatjs)。
 
 | 分类 | 命令 |
 | --- | --- |
@@ -317,8 +317,8 @@ hsl1()                      // 进 hsl1 交互 shell
 | 执行 | `exec(p, ...args)` `open(p)` `run(code)` `require('pkg')` `python()` `exit()` |
 | 窗口 | `winOpen({type,title,url,code})` `spawn(code)` `winList()` `winClose(id)` `agentOpen()` |
 | 系统 | `saveFile(name, body)` `askFile()` `fetchText(url)` `openUrl(url)` `notify(msg)` `perm(name)` `ps()` `kill(pid)` `clear()` `history()` `nuke()` |
-| hsl1 | `hsl1()` 进交互 shell、`hsl1('ls -la')` 跑一行、`hsl1.run(cmd)` 拿 `{code,out,err}` |
-| hsl2 | 可选组件：`hsl2()` 启动 WASM + FreeBSD 12.0（按需下载、IndexedDB 缓存，见 [5.4](#hsl2)）；`hsl2.stop()` / `hsl2.clear()` / `hsl2.status()` |
+| hsb1 | `hsb1()` 进交互 shell、`hsb1('ls -la')` 跑一行、`hsb1.run(cmd)` 拿 `{code,out,err}` |
+| hsb2 | 可选组件：`hsb2()` 启动 WASM + FreeBSD 12.0（按需下载、IndexedDB 缓存，见 [5.4](#hsb2)）；`hsb2.stop()` / `hsb2.clear()` / `hsb2.status()` |
 
 几个容易误解的点：
 
@@ -331,14 +331,14 @@ hsl1()                      // 进 hsl1 交互 shell
 - **`rm` 默认不递归**，删目录要 `rm(p, {r:true})`。
 - **多行**：行尾反斜杠续行；粘贴多行文本会被识别成一次提交（括号粘贴协议）。
 
-### 5.1 hsl1（`build/25-compat.js`）
+### 5.1 hsb1（`build/25-compat.js`）
 
-> **命名变更**：原命令名 `hsl` 已**全量改名为 `hsl1`**，`hsl` 不再支持。
-> 本节正文里的 `HSL` 一律指 hsl1。`hsl2` 是另一回事，见 [5.4](#hsl2)。
+> **命名变更**：`hsl` → `hsl1` → 现统一为 **`hsb1`**（HSB = Html Subsystem for FreeBSD 的第一层），老名字都不再支持。
+> 本节正文里的 hsb1 指交互 shell。`hsb2` 是另一回事，见 [5.4](#hsb2)。
 
-**hsl1 = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
+**hsb1 = 一个 Linux 风格的交互 shell**，和 JSHeL 是**两套彻底分开的环境**：
 
-| | JSHeL | hsl1 |
+| | JSHeL | hsb1 |
 | --- | --- | --- |
 | 提示符 | `JSHeL> `（固定） | `/home/user $ `（ext4 风格真实路径） |
 | 认什么 | 只认 JavaScript | 只认命令、管道、重定向、变量、通配符 |
@@ -350,39 +350,39 @@ hsl1()                      // 进 hsl1 交互 shell
 同一行代码的结果取决于命令表里恰好有没有同名命令。现在按提示符就能确定自己在哪一层。
 
 ```js
-hsl1()                    // 进交互 shell（可嵌套），返回 undefined
-hsl1('ls -la | head')     // 跑一行，输出直接进终端；返回 Promise<void>，REPL 不回显
-await hsl1.run('false')   // { code: 1 }——跑一行但不打印
-await hsl1.run('echo hi') // { code: 0, out: "hi\n" }
+hsb1()                    // 进交互 shell（可嵌套），返回 undefined
+hsb1('ls -la | head')     // 跑一行，输出直接进终端；返回 Promise<void>，REPL 不回显
+await hsb1.run('false')   // { code: 1 }——跑一行但不打印
+await hsb1.run('echo hi') // { code: 0, out: "hi\n" }
 ```
 
-`hsl1('…')` 故意返回 `Promise<void>` 而不是退出码：直接回车时 REPL 会把返回值回显出来，
-返回层数或 `{code}` 都会在屏幕上多出一行噪音；要退出码就用 `hsl1.run()`。
-`hsl1.run()` 的返回是 `{ code, out?, err? }`——没有输出时 `out`/`err` 这两个键**不存在**，
+`hsb1('…')` 故意返回 `Promise<void>` 而不是退出码：直接回车时 REPL 会把返回值回显出来，
+返回层数或 `{code}` 都会在屏幕上多出一行噪音；要退出码就用 `hsb1.run()`。
+`hsb1.run()` 的返回是 `{ code, out?, err? }`——没有输出时 `out`/`err` 这两个键**不存在**，
 不是空字符串，这样 `if (r.err)` 才写得对。
 
-**cwd 只有一份**：在 `hsl1('cd ..')` 里 `cd` 了，hsl1 的提示符也跟着变（ext4 路径）。
-这不是 bug——`hsl1()` 只是「用 shell 语法跑一行」，不是开一个隔离的 subshell；
-要隔离就真进去 `hsl1()`，那一层有自己的栈帧。
+**cwd 只有一份**：在 `hsb1('cd ..')` 里 `cd` 了，hsb1 的提示符也跟着变（ext4 路径）。
+这不是 bug——`hsb1()` 只是「用 shell 语法跑一行」，不是开一个隔离的 subshell；
+要隔离就真进去 `hsb1()`，那一层有自己的栈帧。
 
 在 JSHeL 里敲命令会得到一句指路提示，但**不会被偷偷执行**：
 
 ```text
 JSHeL> nano readme
 ReferenceError: nano is not defined
-提示：nano 是 hsl1 命令。hsl1() 进 shell，或 hsl1("nano readme")。
+提示：nano 是 hsb1 命令。hsb1() 进 shell，或 hsb1("nano readme")。
 ```
 
 #### 嵌套：用栈，不用开关
 
-`hsl1` 可以一层层套进去，`exit` 一层层退出来（提示符是 ext4 风格真实路径）：
+`hsb1` 可以一层层套进去，`exit` 一层层退出来（提示符是 ext4 风格真实路径）：
 
 ```text
-JSHeL> hsl1()          → hsl1 · 第 1 层 · help 看命令，exit 退出这一层
+JSHeL> hsb1()          → hsb1 · 第 1 层 · help 看命令，exit 退出这一层
 /home/user $ cd .bin    → 第 1 层进 .bin
-/bin $ hsl1             → hsl1: 第 2 层（exit 退出这一层）
+/bin $ hsb1             → hsb1: 第 2 层（exit 退出这一层）
 /bin $ cd ..            → 第 2 层退到根，第 1 层还在 .bin
-/ $ exit                → exit: 回到第 1 层 hsl1
+/ $ exit                → exit: 回到第 1 层 hsb1
 /bin $                  → 目录回到 .bin（第 1 层自己的 cwd）
 /bin $ exit             → exit: 回到 JSHeL
 JSHeL>                  → 回到固定提示符
@@ -397,18 +397,18 @@ JSHeL>                  → 回到固定提示符
 
 #### 从里面再开一个：`jshel`
 
-`hsl1` 是**同一个窗口里换一层**；`jshel -n` 是**新开一个窗口**（新 Worker、新会话）。
+`hsb1` 是**同一个窗口里换一层**；`jshel -n` 是**新开一个窗口**（新 Worker、新会话）。
 
 ```text
 JSHeL> jshel()        → 开一个新终端窗口，落地当前目录
-/home/user $ jshel -n  → hsl1 里也能开；cwd 继承当前目录
+/home/user $ jshel -n  → hsb1 里也能开；cwd 继承当前目录
 /home/user $ jshel -n .bin → 指定落地目录
 ```
 
-`jshel` 的语义已调整：在 hsl1 里敲 `jshel`（不带 `-n`）是**回到 JSHeL**（与 `hsl1()` 对称，弹出这一层），
-要开**独立窗口**得显式加 `-n`。这样 `hsl1()` 进得去、`jshel` 回得来，不再是「只能靠 exit」。
+`jshel` 的语义已调整：在 hsb1 里敲 `jshel`（不带 `-n`）是**回到 JSHeL**（与 `hsb1()` 对称，弹出这一层），
+要开**独立窗口**得显式加 `-n`。这样 `hsb1()` 进得去、`jshel` 回得来，不再是「只能靠 exit」。
 
-> 注：`AUTO_CALL` 白名单已整体删除，JSHeL 里 `jshel` / `hsl1` 都要写括号才执行（和真 JS 一致）。
+> 注：`AUTO_CALL` 白名单已整体删除，JSHeL 里 `jshel` / `hsb1` 都要写括号才执行（和真 JS 一致）。
 
 语义是**独立会话**，不是子 shell：两个窗口各有自己的 cwd、环境变量和历史，关掉一个另一个照常；
 窗口里的 `exit` 是关窗，不是退回父层。窗口标题带落地目录（`终端 · .home`），多开时才分得清。
@@ -428,7 +428,7 @@ JSHeL> jshel()        → 开一个新终端窗口，落地当前目录
 
 ```text
 cat cd clear cp curl cut date df diff dir dirname du echo env exit export false
-fastfetch find grep head help history hostname hsl1 hsl2 kill less ll ln ls man mkdir
+fastfetch find grep head help history hostname hsb1 hsb2 kill less ll ln ls man mkdir
 more mv nano neofetch printf ps pwd rev rm rmdir sed seq sleep sort source stat
 tail tee touch tr tree true type uname uniq unlink unset vi vim wc wget which
 whoami xargs yes
@@ -459,7 +459,7 @@ whoami xargs yes
 ███████║   ██║       OS         Linux
 ██╔══██║   ██║       Host       browser · Chrome 145.0.7632.6
 ██║  ██║   ██║       Kernel     JSHeL 0.0.1.11
-╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + hsl1
+╚═╝  ╚═╝   ╚═╝       Shell      JSHeL + hsb1
 ```
 
 信息全是现场问出来的（`sys.info` + `fs.usage` + `proc.list`），
@@ -481,16 +481,16 @@ whoami xargs yes
 | --- | --- |
 | `apt` | 这里不是 Debian，装包是 `await require('lodash-es@4')` |
 | `ping` | 浏览器不发 ICMP，做不到就是做不到 |
-| `bash` / `sh` / `zsh` | 学不像就别学。zsh 本体是 MIT-like，但这里从来没打包它，只是借了个名字——现在名字也还回去了，交互层叫 hsl1 |
+| `bash` / `sh` / `zsh` | 学不像就别学。zsh 本体是 MIT-like，但这里从来没打包它，只是借了个名字——现在名字也还回去了，交互层叫 hsb1 |
 | `su` / `sudo` | 单用户、最高权限，没有「切换」这回事 |
 | `npm` / `pip` | 只打印一行错误提示的桩，留着只会让人以为能用 |
 | `chmod` | 见上：没有权限位可改 |
 
-> **许可证**：hsl1 全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
+> **许可证**：hsb1 全部是本项目 MIT 代码，没有静态链接任何 GPL 二进制。
 > GNU coreutils / busybox / bash 都是 GPL，把它们的 wasm 打进单文件会传染整个发布物，
 > 所以宁可自己重写。第三方清单见 `licenses/`。
-> **hsl2 是另一回事**：它涉及 FreeBSD（有 GPL 相关历史遗留问题），本项目【不分发】其源码或二进制，
-> 详见 [5.4](#hsl2)。
+> **hsb2 是另一回事**：它涉及 FreeBSD（有 GPL 相关历史遗留问题），本项目【不分发】其源码或二进制，
+> 详见 [5.4](#hsb2)。
 
 ### 5.2 内建 TUI 智能体
 
@@ -564,7 +564,7 @@ emoji 更明显：ZWJ / 变体选择符被多算成 1 列，光标会一路往�
 | 提示符 | 模式 | 一行交给谁 |
 | --- | --- | --- |
 | `JSHeL> `（固定） | JSHeL | JS 求值（`ls -la` 是语法错误） |
-| `/home/user $ ` | hsl1 | shell 命令行（`1+1` 是「命令未找到」） |
+| `/home/user $ ` | hsb1 | shell 命令行（`1+1` 是「命令未找到」） |
 | `agent> ` | 智能体 | 整行发给模型 |
 
 函数接口仍然可用，给脚本用、不切模式：
@@ -678,7 +678,7 @@ print()                     // 真的打开打印对话框
 之前这几个被「设计」过：`alert` 变成一条 toast、`confirm` 变成自绘对话框、
 `open` 变成内部浏览器窗口。那是产品行为，不是浏览器行为，全部删掉了。
 
-### <a id="hsl2"></a> 5.4 hsl2：可选组件（WASM + FreeBSD + v86，风险必读）
+### <a id="hsb2"></a> 5.4 hsb2：可选组件（WASM + FreeBSD + v86，风险必读）
 
 > **运行前提：不需要后端，也不需要 IndexedDB。**
 > 整套链路的每一个字节都从 CDN 直连（jsdelivr 上的 v86、i.copy.sh 上的 state 与磁盘分块），
@@ -686,9 +686,9 @@ print()                     // 真的打开打印对话框
 > 隐私插件、`file://` 受限）时自动降级为内存模式，照样能开机，只是关掉页面后要重新下载。
 > 如果打不开，先看浏览器控制台是不是 `SecurityError`，不要先去开后端。
 
-> **一句话**：hsl2 用 WASM 在浏览器里模拟一台 x86 PC，跑**真实的 FreeBSD 12.0 用户态**。
-> 它是**可选的**——不敲 `hsl2()`，页面一个字节都不下载；敲了才开始经 CDN 拉组件，
-> 并缓存进 IndexedDB。FreeBSD 有 GPL 相关历史遗留问题，介意就别用（hsl1 是纯自研 MIT）。
+> **一句话**：hsb2 用 WASM 在浏览器里模拟一台 x86 PC，跑**真实的 FreeBSD 12.0 用户态**。
+> 它是**可选的**——不敲 `hsb2()`，页面一个字节都不下载；敲了才开始经 CDN 拉组件，
+> 并缓存进 IndexedDB。FreeBSD 有 GPL 相关历史遗留问题，介意就别用（hsb1 是纯自研 MIT）。
 
 #### 它到底是什么
 
@@ -697,10 +697,10 @@ print()                     // 真的打开打印对话框
 - **FreeBSD 12.0 镜像**：v86 官方提供的 2 GB 分块磁盘镜像（1 MB 一块，按需读取）加一个
   约 16 MB 的 zstd 压缩 state 快照——快照跳过冷启动，直接恢复到已登录的 shell。
 - **BIOS**：SeaBIOS / VGABIOS，从 jsdelivr 的 GitHub CDN 加载。
-- 实现全在 `build/66-hsl2.js`（主线程，需要 DOM 和 WASM）；Worker 里的 `hsl2()` 只发一条
+- 实现全在 `build/66-hsb2.js`（主线程，需要 DOM 和 WASM）；Worker 里的 `hsb2()` 只发一条
   RPC 让主线程开窗，组件加载与缓存策略都在主线程那一侧。
 
-它和 hsl1 不是一回事：hsl1 是本项目自研的命令子集（纯 MIT 代码），hsl2 是**第三方操作系统**。
+它和 hsb1 不是一回事：hsb1 是本项目自研的命令子集（纯 MIT 代码），hsb2 是**第三方操作系统**。
 
 #### ⚠ 风险与合规（请务必先读）
 
@@ -708,40 +708,40 @@ print()                     // 真的打开打印对话框
   （早期 GCC / binutils / gdb 等），虽然后续版本逐步清理、替换，但**授权谱系复杂**，
   不能想当然地当成「纯 BSD」。[FreeBSD COPYRIGHT 原文](licenses/LICENSE.freebsd.txt)只是主许可证声明，
   **不代表镜像内所有组件的完整许可清单**。本项目不做法律结论，也不替用户判断适用场景。
-- **因此 hsl2 是【可选的】**：你可以完全不用。默认功能（JSHeL / hsl1 / 全部工具）
+- **因此 hsb2 是【可选的】**：你可以完全不用。默认功能（JSHeL / hsb1 / 全部工具）
   不依赖它、不受它影响，不用它一切照常。
 - **本项目【不分发】其源码或二进制**：不把 FreeBSD 镜像、v86 内核、WASM 构建、BIOS
   或任何 GPL 相关二进制**打包进 `index.html`、仓库或发布物**。仓库里只有加载它们的
   JavaScript 代码和两份许可证原文。
 - **用户不启动，就绝不加载**：`index.html` 里没有任何指向这些 CDN 的 `<script>` / `<link>`。
-  只有用户主动执行 `hsl2()`（JSHeL）或 `hsl2`（hsl1 命令）才发出第一个请求。
+  只有用户主动执行 `hsb2()`（JSHeL）或 `hsb2`（hsb1 命令）才发出第一个请求。
 - **CDN 加载 + IndexedDB 缓存**：拉下来的资源（引擎 / wasm / BIOS / state / 读过的磁盘分块）
-  全部落进 IndexedDB 的 `ht-hsl2` 库，第二次启动优先读本地，不再走网络；
-  `hsl2.clear()` 可清空。磁盘分块是按需拉取的，不会一次把 2 GB 全下下来。
+  全部落进 IndexedDB 的 `ht-hsb2` 库，第二次启动优先读本地，不再走网络；
+  `hsb2.clear()` 可清空。磁盘分块是按需拉取的，不会一次把 2 GB 全下下来。
 
-来源、版本、镜像地址全部写死在 `build/66-hsl2.js` 的 `A` 表里，不经任何中间代理，
+来源、版本、镜像地址全部写死在 `build/66-hsb2.js` 的 `A` 表里，不经任何中间代理，
 可自行审查或换成自己的镜像。第三方清单与更细的合规说明见
-[`licenses/README.md` 的 hsl2 章节](licenses/README.md#hsl2额外说明风险必读)。
+[`licenses/README.md` 的 hsb2 章节](licenses/README.md#hsb2额外说明风险必读)。
 
 #### 怎么用
 
 ```js
-hsl2()                    // 打开窗口并从 state 快照启动 FreeBSD
-hsl2({ cold: true })      // 跳过快照走冷启动（慢，快照版本不匹配时用）
-hsl2.stop()               // 停止虚拟机（缓存保留）
-hsl2.clear()              // 清空 IndexedDB 缓存
-await hsl2.status()       // { running, cold, cached }
+hsb2()                    // 打开窗口并从 state 快照启动 FreeBSD
+hsb2({ cold: true })      // 跳过快照走冷启动（慢，快照版本不匹配时用）
+hsb2.stop()               // 停止虚拟机（缓存保留）
+hsb2.clear()              // 清空 IndexedDB 缓存
+await hsb2.status()       // { running, cold, cached }
 ```
 
-hsl1 命令表里也有 `hsl2`（`hsl2 --cold` 等价冷启动）。窗口打开后**点一下画面再敲键盘**：
-键盘只在 hsl2 窗口聚焦时转发给虚拟机，不抢 hterminal 自己的全局快捷键。普通字符走
+hsb1 命令表里也有 `hsb2`（`hsb2 --cold` 等价冷启动）。窗口打开后**点一下画面再敲键盘**：
+键盘只在 hsb2 窗口聚焦时转发给虚拟机，不抢 hterminal 自己的全局快捷键。普通字符走
 `keyboard_send_text`，回车 / 方向键走 keyCode，Ctrl-C / Ctrl-D / Ctrl-L / Ctrl-Z / Ctrl-A /
 Ctrl-E 走 scancode。窗口顶部有风险提示条，另有「停止 / 重启 / 清缓存」按钮、下载进度和日志。
 
 #### 已知限制（第一版）
 
 - 依赖第三方 CDN 可达；**首次**启动必须联网（有缓存之后可以离线）。
-- state 快照由 v86 官方提供，**可能与特定 v86 版本不兼容**；恢复失败时用 `hsl2({cold:true})`。
+- state 快照由 v86 官方提供，**可能与特定 v86 版本不兼容**；恢复失败时用 `hsb2({cold:true})`。
 - 2 GB 磁盘按需分块拉取，进系统后某些操作会触发额外下载（同样会进缓存）。
 - 只跑文本模式，鼠标 / 声卡关掉，v86 网卡未接后端（客户机里没有网络）。
 - 模拟的是 32 位 x86（Pentium 级），慢，别拿它干重活。
@@ -1048,13 +1048,13 @@ agent.open() / agent.send(text) / agent.export() / agent.clear()
 agentTui.open() / agentTui.send(t) / agentTui.queue(t) / agentTui.stop() / agentTui.close()
                             // open() 会把 REPL 切进 agent 模式（提示符变 agent>），不是只打横幅
 
-// —— hsl1 / 嵌套自己 ——
-hsl1()                      // 进交互式 Linux 风格 shell（可嵌套）
-hsl1('ls -la')              // 跑一行，输出直接进终端
-hsl1.run('cat x')           // 跑一行不打印，返回 { code, out, err }
-hsl2()                      // 启动 WASM + FreeBSD 12.0 窗口（可选组件，按需下载）
-hsl2({cold:true})           // 跳过 state 快照，冷启动
-hsl2.stop() / hsl2.clear() / hsl2.status()
+// —— hsb1 / 嵌套自己 ——
+hsb1()                      // 进交互式 Linux 风格 shell（可嵌套）
+hsb1('ls -la')              // 跑一行，输出直接进终端
+hsb1.run('cat x')           // 跑一行不打印，返回 { code, out, err }
+hsb2()                      // 启动 WASM + FreeBSD 12.0 窗口（可选组件，按需下载）
+hsb2({cold:true})           // 跳过 state 快照，冷启动
+hsb2.stop() / hsb2.clear() / hsb2.status()
 shell.open(cwd) / shell.here() / shell.cd(p) / shell.exec(line)
 jshel()                     // = shell.open()：在窗口里再开一个 JSHeL，可以无限套
 
@@ -2115,10 +2115,11 @@ tools / tool color         → 工具清单 / 打开某个工具
 
 # 第二部分 · 维护指南
 
-> **关于命名**：交互 shell 已由 `hsl` 全量改名为 **`hsl1`**（`hsl` 不再支持），
+> **关于命名**：交互 shell 已由 `hsl` / `hsl1` 统一为 **`hsb1`**（老名字不再支持），
 > 提示符也从 `.home> ` 改成固定的 `JSHeL> `、`/home/user $ `（ext4 风格）。
-> **本部分（开发日志 / 版本记录 / 踩坑 / 操作记录）是历史事实的存档，保留当时的 `hsl` / `HSL` / `.home> ` 旧称**，
-> 未按新命名回改——改了反而不是当时的记录了。当前用法一律以第一部分为准。
+> **本部分（开发日志 / 版本记录 / 踩坑 / 操作记录）是历史事实的存档。**
+> 0.0.1.26 起 `hsl` / `hsl1` / `hsl2` 已统一为 `hsb` / `hsb1` / `hsb2`，下面正文按新名书写，
+> 但当时的行为、报错、提示符保持原样——改了反而不是当时的记录了。当前用法一律以第一部分为准。
 
 ## 1. 交接速览
 
@@ -2148,13 +2149,13 @@ tools / tool color         → 工具清单 / 打开某个工具
 ```text
 index.html                 ← 产物：自包含单文件（由 build.sh 拼装，不要手改）
 build.sh                   ← 拼装 + 两份 node --check 语法校验
-IDEAS.md                   ← 想法池：还没开工的点子（HSL 在这里）
+IDEAS.md                   ← 想法池：还没开工的点子（HSB 在这里）
 build/
   00-head.html             ← doctype / 许可注释 / meta / 全部 CSS（暗亮双主题 token、
                              光标层、窗口动效 keyframes）
   10-body.html             ← DOM 骨架：顶栏、桌面、启动屏、启动器、抽屉、模态
   20-worker.js             ← Worker 内核：ANSI、行编辑器、execute()、DOM 代理、agentTui
-  25-compat.js             ← HSL：MiniShell（管道/重定向/变量）+ coreutils + vim/nano + fastfetch
+  25-compat.js             ← HSB：MiniShell（管道/重定向/变量）+ coreutils + vim/nano + fastfetch
   30-core.js               ← 主线程底座：HT_VERSION / Settings / 路径规则 / FS / IDB / Pkg
   40-term.js               ← xterm 装载、Keys（顶栏控制键）、自定义光标、TerminalSession、
                              WindowManager（拖拽/缩放/窗动效）
@@ -2401,8 +2402,8 @@ const py = offY + vRow * cellH;                            // 行
 | REPL | `1+1` → `2`；`ls('.home')` 列出文件；`page.q('#topbar')` 返回 `header/1280` |
 | 多行输出对齐 | L1/L2/L3 都从第 0 列起（`convertEol`） |
 | 历史 | 连按 ↑ 逐条回溯，不是直接跳到上上条 |
-| JSHeL 只认 JS | `1+1` → `2`；`ls -la` → `ReferenceError`，且带一句「ls 是 HSL 命令」；`hsl`/`nano readme` 同理 |
-| HSL | `hsl('ls')` 列 cwd；`hsl('cat a \| wc -l')` 管道通；`hsl('cd @ && pwd')` 目录跟着走 |
+| JSHeL 只认 JS | `1+1` → `2`；`ls -la` → `ReferenceError`，且带一句「ls 是 HSB 命令」；`hsl`/`nano readme` 同理 |
+| HSB | `hsl('ls')` 列 cwd；`hsl('cat a \| wc -l')` 管道通；`hsl('cd @ && pwd')` 目录跟着走 |
 | 原生 API | `alert` / `confirm` / `prompt` 被 Playwright 的 `dialog` 事件抓到——说明是浏览器自己的框，不是自绘的 |
 | 全屏应用 | `hsl('nano readme')` 顶栏可见、状态栏在最底行、鼠标点第 5 行第 8 列落点正确、`^X` 干净退出回滚历史 |
 | 对话持久化 | 刷新后智能体显示「已恢复 N 条消息」，`indexedDB.databases()` 里含 `ht-agent` |
@@ -2737,7 +2738,7 @@ resize 分支先 `\r\x1b[2K` 清当前行，正在等输出（`busy`）时干脆
 
 **51. 「打开自己」有一半入口是假的，用户就认为整个功能是坏的**
 `jshel` 是 `shell.open` 的别名，但 `AUTO_CALL` 名单里只有 `hsl` 没有 `jshel`：
-裸敲 `jshel` 只是把函数对象回显出来，看上去「没有真的打开」；HSL 里也没有这条命令，
+裸敲 `jshel` 只是把函数对象回显出来，看上去「没有真的打开」；HSB 里也没有这条命令，
 想从里面再开一个 JSHeL 无门可走。**修法**：`AUTO_CALL` 加 `jshel`，
 `25-compat.js` 加 `def('jshel')`（可带目录参数），窗口标题带上落地目录。
 教训：**同类命令的入口要么全都能裸敲，要么全都不能**；一半一半时，
@@ -3006,9 +3007,10 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
-| 0.0.1.25 | 2026-11-08 | **窗口 chrome 落地（提手 + 四色点）+ hsl2 三处修复**：①窗口从「矩形标题栏」改为设计源里的「画面向上凸出提手」：`.win` 不再裁剪，新增 `.win-handle`（SVG 实体，填 `--panel-solid`，底边与 `.win-screen` 顶边咬合 1px，无接缝）、`.win-screen`（圆角/边框/阴影/backdrop 全部搬到这里）、`.win-band`（最大化时的毛玻璃带）。②四个色点按原稿语义：红=关、黄=最小化、绿=最大化、蓝=置于底层（新增 `WindowManager.sendToBack()`）；字形直接内联 `docs/thoughts/*.svg` 的路径。③尺寸全部由窗口宽度按原稿比例算出（提手 43.3%、高 10%、色点 ⌀6.25%、外点 ±0.735×提手宽），`ResizeObserver` 跟随缩放；窄到 280px 仍分得开。④标题塞不下时**中间截断**（`midEllipsis` 二分测量），提手尺寸永不因标题变化。⑤**hsl2 启动后收起全部提示**：警告条、进度条、日志、状态栏在 `is-live` 后全部 `display:none`，控制条收成右上角悬浮药丸（触屏常驻、桌面 hover 出现），画面铺满。⑥**手机键盘修复**：`.hsl2-view` 是 `div[tabindex]`，移动端聚焦不会唤起软键盘；新增 1px 透明 `textarea` 键盘桥，`pointerdown` 里 `preventDefault()+focus()`（iOS 要求在用户手势内同步聚焦），字符从 `input` 事件取、特殊键走 `keydown`，`font-size:16px` 防 iOS 自动放大。⑦**修「必须开后端」的真因**：`indexedDB.open()` 在 Safari 无痕 / `file://` 受限 / 隐私策略下会抛 `SecurityError`，旧代码在 `FS.init()` 第一句 `await IDB.open()` 就抛，整个终端起不来——和 hsl2、和后端都无关；`IDB` 改为失败即切内存模式（`memMode`，读写走 `Map`），hsl2 的 `dbGet/dbPut` 同样降级，无存储环境仍能完整启动 FreeBSD（只是不缓存）。⑧版本号从 0.0.1.22 补齐到 0.0.1.25（23/24 的记录写了但 `HT_VERSION` 没改）。 |
-| 0.0.1.24 | 2026-11-04 | **hsl2 真身：WASM + v86 + FreeBSD 12.0（可选组件）**：①新增 `build/66-hsl2.js`——v86 0.5.473 从 jsdelivr 加载，FreeBSD 12.0 的 2 GB 分块盘与 ~16 MB zstd state 快照从 v86 官方镜像 CDN 加载，全部经 **IndexedDB（`ht-hsl2`）缓存**；`XHR.prototype` 上做**按 CDN 前缀生效的拦截**，v86 看到的仍是原始 URL（`.zst` 后缀、1 MB 分块命名不变），解压逻辑不受影响。②**不启动不加载**：`index.html` 里没有任何相关 `<script>` / `<link>`，只有敲 `hsl2()`（JSHeL）或 `hsl2`（hsl1）才发第一个请求；`hsl2()` / `hsl2.stop()` / `hsl2.clear()` / `hsl2.status()` 与 hsl1 的 `hsl2 --cold`。③窗口系统注册 `hsl2` 类型，风险提示条 + 进度 + 日志 + 停止/重启/清缓存；v86 全局键盘监听创建后立刻 `destroy()`，改由窗口聚焦时转发（普通字符 / keyCode / scancode），不抢全局快捷键。④**许可证合规**：补 `licenses/LICENSE.v86.txt`（BSD-2-Clause）与 `licenses/LICENSE.freebsd.txt`（FreeBSD COPYRIGHT），`licenses/README.md` 新增「hsl2：额外说明（风险，必读）」，`check-licenses.sh` 登记 `v86@0.5.473`；README §5.4 由「规划中」整节改写为实现说明 + 风险复核。⑤四条硬约束落实：可选不用、不分发任何源码或二进制、不启动不加载、CDN + IndexedDB。⑥`build.sh` 把 `66-hsl2.js` 拼进产物。 |
-| 0.0.1.23 | 2026-11-04 | **JSHeL 纯 JS 化 + 键盘策略 + hsl1 改名 + 启动微打扰**：①JSHeL 固定提示符 `JSHeL> `、不再显示「当前目录」、删掉 `AUTO_CALL` 白名单——裸敲 `ls` 只求值为函数对象（和浏览器控制台一致），`ls()` 才真正调用。②顶栏删掉 Alt / Shift 只留 Ctrl；原 `Ctrl-Shift-*` 快捷键全改 `Alt-*`；`Ctrl` 全部留给终端（唯一例外 `Ctrl-,`，`Alt-,` 同样支持开关设置）；Alt 组合一律捕获但**直接吞掉**不交给终端，为以后的 Alt 功能预留键位；`Ctrl-Alt` 与 `Ctrl-Shift-C/V` 一律不捕获。③`hsl` 全量改名 `hsl1`（`hsl` 不再支持，颜色空间 HSL 不受影响），`hsl2` 只留壳子并写明 WASM + FreeBSD + v86 的规划与许可证风险，未实现、未加载、未分发任何组件。④启动不再弹模态框，改 toast 微打扰；设置页新增「访问令牌」专门一栏（sessionStorage，留空即清除）。⑤重建 `index.html`，Playwright 无头浏览器 23 项实测全过：提示符、裸命令、键位事件级探测、hsl1 进出、hsl2 占位、令牌存取、无 pageerror、无 WASM 组件请求。 |
+| 0.0.1.26 | 2026-11-08 | **全线改名 hsb + 键盘修好三处**：①`hsl` / `hsl1` / `hsl2` 统一为 `hsb` / `hsb1` / `hsb2`（HSB = Html Subsystem for FreeBSD）：命令、`HSB2` 命名空间、CSS 类（`.hsb2-*`）、窗口 type、构建文件名 `build/66-hsb2.js` 全部改到位，老命令不再注册；IndexedDB 换到 `ht-hsb2`，启动时从 `ht-hsl2` **一次性搬缓存**（失败就重下，不阻塞启动），不让用户为改名重下 16 MB 镜像。②**手机软键盘退格修复**：输入框空着时安卓/iOS 的退格既不派发 keydown 也不派发 input，表现就是「点不动」；键盘桥固定留一个零宽哨兵字符，退格必然改变 value，再配合 `beforeinput` 的 `deleteContentBackward` 与 `input` 兜底，三层任意一层命中都发 0x0E，发完把哨兵补回、光标放末尾。③**顶栏 Ctrl 在 hsb2 里生效**：原来顶栏按键只认 `w.content.term`（xterm 会话），hsb2 没有 term，于是 Ctrl / Esc / Tab / 摇杆全发给了桌面终端；现在 `sendKeyToTerm` / `keepTermFocus` 识别 hsb2，改走它的键盘通道。④键盘转发统一成 `typeTermSeq()`：终端字节串 → PS/2 扫描码（Ctrl+A–Z、方向、Home/End、Delete、PgUp/PgDn、Esc/Tab/Enter/Backspace），顶栏和实体键盘同一条路；Ctrl 从原来只认 c/d/l/z/a/e 扩到全字母。 |
+| 0.0.1.25 | 2026-11-08 | **窗口 chrome 落地（提手 + 四色点）+ hsb2 三处修复**：①窗口从「矩形标题栏」改为设计源里的「画面向上凸出提手」：`.win` 不再裁剪，新增 `.win-handle`（SVG 实体，填 `--panel-solid`，底边与 `.win-screen` 顶边咬合 1px，无接缝）、`.win-screen`（圆角/边框/阴影/backdrop 全部搬到这里）、`.win-band`（最大化时的毛玻璃带）。②四个色点按原稿语义：红=关、黄=最小化、绿=最大化、蓝=置于底层（新增 `WindowManager.sendToBack()`）；字形直接内联 `docs/thoughts/*.svg` 的路径。③尺寸全部由窗口宽度按原稿比例算出（提手 43.3%、高 10%、色点 ⌀6.25%、外点 ±0.735×提手宽），`ResizeObserver` 跟随缩放；窄到 280px 仍分得开。④标题塞不下时**中间截断**（`midEllipsis` 二分测量），提手尺寸永不因标题变化。⑤**hsb2 启动后收起全部提示**：警告条、进度条、日志、状态栏在 `is-live` 后全部 `display:none`，控制条收成右上角悬浮药丸（触屏常驻、桌面 hover 出现），画面铺满。⑥**手机键盘修复**：`.hsb2-view` 是 `div[tabindex]`，移动端聚焦不会唤起软键盘；新增 1px 透明 `textarea` 键盘桥，`pointerdown` 里 `preventDefault()+focus()`（iOS 要求在用户手势内同步聚焦），字符从 `input` 事件取、特殊键走 `keydown`，`font-size:16px` 防 iOS 自动放大。⑦**修「必须开后端」的真因**：`indexedDB.open()` 在 Safari 无痕 / `file://` 受限 / 隐私策略下会抛 `SecurityError`，旧代码在 `FS.init()` 第一句 `await IDB.open()` 就抛，整个终端起不来——和 hsb2、和后端都无关；`IDB` 改为失败即切内存模式（`memMode`，读写走 `Map`），hsb2 的 `dbGet/dbPut` 同样降级，无存储环境仍能完整启动 FreeBSD（只是不缓存）。⑧版本号从 0.0.1.22 补齐到 0.0.1.25（23/24 的记录写了但 `HT_VERSION` 没改）。 |
+| 0.0.1.24 | 2026-11-04 | **hsb2 真身：WASM + v86 + FreeBSD 12.0（可选组件）**：①新增 `build/66-hsb2.js`——v86 0.5.473 从 jsdelivr 加载，FreeBSD 12.0 的 2 GB 分块盘与 ~16 MB zstd state 快照从 v86 官方镜像 CDN 加载，全部经 **IndexedDB（`ht-hsb2`）缓存**；`XHR.prototype` 上做**按 CDN 前缀生效的拦截**，v86 看到的仍是原始 URL（`.zst` 后缀、1 MB 分块命名不变），解压逻辑不受影响。②**不启动不加载**：`index.html` 里没有任何相关 `<script>` / `<link>`，只有敲 `hsb2()`（JSHeL）或 `hsb2`（hsb1）才发第一个请求；`hsb2()` / `hsb2.stop()` / `hsb2.clear()` / `hsb2.status()` 与 hsb1 的 `hsb2 --cold`。③窗口系统注册 `hsb2` 类型，风险提示条 + 进度 + 日志 + 停止/重启/清缓存；v86 全局键盘监听创建后立刻 `destroy()`，改由窗口聚焦时转发（普通字符 / keyCode / scancode），不抢全局快捷键。④**许可证合规**：补 `licenses/LICENSE.v86.txt`（BSD-2-Clause）与 `licenses/LICENSE.freebsd.txt`（FreeBSD COPYRIGHT），`licenses/README.md` 新增「hsb2：额外说明（风险，必读）」，`check-licenses.sh` 登记 `v86@0.5.473`；README §5.4 由「规划中」整节改写为实现说明 + 风险复核。⑤四条硬约束落实：可选不用、不分发任何源码或二进制、不启动不加载、CDN + IndexedDB。⑥`build.sh` 把 `66-hsb2.js` 拼进产物。 |
+| 0.0.1.23 | 2026-11-04 | **JSHeL 纯 JS 化 + 键盘策略 + hsb1 改名 + 启动微打扰**：①JSHeL 固定提示符 `JSHeL> `、不再显示「当前目录」、删掉 `AUTO_CALL` 白名单——裸敲 `ls` 只求值为函数对象（和浏览器控制台一致），`ls()` 才真正调用。②顶栏删掉 Alt / Shift 只留 Ctrl；原 `Ctrl-Shift-*` 快捷键全改 `Alt-*`；`Ctrl` 全部留给终端（唯一例外 `Ctrl-,`，`Alt-,` 同样支持开关设置）；Alt 组合一律捕获但**直接吞掉**不交给终端，为以后的 Alt 功能预留键位；`Ctrl-Alt` 与 `Ctrl-Shift-C/V` 一律不捕获。③`hsl` 全量改名 `hsb1`（`hsl` 不再支持，颜色空间 HSB 不受影响），`hsb2` 只留壳子并写明 WASM + FreeBSD + v86 的规划与许可证风险，未实现、未加载、未分发任何组件。④启动不再弹模态框，改 toast 微打扰；设置页新增「访问令牌」专门一栏（sessionStorage，留空即清除）。⑤重建 `index.html`，Playwright 无头浏览器 23 项实测全过：提示符、裸命令、键位事件级探测、hsb1 进出、hsb2 占位、令牌存取、无 pageerror、无 WASM 组件请求。 |
 | 0.0.1.22 | 2026-11-04 | **零信任架构四条红线**：①§13 新增总纲「零信任架构：四条设计红线」（谁能请求 / 能请求啥 / 能得到啥信息 / 服务自己能做什么）＋「关于模型切换」（换模型是改参数重启的运维动作，不做运行时自动切换，避免复杂化扩大攻击面）＋「改代码前的自检」5 条，作为后续参照的约束而非功能介绍。②**按第 3 条收敛请求者可见信息**：`/health` 只回 `{"ok":true}`（删 version / service）；chat 路由**出口做白名单**（`minimize_chat` / `minimizeChat`），只放行 `choices[].message` 的必要字段，剥掉上游 `model` / `id` / `created` / `object` / `usage` / `system_fingerprint` 与转换函数自造的 `model`——这是真缺口：请求体的 model 虽已覆盖，真实模型名仍会从响应漏回去；错误体只留一句 message；Python 覆盖 `send_response` 不发 `Server` 头；所有拒绝统一回 `REJECTED`，「仅允许本机访问」「Host 只接受…」「需要令牌」等防线描述只进 stderr；内部错误不回显 URL / 异常 / 配置；429 去掉「上限 N 次/分」与 `X-RateLimit-*`，保留 `Retry-After`。三份后端一致，前端状态栏不再拼后端描述。③新增 `pentest-scripts/info_leak.py`（话特别多的假上游，84 项全过）；全量回归 9 套约 298 项全过；修掉 `lan_access.py` L26 依赖旧文案的假失败（并把 `check` 的 bytes 拼接导致的崩溃一并修）与 `file_origin_e2e.py` 自包含。④踩坑 72–73。 |
 | 0.0.1.21 | 2026-11-04 | **统一请求格式 + 本地文件页面**：①前端只有一种 payload——标准 OpenAI Chat Completions，发后端和直连外部 API 长得完全一样；`Authorization` 随便填或不填都过，`model` / `provider` / `X-HTerm-Provider` 一律被后端**覆盖**（`--model` / `--provider` / `HT_MODEL` / `HT_PROVIDER` 钉死），防止把便宜模型改成贵模型多花钱；`do_openai` 里再钉一次防绕过入口。②`file://` 页面放行：后端启动生成随机令牌打印在服务端横幅，用户手工抄进页面顶部提示条，请求带 `X-HTerm-Token`，常量时间比较；令牌不经网络下发，公网 sandbox iframe 拿不到；`--no-file-origin` 可完全关闭。③前端加 `FileToken`（sessionStorage）、令牌弹窗、`checkBackend` 与报错文案同步。④测试：`field_trust.py` 加 T5b 钉住模型覆盖（24 项）、新增 `file_origin.py`（48 项）与 `file_origin_e2e.py`（无头 Chrome 真开 `file://` 7 项，改为自包含起停后端）。⑤文档：§13 新增「统一请求格式」「本地文件页面的令牌通道」，修正过时的 `X-HTerm-Provider` 与 `Origin: null` 描述，踩坑 70–71。 |
 | 0.0.1.20 | 2026-11-04 | **元数据地址与前端字段信任**：①把 `169.254.169.254` 的 5 种经典编码变形（十进制 `2852039166`、十六进制 `0xA9FEA9FE`、八进制 `0251.0376.0251.0376`、`[::ffff:169.254.169.254]`、`169.254.169.254.nip.io`）补进测试，三份后端全拒——校验发生在解析之后、按 IP 判，不靠字符串匹配；重定向到该地址也在第二跳被拒。②**不再整包透传请求体**：`base_url` / `api_key` / `headers` / `proxy` 等控制字段归一化键名（`Base_Url`、`API-KEY` 算同一个）后剥掉，上游地址与 Authorization 只由环境变量决定；其余字段照常透传，不做白名单。③新增 `pentest-scripts/field_trust.py`（假上游记录，三份各 7 项，21 项全过），`lan_access.py` 扩到 74 项；合计 95 项全过。④文档：§13 新增「后端不相信前端的哪些话」，踩坑 69。 |
@@ -3019,7 +3021,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 | 0.0.1.15 | 2026-11-03 | **光标该藏就藏 + 智能体真的能抓新闻 + 四个「维护中」做完**：①**光标滚出画布不隐藏**——`_cursorPlace()` 的越界判断本来是对的（`vRow = cursorY + baseY - viewportY`），但重算只挂在 `onCursorMove` / `term.onScroll` 上；`onScroll` 只在**缓冲区滚动**（新输出把内容顶上去）时触发，用户拖滚动条、滚轮回看历史时 `viewportY` 变了它一声不响。实测 `vp 183→120`、光标行 84（共 22 行），`.ht-cursor` 还亮在最后一行。**修法**：监听 `.xterm-viewport` 的 `scroll`（不挑渲染器），隐藏时 `init=false`，滚回来直接落位、不补动画。②**智能体抓新闻必失败**——三个后端的 `X-HTerm-Client` 还在和小写 `hterminal` 全等比较，而客户端从 0.0.1.2 起就发 `HTerMinaL`，于是**自家前端每次模型调用都被自己 403**（`缺少 X-HTerm-Client`）。改成 `trim().toLowerCase()` 比较。③**抓网页有了真正能走的路**——浏览器 fetch 受同源策略管，新闻站一律不带 CORS 头，`r.jina.ai` / `allorigins` 在国内经常连不上，所谓「三级降级」实际没有一级能通。后端新增 `POST /v1/fetch` 代抓（只允许 http/https、80/443、目标必须解析到公网 IP、逐跳校验重定向、3 MB / 20 s 上限）；`fetch_url` 拿到 HTML / RSS / JSON 统一转正文；新增 **`news` 工具**（今日头条热榜 + 新浪滚动新闻，`count` / `source`），并在 `AGENT_ENV` 里写明「要新闻用 news，别猜 URL」。④**四个「维护中」做完了**（新 `build/59-media.js`）——**录音机**（MediaRecorder + AnalyserNode 实时波形、暂停、计时、设备选择、试听、存 `.home`、关窗收音轨）；**定位**（单次 / `watchPosition`、七项数据、复制 / 存 `.home.geo-json` / 开 OSM）；**3D 视图**（自写 WebGL：环面结 / 立方体 / 球 / 二十面体、轨道相机、自转、线框、fps，不引 three.js）；**音频播放**（WebAudio 解码波形、点击定位、进度 / 音量 / 0.5–2× / 循环、拖入即放）。⑤**顺带修的四个真坑**——`Permissions-Policy: ()` 把自家页面的麦克风与定位也关了（改 `(self)`）；3D 画布用 `getBoundingClientRect()` 量到开窗动画的 `scale` 值，被定成 80×80（改 `clientWidth`）；`[hidden]` 打不过 `.au-drop{display:flex}`；录音落盘名 `rec-….webm` 被点号拆成三层路径（走 `spotEscape`）。⑥**README 新增 §0「接活规则」**——被打断时先记住、手上的活继续做、收尾前逐条核对历史任务，没查过不许说做完。⑦文档：§12 抓新闻与 `/v1/fetch`、§13 接口与 SSRF 边界、§15 工具表、踩坑 54–59。 |
 | 0.0.1.14 | 2026-11-03 | **emoji 后面还是偏：这次是渲染层在改宽度**：①**现象**——`.home> 👨‍👩‍👧‍👦哈哈`，家庭图标后面紧贴「哈哈」，光标却在右边 6 格空地上，后面输入的字也全部左移。②**根因**——xterm 5.5 默认 **DOM 渲染器**，把一行里同属性的字符塞进同一个 `<span>`；浏览器对 span 内的 ZWJ 序列做连字，`👨‍👩‍👧‍👦` 画成一个家庭图标、只占 2 格，而 buffer 仍按「每个 emoji 2 格」推进 8 格。上一版统一了「谁算宽度」，没管「谁按这个宽度画」。③**修法**——加载 `@xterm/addon-canvas`（CDN 双源、可失败），逐格绘制，视觉宽度与 cell 严格一致；拿不到 addon 就留在 DOM 渲染器，功能不受影响。④**副作用与取舍**——家庭 emoji 显示成 4 个并排的人像（xterm 本来就不认 ZWJ cluster），换位置永远对。⑤**顺带**——canvas 的 cell 宽是整数 8px（DOM 是 8.426px 并靠 `letter-spacing` 补），`_cursorPlace` 的列×格宽更干净。⑥文档 §5.2 补「渲染器必须逐格画」、踩坑 53、第三方许可表加 addon-canvas。 |
 | 0.0.1.13 | 2026-11-03 | **光标在 emoji 后面跑偏**：①**现象**——中文正常，一打 emoji 光标就停在文字右边很远的空地上，折行点也比实际更早。②**根因**——Worker 的 `charWidth` 是手写的「哪些区段算 2 列」，渲染层用的是 xterm 的 Unicode 11 表；两份宽度算法在 ZWJ 序列上分家：`🧑‍🦲` 的 ZWJ 被算 1 列（实际 0，偏 1）、`👨‍👩‍👧‍👦` 三个 ZWJ 各算 1 列（偏 3）、`1️⃣` 的 U+20E3 算 1 列（偏 1）、`🏳️‍🌈` 的 U+1F3F3 算 2 列（xterm 算 1，偏 1）。③**修法**——主线程新增 `termWidthTable(term)`：用 `term._core.unicodeService.wcwidth()` 遍历 0–0x10FFFF，导出「宽 2」114 段、「宽 0」333 段（6 KB，约 16 ms），随 `init` 消息的 `wc` 字段发给 Worker；`charWidth` 有表就二分查表，没表才退回启发式（兜底补了 ZWJ / VS16 / U+20E3）。④**效果**——15 组 emoji 的 `cursorX - 文本结束列` 全部为 0；47 列窄窗里折两行，Home/End/退格位置正确。⑤文档 §5.2 宽度段落改写、踩坑 52。 |
-| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSL 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSL 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |
+| 0.0.1.12 | 2026-11-03 | **提示符不再重复 + `jshel` 真的打开自己**：①**重复提示符**——窗口一缩放，屏幕上变成 `.home> abc.home> abc`。resize 时 xterm reflow，旧 `_rows` 不可信所以归零；可 `redraw()` 靠 `erase()` 把光标带回块首，`_rows=0` 时 `erase()` 直接 return，光标停在行中间，新内容就从那里往后追加。hsl 切层、agent 退出这类「不换行就切提示符」的路径同样：`reopen()` 自己把 `_rows` 归零再画，旧提示符还在，就并排两个。②**修法**——`reopen()` 先 `erase()`；`redraw()` 的写入以 `\r` 开头保底；resize 分支先 `\r\x1b[2K` 清当前行，`busy`（等 agent 回答）时不画、留给 `reopen()`。③**`jshel` 嵌套**——`AUTO_CALL` 里只有 `hsl` 没有 `jshel`，裸敲只是把函数对象回显出来，看上去「没真的打开」；HSB 里也没有这条命令。现在裸敲 `jshel` / `jshel()` / HSB 里 `jshel [目录]` 都会真的开新窗口，语义是**独立会话**（新 Worker、自己的 cwd 与历史，`exit` 是关窗）。④**窗口标题带落地目录**（`终端 · .home`），多开时能分清谁是谁。⑤文档 §5.1 新增「从里面再开一个：`jshel`」，踩坑 50–51。 |
 | 0.0.1.11 | 2026-11-03 | **工具结果可展开 + 智能体有了名字：HarTMLes**：①**旧版看不到全文**——`.msg.tool` 是固定 `max-height:180px` 的框，超出部分既看不见也展不开；调用参数则被 `slice(0, 300)` 直接切掉。用户想核对「`js` 到底返回了什么」只能去翻会话 JSONL。②**返回值改成 `<details>` 卡片**——收起时一行摘要（`▸ js 首行内容… 40 行 · 671 字`），点开看全文，右上角「复制」取整段原文；正文用 `var(--fg)` 而不是灰到看不清的 `--fg-dim`，超过 52vh 在卡片内滚动。③**长参数（> 220 字符）同样折叠**，短参数保持原来的一行 `→ js {…}`；摘要用 flex 三栏（名字 / 预览 / 字数），名字和字数 `flex:0 0 auto`——文字节点直接做 flex 子项会被挤成「一行只剩一个字母」（实测 `js` 被拆成 `j` + `s`）。④**展开状态跨重画保持**——按 `tool_call_id` 存进 `_foldState`；每步工具调用都会 `render()`，不记的话刚点开的长结果会被下一条回答合上。⑤**短结果默认展开**（≤ 400 字符且 ≤ 8 行），与旧行为一致；**不再静默截断**——超过 14000 字符时在正文末尾写明「原 N 字符」。⑥**命名**——智能体与它背后的 harness 统一叫 **HarTMLes**：写进 `AGENT_ENV` / 默认人格、窗口标题、桌面图标、抽屉标题、TUI 横幅、`.sys.about` 和文档。⑦**顺手修**：空会话的问候语以前直接写 `innerHTML`，marked 加载完那次 `render()` 会把它冲成「空会话」（和 `restoreNote` 同一个坑）；改成 `welcomeHtml` 字段，由 `render()` 兜底。⑧文档 §12 新增「工具结果：一行摘要，点开看全文」。 |
 | 0.0.1.10 | 2026-11-03 | **JSHeL 一致性 + TUI 中文输入 + 首屏缓存**：①**求值器合一**——新增 `build/21-shared.js`（`HTScript.run` / `tailReturn` / `hoist` / `inspect` / `stripAnsi` / `charWidth`），`build.sh` 把它同时拼进 Worker 和主线程；终端的 JSHeL 与智能体的 `js` 工具从此调**同一个函数**。之前是两份「差不多」的实现：终端会 hoist 声明、回显尾表达式，工具只是 `new AsyncFunction(code)()`，于是 `const a=1; a+1` 一边是 `2` 一边是 `undefined`，DOM 节点一边是 `<div#toast>` 一边是 `{}`——智能体因此说「js 工具返回值不稳定」，它说得对。②**`inspect` 统一**：DOM 节点、`Map`/`Set`、`Module`、`TypedArray`、循环引用都有稳定输出，终端上色版与工具 `plain` 版**结构完全一致**。③**README 新增 §5.0「一条铁律：JSHeL 是桥，不是皇帝」**——五条硬规则（不改语义 / 不改返回值 / 同一份实现 / 异常原样抛 / 不替用户猜）+ 唯一允许的差异（交互式与非交互式）。④**TUI 行编辑重写**：`layoutInput()` 按显示宽度折行（CJK 2 列），`erase()`/`redraw()` 维护 `_rows`/`_curRow`，**彻底不用相对位移**；`insertText`/`move`/`home`/`end` 全部走全量重绘；`move` 按码点步进（emoji 不再劈成两半）。⑤**修提示符叠加**：`start()`/`submit()` 打印提示符时没记 `_rows`，下一次 `redraw()` 从光标处往后写，屏幕上是 `agent> agent> abc`；现在收敛到一个 `reopen()`。⑥**等待期输入不再丢**：`busy` 时打进的字攒进 `_pending`，提示符回来一次性补上（以前直接 `return` 扔掉，用户以为输进去了）。⑦**超一屏只画尾部** `rows-1` 行，光标跟着裁剪后的行号走，不会上移过头把历史抹了。⑧**正文折行与输入折行共用 `charWidth`**：原来 `agentWidth` 少判了 `0x2329/0x232a` 两个码点，同一段文字在「打字时」和「回答时」折在不同位置。⑨**首屏缓存**：三个后端把 `index.html` 的 `no-store` 换成 `no-cache` + `ETag`（`sha256` 前 20 位），命中回 304；抓包刷新传输 **712 KB → 0.4 KB**。⑩文档 §5.0 / §5.2 / §13、踩坑 46–49。 |
 | 0.0.1.9 | 2026-11-03 | **光标跟着内容走**：①根因——自绘光标只在 `onCursorMove` 时重算，而用户滚动回看历史时 `viewportY` 变了、光标「一行没动」，于是停在旧像素上，内容从它身上滚过去；滚出视口也不隐藏。②`onScroll` / `onResize` 都接上重算。③滚动时**直接跳位**（取消在跑的缓动、把 `x/y` 赋成目标），不给 22% 阻尼——滚动是内容整体位移，光标属于内容，缓动会变成「内容滚过去了，光标飘过来」，反而更假。④`onScroll` 是一行一行触发的，直接量 DOM 等于每行强制一次 layout；`_cursorSnap()` 用 rAF 合并，一帧最多一次，`seq 1 5000` 不卡。⑤行号仍用 `cursorY + baseY - viewportY`，列用 `cursorX`，与字体/缩放/尺寸无关；越界 `display:none`，滚回来自动出现。⑥`dispose()` 一并取消 `snapRaf`。⑦文档 §5.7 写清三个事件的分工与「为什么滚动不缓动」。 |
@@ -3027,10 +3029,10 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 | 0.0.1.7 | 2026-11-03 | **看图修图（截图的下半场）**：①**新增 `build/58-image.js`**（`ImageApp`）——Canvas 2D 看图与修图：适应 / 1:1 / ±缩放（Ctrl+滚轮围绕指针缩放）、拖拽平移、裁剪（拖框松手即裁，按取整后的边相减，避免半像素偏一格）、左转/右转 90°、水平/垂直翻转、按宽度等比缩放；五种标注（矩形 / 箭头 / 画笔 / 文字 / 打码）共用同一套 `_shape`，预览与落笔不会「看到一种、得到另一种」；每条线先画 2px 半透明暗边再上色，红色标注落在红色按钮上也看得见；Alt+点击取色（写回颜色选择器）、Ctrl+V 粘贴剪贴板图片、Ctrl+Z / Ctrl+Shift+Z 撤销重做；导出 PNG/JPEG/WebP（JPEG 先铺白底，否则透明区变黑），存 `.home` 用原名 + `-edit`，第二次保存覆盖自己的副本，不碰原图。②**撤销用快照、不用操作日志**——每种工具写逆运算容易漏，快照更短；按像素数限步（<1.5MP 16 步、<4MP 8 步、更大 4 步），内存上限写死。③**和截图接起来**——截图窗口加「编辑」按钮（拍完才可用，按当前格式生成文件名），点开即在同一张图上改。④**文件管理器**——图片双击进看图、选中出缩略图（不再只写「[二进制] 12 KB」）；显示名用 `spotExportName` 还原，存储名与路径不变。⑤**拖拽**——外部文件拖到看图窗口 = 落 `.home` 并立刻打开；从文件管理器拖图过来直接打开。⑥**修**——`contentToDataUrl` 只认 Blob/ArrayBuffer，`FS.write` 存进去的 `Uint8Array` 会被 `String()` 拼成 `137,80,78,…`，导致「自己存的 PNG 自己打不开」；现在认 `ArrayBuffer.isView`。⑦文档 §7 / §15 / §3，版本 4 个文件。⑧空状态图标改内联 SVG 后忘了写尺寸，被撑成 190px 把文字全顶出可视区——补 `.ie-ico svg{width:52px;height:52px}`。 |
 | 0.0.1.6 | 2026-11-03 | **沙箱工具集 + 真实页面实测 + 理念章节**：①**十个工具**（`build/55-tools.js`、`56-data.js`、`57-color.js`，共约 1900 行，全部自研）——**计算器**（递归下降解析 `expr/term/unary/power/postfix/primary`，不用 `eval`；`2^3^2` 右结合、`5!`、`log(2,8)`、`sin(30)` 走 DEG/RAD、记忆 M+/M−、40 条历史、键盘直输）；**数据**（编码互转：文本/UTF-16/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体；时间戳 + `Intl` 多时区 + 相对时间；哈希 SHA-1/256/384/512 + 自写 MD5 + 期望值比对 + 文件哈希；随机：字符串/hex/bytes/int/uuid/分组密码，`crypto.getRandomValues` + 拒绝采样 + 熵估算）；**调色盘**（色相环 canvas 逐像素按当前亮度重绘、六种表示双向联动 HEX/RGB/HSL/HSV/CMYK/YUV/Lab、`EyeDropper`、从整页截图逐像素取色、WCAG 对比度、历史色存 localStorage）；**Markdown**（`marked` 懒加载 + 失败退内置迷你渲染器、`sanitizeHtml` 白名单清洗 `<script>`/`on*`/`javascript:`、渲染序号防旧盖新、导出 HTML/下载 .md）；**截图**（桌面/指定窗口/整文档、1–3×、PNG/JPEG/WebP、存 `.home` 或下载、复制图片）；**链接即状态**（文本/JS → `deflate-raw` + base64url 压进 `#`，`run=1` 打开时先弹确认框展示代码再执行）；**四个壳子**（录音机/定位/3D/音频：写明「计划怎么做」与「为什么先不做」）。②**CLI**（`25-compat.js`）——`b64/b32/hex/bin/dec/url/hash/rand/uuid/ts/mount/tools/tool`，与窗口共用主线程 `util.codec` / `util.hash`（Base32、MD5 只写一份）；`hash` 对不存在的文件回退成「把参数当文本」，不报「没有那个文件」。③**`sptm`（mount）占位**——第七个 syscall，注册进 FS/RPC/worker API，调用明确抛「还没做」，`mount` 命令可列五个内建挂载点；不假装成功的原因写在 §7。④**窗口/启动器**——`APP_DEFS` 加 10 项、`WindowManager._render` 加分支、`TYPE_TITLES/TYPE_SIZE` 补齐、启动器加「工具」分组（维护中的置灰带标签）并支持滚动。⑤**真实页面实测**——把 2048、WinBox、98.css、three.js、Chart.js、p5.js、lodash 下到**仓库之外**的临时目录跑起来（见 §8.1 致谢），2048 能玩、WinBox 能在窗口里再开窗口、Chart.js 曲线在动、p5.js 流场在跑、lodash 在 Worker 里 `eval` 后 `_.camelCase` 正常。⑥**自举**——把 `index.html` 用静态服务跑起来、塞进自己的小浏览器，内层 `2+3` → 5、`hsl('uname -a')` → `HTerMinaL 0.0.1.6`、`hsl('ls')` → `readme welcome`。⑦**README**——新增 §15 工具、§16 设计理念（原文照录）、§8.1 致谢开源、§7 `sptm` 说明、§11 API、开发日志/操作记录/踩坑。⑧**修**——计算器 `.calc-pad` 忘了 `grid-template-columns`（按钮排成 4 列、顺序全乱）；`ensureMarked()` 没缓存 Promise，输入时每个字都重新拉一次 CDN；`MdApp.render()` 无序号，慢的旧渲染会盖掉新内容。 |
 | 0.0.1.5 | 2026-11-03 | **窗口间拖拽 + 小浏览器一键存网页**：①**`DragBus` 拖拽信道**——同一文档里所有窗口共用一份 `{items}`，`dragenter/dragover` 阶段就能读（`dataTransfer` 的内容要等 `drop` 才允许读），所以「拖到哪个窗口先亮」才做得到；`dataTransfer` 里同时写 `application/x-ht-spot`（JSON）与 `text/plain`，管跨进程与变量丢失时的兜底。②**文件管理器 ↔ 文件管理器**——每行 `dragstart` 发布 `{kind:'spot', path, name}`，落点调 `dropIntoDir()` 复制（目录整棵递归）；**按住 Shift = 移动**；同目录拖出 `name-2`；拖进自己内部直接跳过。③**多窗口**——文件管理器工具栏加 `⧉`：同目录再开一个窗口，两个窗口并排互相拖；窗口本来就是一个 `FilesApp` 实例一个 `path`，互不共享状态。④**文件 → 智能体**——`addItems()` 从 spotfs 读内容：图片转 dataURL、文本内联（≤256 KB）、二进制提示用 `read_file`，仍受「一次最多 6 个附件」约束。⑤**文件 → 终端**——`TerminalSession.insert()` 用括号粘贴（`\x1b[200~…\x1b[201~`）把路径插进命令行**不执行**；从系统拖文件到终端则先导入它当前 `cwd` 再粘路径。⑥**文件 → 浏览器**——`BrowserApp.openPath()`：html/text 直接渲染、图片按图片显示、其它交给编辑器窗口。⑦**浏览器标签 → 文件管理器 / 智能体 / 终端**——标签 `draggable`，携带 `{kind:'page', name, url, html}`（跨域时 `html:null`）：落到文件管理器存 `<标题>.html`（跨域存跳转页），落到智能体当附件，落到终端粘地址。⑧**小浏览器一键保存**——`br-bar` 新增「保存」（写进 spotfs 的 `.home`，撞名自动 `-2`）与「下载」（落本机磁盘），`pageHtml()` 用 `contentDocument.documentElement.outerHTML`，跨域读不到时存跳转页并如实提示；标题已带 `.html` 不会变成 `.html.html`。⑨**iframe 吃事件的解法**——拖拽期间给 `body` 挂 `drag-internal`，`.br-shield` 盖住 iframe，`drop` 才能回到父文档；`dragend` 之外补 `blur` / `visibilitychange` 清场，避免遮板卡住把小浏览器挡死。⑩**落点提示**——所有落点统一 `data-drop` + `::after` 小标签（「复制到 .bin」「粘贴路径」「在浏览器里打开」「附加到对话」），不用靠猜。⑪**实测**——两个 FM 窗口各 3/4 行、A→B 复制后两边都在、Shift 后源消失、目录 `.home.sub` 整棵复制到 `.bin`、同目录得到 `.home.one-2`；拖到桌面终端与终端窗口都出现 `.home> .home.alpha`（未执行）；拖到浏览器 `srcdoc` 含文件内容；标签→FM 生成 `.bin.-xxpage-2dhtml-2ehtml`、标签→智能体附件 `测试页.html` 且正文含 `HELLO`；保存生成 `.home.-xxpage-2dhtml-2ehtml`；遮板 `display:block` 且 drop 后 `body.drag-internal` 归位；无 pageerror。 |
-| 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSL 进来就回 HSL）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
+| 0.0.1.4 | 2026-11-02 | **修「TUI 智能体进去就自己退出来」**：①**根因**——`agentTui.open()` 只 `out()` 了一个横幅，`state.mode` 还是 `jshel`、提示符还是 `.home> `，所以下一行立刻回到 JS 求值；用户看到的就是「进去一下就闪退，进不了交互环境」。它从来就不是一个模式，只是打印了一句话。②**改成真正的第三种模式**——`mode` 取值 `jshel` / `hsl` / `agent` 三选一，提示符分别 `.home> ` / `.home $ ` / `agent> `；`open()` 把 mode 置 `agent`、记住进来之前那一层（`_back`，HSB 进来就回 HSB）、重画提示符。③**一行的分派**——`onSubmit` 先看 mode：`agent` 整行交给 `agentTui.line()`，`hsl` 交给 COMPAT，其余走 `api.run()`；三路互不猜。④**agent 内建命令**（`:q`/`exit`/`:quit`、`:stop`、`:new`、`:clear`、`:help`），`:help` 打印快捷键表；非 `:` 开头一律当消息发给模型。⑤**退出与中断**——`:q`/`exit`/`Ctrl+D` 回原来那一层（Ctrl+D 走新加的 `onCtrlD` 钩子，不再关掉终端）；`Ctrl+C` 走新加的 `onInterrupt` 钩子 → `agent.stop()` → 主线程 `AbortController.abort()`，实测 0.7 秒停下并回到提示符，而不是等 240 秒超时。⑥**渲染重写**——`⠋⠙⠹…` 帧动画 + 已用秒数的「思考中」；回答按显示宽度折行（中日韩算 2 列）；工具调用画 `→ 名字 参数` / `← 名字 结果`；`system` 备注（重复防护的警告）单独用黄色 `⚠` 显示，`error` 用红色 `!`；每轮末尾一行 `─ 1.4s · 2 次工具调用`；没有输出时才写「（没有输出）」。⑦**不再回显返回值**——`open()` 返回 `undefined`（以前返回 `'agent'`，REPL 会在横幅下面多打一个孤零零的 `agent`，看着像报错）。⑧**实测**——`agentTui.open()` 后提示符变 `agent> ` 并停住；`:help`/`:q` 正确；未配置后端时错误显示在 TUI 里且**不退出**；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；`Ctrl+C` 0.7s 中断；`agentTui.open()` 重复进入走「已经在 agent 里」；窗口版 `agentOpen()` 仍正常存活。 |
 | 0.0.1.3 | 2026-11-02 | **拖拽导入/导出 + spotfs 节点文件系统**：①**拖进来 = 导入**——外部文件拖到窗口出现全屏虚线遮罩（图标浮动动画 + 「松手导入到 X」），松手即进 spotfs：智能体输入框 → `.queryfile` 并挂到对话，文件管理器 → 当前目录，其它地方 → `.home`；`dragenter/leave` 用计数避免闪。②**拖出去 = 下载**——文件管理器每行 `draggable`，`pointerdown` 预读成 Blob URL，`dragstart` 同步 `setData('DownloadURL', 'mime:原名:url')`，拖到桌面/资源管理器即落盘。③**spotfs 六个 syscall**——`sptc`(cover，只覆盖不新建) / `sptn`(new，`.queryfile` 下=向用户要文件、`.savefile` 下=关闭时保存) / `spta`(append) / `sptx`(execute:JS/HTML/对象/目录/权限/包/设备，自动判别) / `sptr`(read:内容或索引) / `sptd`(delete:文件/目录递归/进程结束)；worker 侧 `sptx` 把「动作描述」落地（编译执行 JS、开浏览器、`cd`、请求权限、`kill`）。④**名字转义**——UTF-8 字节级：字母数字原样，其余（`-` `_` `.` `/` 空格 中文 控制符）写 `-HH`，首位数字也转义，整体加 `-xx` 哨兵；导出反向解析，目标系统不接受的字符保留 `-HH`；`checkName` 放行 `-xx…` 转义名；`normPath` 一律小写，所以哨兵/十六进制在存储层是小写（解析时大小写都认）。⑤**`.savefile`**——新建并写入，关闭/删除时 `saveFileRaw(原名)` 导出后节点消失。⑥**统一入口**——`importFiles()` 被拖拽、上传、`askFile` 复用；`saveFileRaw` 专用于导出（不走 `sanitizeName`，否则会把 `-xx` 前的短横线剥掉）。⑦**文档/种子**——`.home.readme` 改写为 spotfs 世界观（六操作、转义、`.savefile`）；README 第 7 章新增 spotfs / 转义 / 拖拽三节，第 11 章补 `spt*`。⑧**实测**——转义往返 `hello world.txt ↔ -xxhello-20world-2etxt`、`a/b.txt → a-2Fb.txt`（导出）、`readme` 原样、`123abc ↔ -xx-3123abc`；六 syscall 覆盖/新建/追加/读/删/目录索引全对，`sptc` 对不存在、`sptn` 对已存在都正确报错；`.savefile` 存在→`saveOnClose`→导出删除；文件管理器 drop 生成 `-xxhello-20world-2etxt`、`#desk` drop 生成 `-xxg-20note-2emd`、智能体 drop 进 `.queryfile` 且附件 +1；遮罩显隐、`DownloadURL=text/plain:export me.txt:blob:…` 均正确。 |
 | 0.0.1.2 | 2026-11-02 | **智能体「重复生成防护」**：①在 harness 循环里新增**输出签名**（`_turnSig`）——带工具调用时压成「工具名(参数指纹)」链，纯文本取正文前缀；连续三次签名相同判定陷入重复循环。②第 3 次重复时**卡断本轮**（不再执行这一轮的工具调用/文本），并**自动以 user 身份向模型追问一句「【自动检查】你已连续 3 次输出基本相同的内容，疑似陷入重复循环……请改用不同参数或换工具，不要重复刚才完全相同的动作」**，然后让它带着追问继续跑（reset 后从 0 重数，不每轮都追问）。③`AGENT_SYSTEM` 补一句：收到「连续 3 次重复输出」提示时立刻换思路而非继续重复。④`messages` 里插入的「⚠ 已连续 3 次输出相同内容」是 `system` 角色、只渲染给用户看（`render()` 走 `msg sys` 样式），**不进发给模型的请求**（`apiMessages()` 跳过 `system`）；追问句是 `user` 角色，正常发。⑤把过去散落的「去重」收口——单轮内同工具同参数 `seen>=2` 不重执行、连续相同正文 `_pushAssistant` 折叠、跨轮相同签名 `REPEAT_LIMIT=3` 卡断追问，三层各管一段。 |
-| 0.0.1.1 | 2026-11-02 | **把「自作聪明」的地方全部退回浏览器，把「学不像」的地方全部删掉**：①**原生 API 一律转发，不重造**——`alert`/`confirm`/`prompt`/`open`/`print`/`close`/`focus`/`blur`/`stop`/`scrollTo`/`scrollBy` 在 Worker 里都没有，现在统一走 `native` RPC 转回主线程调 `window[name]` 本人：`alert` 是浏览器弹窗（不是 toast）、`confirm` 是浏览器确认框（返回真的 `true/false`）、`prompt` 是浏览器输入框、`print()` 真的开打印对话框、`window.open` 真的开新标签。`NATIVE_ALLOWED` 白名单之外的转发直接抛错；顺手删掉 `globalThis.print = (...a) => out(...)`——那条一直在抢注打印对话框。两条物理限制写进文档：跨线程没有同步通道（要 SAB + COOP/COEP，`file://` 必然没有），所以 `confirm`/`prompt` 返回 Promise；`window.open` 返回 `WindowProxy`，克隆不回来只能给 `null`。②**JSHeL 与 HSL 彻底分家**——删掉 `isShellLine()` 那套「首词猜」：它让同一行代码的行为取决于命令表里恰好有没有同名命令。现在 `state.mode === 'hsl'` 整行交 COMPAT，否则只走 `api.run()`（纯 JS）。JSHeL 里敲 `ls -la` / `nano readme` 是 `SyntaxError` / `ReferenceError`，外加一句「X 是 HSL 命令，`hsl()` 进 shell」。③**HSL 嵌套改用栈**——`HSL: [{cwd, env}]`，`hslPush()` 压栈、`hslPop()` 弹栈并恢复 cwd + `ENV`；`exit` 弹一层，退到空才回 JSHeL。老版把模式存成布尔量，第二次进入只是把同一个标记又设一遍（提示符不变、`exit` 一次退到底、进去前改过的目录回不来）——**布尔量表达不了「第几层」**。④**删掉没有意义的移植**——`apt`（这里不是 Debian）、`ping`（浏览器不发 ICMP）、`bash`/`sh`（GPL 且学不像）、`su`/`sudo`（单用户最高权限）、`npm`/`pip`（只会打印一行的桩）、`chmod`（没有权限位）；**`zsh` 彻底删除**（含许可证段落）——「学的不像那么干脆彻底不学了」，交互层改名 **HSL** 并由 `def('hsl')` 提供。⑤**文件系统删掉 rwx**——`ls -l` 改成 `kind  size  mtime  name`（`dir`/`file`/`func`/`app`/`dev`/`pkg`），画一排 `-rw-r--r--` 只会让人以为 `chmod` 有用；`.perm` 的语义从「权限位」正名为「授权申请单」（摄像头/通知）。⑥**新增 `fastfetch` / `neofetch`**——`sysFacts()` 现场汇总 `sys.info` + `fs.usage` + `proc.list` + `.pkg`，六行 ASCII logo，拿不到的字段写 `n/a` 不编；`--no-logo` 只要文字。⑦**`vim` / `nano` 重写**——DECSET 1049 备用屏 + **按绝对坐标逐行重画**（`\x1b[{n};1H\x1b[2K`，一个换行符都不发）：内容高度等于终端高度时，末尾那个 `\r\n` 会触发滚动把整屏顶上去一行，nano「显示不正常」就是这个；顶栏/状态栏改用显式配色 `\x1b[100;97m`（SGR 7 反显换的是默认前景/背景，浅色主题下就是黑字压深底）；中文按显示宽度排版（`CW`/`dw`/`sliceW`/`padW`/`skipW`/`xToCol`），中英混排不再错行；`LineEditor` 两处 `finally` 加 `&& !this.raw`，全屏期间不再补提示符（否则 `.home $ ` 正好盖在标题栏上）；`resize` 时重画全屏应用。⑧**支持鼠标**——DECSET 1000 + 1006（SGR 坐标），正则认 `\x1b[<b;x;yM/m`：点正文哪一行哪一列光标就到哪（按显示宽度反算列），滚轮上下滚三行；退出顺序不能反：`[?1000l[?1006l[?25h[?1049l`（先关鼠标报告再离开备用屏）。⑨**对话持久化**——新增 `AgentStore`（独立库 **`ht-agent`**：`sessions` keyPath `id`、`messages` keyPath `['sid','seq']` + `sid` 索引）；> 40 KB 的 dataURL 自动转 Blob 存，读回再转回；**先 prepare 再开事务**（事务里 `await` 会让事务提前提交，抛 `TransactionInactiveError`），事务回调只做同步 `put/delete`；800 ms 防抖 + 轮末/清空/导入/关窗 `flushSession()`；首次启动从 `.agent.session` JSONL 迁移一次，之后那份只作可导出镜像；`AgentTuiHost.status()` 改走 `HeadlessAgent.ensure()`，没开过 TUI 也能看到历史条数。⑩**产品名统一为 `HTerMinaL`**——按 `\bhterminal\b(?!\s*[./])` 全仓替换，避开路径与文件名（`X-HTerm-Client` 这类 HTTP 头值不算展示文案，保留）。⑪**文档**——5.1 整节改写为 HSL（JSHeL vs HSL 对照、嵌套栈、支持能力、命令表、路径按 cwd、全屏应用、fastfetch、「没有 rwx」、「删掉的没意义移植」表）；新增 5.3「原生 API：只转发，不重造」；第 6 章开头写明「不是 ext4：没有 inode、没有 rwx、没有属主」；踩坑 `29 → 36`。⑫**实测**——`alert`/`confirm`/`prompt` 被 Playwright 的 `dialog` 事件捕获为 `alert:hello native` / `confirm:really?` / `prompt:name?`（证明是浏览器自己的框）、`1+1`→`2`、`ls -la`→`SyntaxError`+指路、`hsl('ls -la')` 正常、`hsl('uname')`→`HTerMinaL`、`hsl`→`cd /`→`hsl`→`exit` 回到第 1 层且目录回 `.home`→`exit` 回 JSHeL、10 条删掉的命令在 `help` 里全部消失、`fastfetch` 九项信息全真值、nano 点第 5 行第 8 列后输入落点正确、vim `:wq` 后 `cat` 内容正确、刷新后智能体显示「已恢复 4 条消息（最后更新 …）」。 |
+| 0.0.1.1 | 2026-11-02 | **把「自作聪明」的地方全部退回浏览器，把「学不像」的地方全部删掉**：①**原生 API 一律转发，不重造**——`alert`/`confirm`/`prompt`/`open`/`print`/`close`/`focus`/`blur`/`stop`/`scrollTo`/`scrollBy` 在 Worker 里都没有，现在统一走 `native` RPC 转回主线程调 `window[name]` 本人：`alert` 是浏览器弹窗（不是 toast）、`confirm` 是浏览器确认框（返回真的 `true/false`）、`prompt` 是浏览器输入框、`print()` 真的开打印对话框、`window.open` 真的开新标签。`NATIVE_ALLOWED` 白名单之外的转发直接抛错；顺手删掉 `globalThis.print = (...a) => out(...)`——那条一直在抢注打印对话框。两条物理限制写进文档：跨线程没有同步通道（要 SAB + COOP/COEP，`file://` 必然没有），所以 `confirm`/`prompt` 返回 Promise；`window.open` 返回 `WindowProxy`，克隆不回来只能给 `null`。②**JSHeL 与 HSB 彻底分家**——删掉 `isShellLine()` 那套「首词猜」：它让同一行代码的行为取决于命令表里恰好有没有同名命令。现在 `state.mode === 'hsl'` 整行交 COMPAT，否则只走 `api.run()`（纯 JS）。JSHeL 里敲 `ls -la` / `nano readme` 是 `SyntaxError` / `ReferenceError`，外加一句「X 是 HSB 命令，`hsl()` 进 shell」。③**HSB 嵌套改用栈**——`HSB: [{cwd, env}]`，`hslPush()` 压栈、`hslPop()` 弹栈并恢复 cwd + `ENV`；`exit` 弹一层，退到空才回 JSHeL。老版把模式存成布尔量，第二次进入只是把同一个标记又设一遍（提示符不变、`exit` 一次退到底、进去前改过的目录回不来）——**布尔量表达不了「第几层」**。④**删掉没有意义的移植**——`apt`（这里不是 Debian）、`ping`（浏览器不发 ICMP）、`bash`/`sh`（GPL 且学不像）、`su`/`sudo`（单用户最高权限）、`npm`/`pip`（只会打印一行的桩）、`chmod`（没有权限位）；**`zsh` 彻底删除**（含许可证段落）——「学的不像那么干脆彻底不学了」，交互层改名 **HSB** 并由 `def('hsl')` 提供。⑤**文件系统删掉 rwx**——`ls -l` 改成 `kind  size  mtime  name`（`dir`/`file`/`func`/`app`/`dev`/`pkg`），画一排 `-rw-r--r--` 只会让人以为 `chmod` 有用；`.perm` 的语义从「权限位」正名为「授权申请单」（摄像头/通知）。⑥**新增 `fastfetch` / `neofetch`**——`sysFacts()` 现场汇总 `sys.info` + `fs.usage` + `proc.list` + `.pkg`，六行 ASCII logo，拿不到的字段写 `n/a` 不编；`--no-logo` 只要文字。⑦**`vim` / `nano` 重写**——DECSET 1049 备用屏 + **按绝对坐标逐行重画**（`\x1b[{n};1H\x1b[2K`，一个换行符都不发）：内容高度等于终端高度时，末尾那个 `\r\n` 会触发滚动把整屏顶上去一行，nano「显示不正常」就是这个；顶栏/状态栏改用显式配色 `\x1b[100;97m`（SGR 7 反显换的是默认前景/背景，浅色主题下就是黑字压深底）；中文按显示宽度排版（`CW`/`dw`/`sliceW`/`padW`/`skipW`/`xToCol`），中英混排不再错行；`LineEditor` 两处 `finally` 加 `&& !this.raw`，全屏期间不再补提示符（否则 `.home $ ` 正好盖在标题栏上）；`resize` 时重画全屏应用。⑧**支持鼠标**——DECSET 1000 + 1006（SGR 坐标），正则认 `\x1b[<b;x;yM/m`：点正文哪一行哪一列光标就到哪（按显示宽度反算列），滚轮上下滚三行；退出顺序不能反：`[?1000l[?1006l[?25h[?1049l`（先关鼠标报告再离开备用屏）。⑨**对话持久化**——新增 `AgentStore`（独立库 **`ht-agent`**：`sessions` keyPath `id`、`messages` keyPath `['sid','seq']` + `sid` 索引）；> 40 KB 的 dataURL 自动转 Blob 存，读回再转回；**先 prepare 再开事务**（事务里 `await` 会让事务提前提交，抛 `TransactionInactiveError`），事务回调只做同步 `put/delete`；800 ms 防抖 + 轮末/清空/导入/关窗 `flushSession()`；首次启动从 `.agent.session` JSONL 迁移一次，之后那份只作可导出镜像；`AgentTuiHost.status()` 改走 `HeadlessAgent.ensure()`，没开过 TUI 也能看到历史条数。⑩**产品名统一为 `HTerMinaL`**——按 `\bhterminal\b(?!\s*[./])` 全仓替换，避开路径与文件名（`X-HTerm-Client` 这类 HTTP 头值不算展示文案，保留）。⑪**文档**——5.1 整节改写为 HSB（JSHeL vs HSB 对照、嵌套栈、支持能力、命令表、路径按 cwd、全屏应用、fastfetch、「没有 rwx」、「删掉的没意义移植」表）；新增 5.3「原生 API：只转发，不重造」；第 6 章开头写明「不是 ext4：没有 inode、没有 rwx、没有属主」；踩坑 `29 → 36`。⑫**实测**——`alert`/`confirm`/`prompt` 被 Playwright 的 `dialog` 事件捕获为 `alert:hello native` / `confirm:really?` / `prompt:name?`（证明是浏览器自己的框）、`1+1`→`2`、`ls -la`→`SyntaxError`+指路、`hsl('ls -la')` 正常、`hsl('uname')`→`HTerMinaL`、`hsl`→`cd /`→`hsl`→`exit` 回到第 1 层且目录回 `.home`→`exit` 回 JSHeL、10 条删掉的命令在 `help` 里全部消失、`fastfetch` 九项信息全真值、nano 点第 5 行第 8 列后输入落点正确、vim `:wq` 后 `cat` 内容正确、刷新后智能体显示「已恢复 4 条消息（最后更新 …）」。 |
 | 0.0.1.0 | 2026-11-02 | **里程碑：初步制作阶段收尾——把「说得到但做不到」的地方全补上**：①**`.bin` 里写代码就是函数**——`FS.write` 以前无条件把 kind 设成 `file`，于是 `write('.bin.hi','return 42')` 之后 `exec('.bin.hi')` 必然报「不是可执行对象」；现在新建 `.bin.*` 默认 `kind:'func'`，改写已有文件保留原 kind（用 vim 改函数不会把可执行位弄丢）。②**补 `chmod +x / -x`**——README 的兼容层命令表里一直有它，实现里没有。③**`sudo <cmd>` 输出打两遍**——内层已经把 stdout 打到终端，外层又按 `res.out` 打一次；现在只带退出码。④**终端里敲 `nuke()` 是 `nuke is not defined`**——README 让用户这么干，但 Worker 里根本没这个函数；新增 `nuke.run` RPC，确认框、清库、重载全走主线程。⑤**README 第 11 节那张「挂在 window 上的标准函数」表大面积对不上**——`remove`/`move`/`copy`/`openWindow`/`closeWindow`/`listWindows`/`openURL`/`threads`/`settings` 全是 undefined；补齐长名别名与 `settings.set/all`、`threads.list/kill` 的 RPC。⑥**兼容层补 5 条只写在文档里、没实现的命令**——`sleep`（此前落到 JS 的 `sleep(ms)`，`sleep 2` 只等 2 毫秒）、`rev`、`tee`、`stat`、`xargs`；`diff` 遇到不存在的文件不再「无差异 exit 0」。⑦**页面被 `document.write` 拆掉后的两个崩溃点**——`Drawer.refresh` 在 `await` 回来后 `$('#stUsage')` 已是 null（实测一条 `Cannot set properties of null`），`checkBackend` 同理；统一走 null 安全的 setter。⑧**`file://` 与后端的关系写清楚**——`null` Origin 和恶意 sandbox iframe 无法区分，0.0.0.5 的拒绝是对的，但前端不该再盲发请求；`checkBackend` 直接显示「file:// 下不可用」，智能体报错文案给出两条出路。⑨**版本号残留**——`build/10-body.html` 与 `build/20-worker.js` 里硬编码的 `0.0.0.2` 改成占位符 `—`，`boot()` 第一件事注入 `HT_VERSION`，启动屏第一帧就是对的号。⑩**`askFile` 保留扩展名**——`hello.txt` 以前被剁成 `hello`，`a.txt` 与 `a.md` 会撞；现在 `hello-txt`。⑪**`require` 回显不再刷屏**——ESM 命名空间对象只显示 `Module(322 exports) { … }`；README 示例改成 `const _ = await require('lodash-es@4')`（`require` 从来不会偷偷塞全局 `_`）。⑫**Python 的 `Ctrl+C` 说明改成实话**——Pyodide 与终端同 Worker、没有 SAB 就没有中断通道，`while True` 只能刷新页面，启动横幅与 README 都写明。⑬**文档对齐**——踩坑条数 `17 → 29`、页脚版本 `0.0.0.2 → 0.0.1.0`、`00-head` 与 `.sys.license` 的第三方清单补全到 6 项。⑭实测：`.bin` 写入即执行（42）、`chmod +x/-x` 可逆、`sudo echo` 只打一次、`nuke()` 确认后 `.home` 只剩种子文件、9 个长名 API 全部 exists、5 条新命令与管道组合正确、`askFile` 产出 `.queryfile.hello-txt`、`require` 回显一行、`0.0.1.0` 在启动屏与抽屉里都对、s1–s14 关键项回归无 pageerror。 |
 | —（文档/许可证） | 2026-11-02 | **第三方许可证补齐，加机器校验**：①审计出三个**一直在用却没登记**的依赖——`@xterm/addon-unicode11@0.8.0`（MIT，同 xterm 仓库）、`marked@12.0.2`（MIT）、`html2canvas@1.4.1`（MIT），补 `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`，`LICENSE.xterm.js.txt` 覆盖两个 addon；`licenses/README.md` 与本文第 11 章的表同步补齐。②新增 **`check-licenses.sh`**：扫 `build/*.js` 与 `index.html` 里所有 `npm/`、`unpkg.com/` 形式的 CDN 地址（含版本号是变量的写法），比对登记表，缺一行 exit 1；同时校验表里引用的 `LICENSE.*.txt` 文件真的存在。③修 `licenses/README.md` 里过期的「Markdown 渲染：不渲染」——现在用 `marked` 渲染 + 自研 `sanitizeHtml()` 白名单消毒，两件事分工写在表里。④页脚版本号从 `0.0.0.2` 修到 `0.0.0.5`（此前漏改）。⑤实测：真依赖 6 项全「已登记」exit 0；临时塞一个 `left-pad@1.3.0` 进去，脚本报「缺失 ✗」exit 1。 |
 | 0.0.0.5 | 2026-11-02 | **后端安全加固（三份实现同步）**：①**`Origin: null` 从「放行」改成「拒绝」**——`file://`、`data:`、sandbox iframe 的 Origin 都是 `null`，以前放行等于任何网站都能用 `<iframe sandbox srcdoc="fetch('http://127.0.0.1:8787')">` 打本地端口。②**新增 `Sec-Fetch-Site: cross-site` 拒绝**——浏览器自己打的标，页面改不了，直接堵死「公网网页 → 本地端口」。③**CORS 头只在 Origin 通过校验后回显**，不再对任意 Origin 回 `Access-Control-Allow-Origin`，也不发 `Allow-Credentials`；`OPTIONS` 必须带 Origin。④**每个响应都带安全头**：`X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Cross-Origin-Resource-Policy: same-origin`、`Cross-Origin-Opener-Policy: same-origin`、`Permissions-Policy`。⑤**`POST` 要求 `Content-Type: application/json`**（否则 415），堵掉 `text/plain`/`form-urlencoded` 这类不预检的简单请求。⑥**被拒请求在 stderr 留一行 `deny origin/host/fetch-site`**。⑦实测（curl，三份后端一致）：正常 200、`Origin: https://evil.com` 403、`Origin: null` 403、本机 Origin 200 且 ACAO 回显、`Sec-Fetch-Site: cross-site` 403、`Host: evil.com` 403、`text/plain` POST 415、`/etc/passwd` 403；页面响应含全部安全头。 |
@@ -3050,25 +3052,25 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 | 2026-11-03 23:05 | 0.0.1.16：后端内部渗透测试（84 项）与加固 | `modelserver.py`（`Server` 类：backlog 128 / 128 并发上限 / 503；`Handler.timeout=15`、`sys_version=""`、`version_string`、`get_all` 拒重复头、非 dict body、provider 类型、`parse_constant`、BrokenPipe）、`modelserver.js`（body 形状、headersTimeout/requestTimeout/maxConnections）、`modelserver.go`（`Values` 拒重复头、`body == nil`、IdleTimeout、MaxHeaderBytes）、`build/30-core.js` + 三份后端版本号、`README.md`（§13 自测记录、踩坑 60–62、日志） | 原始 socket 构造 84 项：访问控制 16 / 路由 18 / 解析 15 / 泄露 5 / SSRF 30 / 韧性 6。修复前 8 项 FAIL；修复后全过。并发 200：7.05 s→0.06 s，p95 5428 ms→29 ms；半开连接 15.0 s 被断开；100 个占住连接下正常请求 9 ms；三份后端对 `null`/`[]`/重复头行为一致（400/400/403）；前端启动无 pageerror，版本 0.0.1.16 | 本轮 |
 | 2026-11-03 22:10 | 0.0.1.15：光标滚出画布隐藏、智能体 403 / 抓新闻、四个维护中工具完成 | `build/40-term.js`（`.xterm-viewport` 监听、隐藏时 `init=false`、四工具接入、窗口尺寸）、`build/00-head.html`（媒体工具样式）、`build/59-media.js`（新增：Recorder/Geo/View3D/Audio）、`build/55-tools.js`（删 `MaintApp` 壳子）、`build/30-core.js`（APP_DEFS 描述、版本）、`build/60-agent.js`（`rawFetch`/`readable`/`agentNews`、`news` 工具、`AGENT_ENV`、保存路径）、`build.sh`（拼入 59-media）、`modelserver.{py,js,go}`（`/v1/fetch` + SSRF、头值大小写、`Permissions-Policy`、版本）、`README.md`（§0、§12、§13、§15、踩坑 54–59、日志） | Playwright：真实 DeepSeek 后端（`deepseek-flash`）「给我抓取最近10条新闻」→ 一次 `news` 调用、3.3 s 返回 10 条，窗口版排版成表格；TUI `agentTui.open()` 同一任务 6.9 s 出结果、`agent>` 提示符只有一条、光标落在提示符后（`cy=23 rows=24`）；滚轮上滚 `display:none`、回滚 `display:block`；录音 15.4 KB webm 落盘、波形绘制 447 px；定位 31.2304/121.4737 ±18 m 并存 `.home.geo-json`；音频波形 900 桶、播放 `currentTime=0.63`；3D 在 xvfb + swiftshader 下 58–60 fps、四种几何体索引数正确、拖动改变 yaw、线框/自转/复位正常；无 pageerror | 本轮 |
 | 2026-11-03 19:52 | 0.0.1.14：修「emoji 连字后光标偏右」（换 canvas 渲染器） | `build/40-term.js`（`CANVAS_JS` 双 CDN；`loadXterm` 去掉「齐了就 return」改为逐个补装；`_mount` 在 `open` 之后 `loadAddon(CanvasAddon)`，失败只 warn）、`licenses/README.md`（登记 addon-canvas 0.7.0，共用 `LICENSE.xterm.js.txt`）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2、踩坑 53、日志） | Playwright（无头 Chromium）：`👀` `🧑‍🦲` `👨‍👩‍👧‍👦` `🇨🇳` `👍🏽` `❤️` `1️⃣` 等 7 组，`cursorX − textEnd` 全 0；`.home> 👨‍👩‍👧‍👦哈哈` 光标 `left=152px`（19×8）与文本末尾齐平，像素扫描确认「哈哈」紧随 emoji、中间无空隙；47 列窄窗折两行、Home/End/退格正常；3000 行输出无卡顿；缩放 1200→820 后 `cols=96`、`cellW=8`；两个 jshel 窗口各自有 canvas、子窗口 `👨‍👩‍👧‍👦ab` 光标 `cx=17 left=136`；HarTMLes 窗口正常；`shot()` 截图 79 KB、终端文字与 emoji 均在图中；路由屏蔽 addon-canvas 后回退 DOM 渲染器、页面无报错；无 pageerror | 本轮 |
-| 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSL 切层/agent 退出回归无重复；无 pageerror | 本轮 |
-| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSL 三层进出、HSL 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSL 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |
+| 2026-11-03 18:52 | 0.0.1.13：修 emoji 光标跑偏（宽度表由 xterm 导出，Worker 不再自己数格子） | `build/40-term.js`（`termWidthTable()`：`unicodeService.wcwidth` 遍历导出 `{w2,w0}` 区间，全局缓存；`_spawn` 的 `init` 带 `wc`）、`build/20-worker.js`（`WC2`/`WC0` + `inRanges()` 二分、`charWidth` 优先查表、`init` 接收 `m.wc`、兜底补 ZWJ/VS16/U+20E3）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.2 宽度段落、踩坑 52、日志） | Playwright（无头 Chromium）：`👀/🧑/🧑‍🦲/👨‍👩‍👧‍👦/🇨🇳/👍🏽/❤️/1️⃣/©️/™️/🏳️‍🌈/👩‍💻` 等 15 组的`cursorX - textEnd` 全部 0（修前 `🧑‍🦲`=1、`👨‍👩‍👧‍👦`=3、`1️⃣`=1、`🏳️‍🌈`=1）；47 列窄窗输入含 4 个 emoji 的 28 字中文折两行，光标 `cx=17` 与文本结束列一致，Home→`cx=7`、End→`cx=17`、退格→`cx=15`；提示符/HSB 切层/agent 退出回归无重复；无 pageerror | 本轮 |
+| 2026-11-03 18:05 | 0.0.1.12：重复提示符（resize / 切层）+ `jshel` 嵌套入口 | `build/20-worker.js`（`reopen()` 先 `erase()`、`redraw()` 以 `\r` 开头、resize 分支清当前行且 `busy` 时跳过、`AUTO_CALL` 加 `jshel`、`kick()` 不再手动清 `_rows`）、`build/25-compat.js`（`def('jshel')`：可带目录，走 `shell.open`）、`build/40-term.js`（shell 窗口标题带 cwd，`onCwd` 同步）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`README.md`（§5.1、踩坑 50–51、日志）、`IDEAS.md`（标记已修） | Playwright（无头 Chromium）：1400→900 缩放后 `.home> abc` 只出现一次、光标 `cursorX=10`；连续 4 次缩放空提示符仍只有一个；缩放后继续输入 `def` 得到 `.home> abcdef`；HSB 三层进出、HSB 内 resize 均无重复；裸敲 `jshel` 窗口数 0→1、子窗口 `1+1`→`2`、HSB 里 `jshel` 0→1 并打印「新窗口 .home（独立会话，exit 关闭）」、`jshel(".home")` 再开一个；窗口标题 `终端 · .home`；无 pageerror | 本轮 |
 | 2026-11-03 16:32 | 0.0.1.11：智能体日志的工具结果/调用参数可展开 + 命名 HarTMLes | `build/60-agent.js`（`_foldState`、logEl 点击代理、`_foldOpen` / `_foldCard` / `_callChip`、`render()` 改折叠卡、工具结果截断加说明、`AGENT_ENV` 与默认人格写入名字）、`build/00-head.html`（`.msg.tool` / `.tc` 折叠样式，去掉 `max-height:180px`）、`build/40-term.js`（`TYPE_TITLES.agent`）、`build/30-core.js`（`APP_DEFS.agent`、版本）、`build/10-body.html`（桌面图标文案）、`build/20-worker.js`（TUI 横幅）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新增折叠卡小节、名字、日志） | Playwright（无头 Chromium，`http://127.0.0.1:8787`）：长结果（220 行 / 7589 字）默认收起、摘要 `js … 220 行 · 7589 字`、点开 `pre` 文本与原文逐字相同、重画后仍展开；短结果 `js 2` 默认展开、点一次收起后重画仍收起；参数卡 257 字默认收起、点开全文、重画保持；「复制」→ toast「已复制全文」；2× 截图确认摘要单行、字数右对齐、正文为正常前景色、无重叠/裁切；`node --check` 通过、无 pageerror | 本轮 |
 | 2026-11-03 16:07 | 0.0.1.10：JSHeL 求值器合一（终端 / js 工具 / hsl.run 同一份）+ TUI 中文折行重写 + 首屏 ETag | `build/21-shared.js`（新增：`charWidth` / `strWidth` / `stripAnsi` / `layoutInput` 之外的 `inspect` / `HTScript`）、`build/20-worker.js`（`LineEditor` 全量重绘：`layoutInput` / `erase` / `redraw` / `reopen` / `_stash`、`move` 按码点、`start`/`submit`/`submitText`/`Ctrl+C`/`Ctrl+L`/`resize`/`setRaw` 全部收敛、`agentWidth` 复用 `strWidth`、`execute()` 改调 `HTScript.run`、删本地 `inspect`/`ANSI`/`hoist` 副本）、`build/60-agent.js`（`js` 工具改调 `HTScript.run` + `describe`）、`build.sh`（`21-shared.js` 拼进两处）、`modelserver.py`（`serve_index` 加 `ETag`/`If-None-Match`/304、`no-cache`、`Last-Modified`）、`modelserver.js`（同）、`modelserver.go`（同，加 `crypto/sha256`、`encoding/hex`）、`build/30-core.js`（版本）、`README.md`（§5.0 铁律、§5.2 行编辑、§13 缓存、踩坑 46–49、日志） | Playwright（无头 Chromium）：**一致性** 17/18 用例终端与 `js` 工具输出逐字相同（`1+1`、`const a=1; a+1`→`2`、DOM→`<div#toast>`、`Map(1) { "a" => 1 }`、`0.1+0.2`、模板串、`typeof window`），唯一差异是抛错时终端打印而工具返回错误（展示层，符合「交互式/非交互式」例外）；**中文输入** 90×22 下 52 字长句折成 2 行、无残留、无重叠，左移 20 次插入 `XY` 落在正确位置，Home → `cursorX=7`、End → 末行末列、退格 10 次剩 `一`；**超一屏** 600 汉字（约 14 行）光标停在末行、退格正常、`Ctrl+U` 清空后回到 `agent> `（`cursorX=7`）；**等待缓冲** `busy` 时 `_stash('等待时打的字')` + 方向键（丢弃）+ `abc\x7f` → `_pending='等待时打的字ab'`，`reopen()` 后进 `buf`；**缓存** 首次 773 KB / 5 请求，刷新 **0.4 KB / 1 请求**（304），`curl -H 'If-None-Match'` 直连回 304/0 字节；无 pageerror | 本轮 |
 | 2026-11-03 15:35 | 0.0.1.9：终端光标跟随 buffer 坐标（滚动/缩放重算，越界隐藏） | `build/40-term.js`（`_initCursor` 接 `onScroll`/`onResize`、`_cursorSnap()` rAF 合并、`_cursorPlace(snap)` 跳位与取消缓动、`dispose` 清 `snapRaf`）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.7、日志、记录） | Playwright：150 行输出后光标在底部 `vRow=21 top=399`；上滚 5 行 `vRow=26 ≥ rows` → `display:none`；滚到顶仍隐藏；`scrollToBottom` 恢复 `top=399`；把光标上移 6 行后上滚 3 行，`top` 精确 +57（3×19px）、`vRow 15→18`；再上滚 30 行隐藏、回底恢复；输入 `echo 123` 后 `cursorX 7→15`、left 前移；`seq 1 3000` 后光标仍在底部可见、无 pageerror | 本轮 |
 | 2026-11-03 15:20 | 0.0.1.8：系统提示词分层（环境写死 + `.config.persona` 可改）+ `persona` 命令 | `build/60-agent.js`（`AGENT_ENV` / `AGENT_PERSONA_DEFAULT` / `AGENT_PERSONA_PATH`、`stripPersonaComments` / `agentSystemPrompt` / `loadAgentPersona` / `invalidateAgentPersona` / `ensureAgentPersonaFile`、`apiMessages()` 用 `this._persona`、`callModel()` 每次刷新、`write_file`/`delete_file` 拒写人格文件）、`build/70-boot.js`（RPC `agent.persona` get/set/reset、`agent.persona.edit`）、`build/25-compat.js`（`persona` 命令：show/edit/set/append/reset/path，管道输入）、`build/30-core.js`（版本）、`modelserver.{py,js,go}`（版本）、`README.md`（§12 新小节、日志、记录） | Playwright：打开智能体 → `.config.persona` 生成（582 B，含注释与「角色：」）；`agentSystemPrompt()` 以环境段开头、含「环境事实」「工作方式」、无注释行；`persona path` → `.config.persona`；`persona set 你是测试人格，只说实话。` 后文件为纯文本、生效提示词 `env + 自定义`；**真实请求**（拦截 `/v1/chat/completions`）的 `messages[0].content` 与本地拼装逐字相同；`execTool('write_file'/'delete_file', '.config.persona')` 均报错且文件未变；`persona reset` 恢复默认（含「角色：」「工作方式：」）；`persona append` 追加成功且默认段保留；人格清空为纯注释 → 提示词严格等于 `AGENT_ENV`；`persona edit` 打开编辑器窗口显示 `.config.persona`；无 pageerror | 本轮 |
 | 2026-11-03 15:05 | 0.0.1.7：看图修图（截图搭档）+ 文件管理器缩略图 + 修 `Uint8Array` 解码 | `build/58-image.js`（新增：ImageApp / `imgCanvas` / `imgCopy` / `normRect`）、`build/00-head.html`（`.ie*` 全套 + `.fm-imgcap`）、`build/10-body.html`（启动器加「看图修图」）、`build/30-core.js`（`APP_DEFS` 加 `image`、`contentToDataUrl` 认 typed array、`HT_VERSION`）、`build/40-term.js`（`_render` 分支 + `TYPE_TITLES/TYPE_SIZE`）、`build/50-apps.js`（FilesApp 图片预览 + 双击进看图 + 文件名还原显示）、`build/55-tools.js`（ShotApp「编辑」按钮与方法）、`build/70-boot.js`（`_dropTarget` 加看图落点、导入后 `loadPaths`）、`build/25-compat.js`（`tools` 清单加 `image`）、`build.sh`（拼入 58）、`modelserver.{py,js,go}`（版本）、`README.md` | Playwright（无头 Chromium）：空状态可见；载入 640×400 → meta `640×400`、缩放 100%；裁剪拖 25%→75% → `320×200`，Ctrl+Z → `640×400`；矩形标注像素 `[240,73,86]`（红 + 抗锯齿）；打码/两行文字无异常；右转 `640×400→400×640`，再左转还原；缩放填 320 → `320×200`；存 `.home` 得 `test-edit.png`；外部文件 drop → `.home.drop.png` 且窗口变 `48×32`；内部拖拽 `.home` 里的 400×300 → 窗口变 `400×300`；截图 `2880×1692` → 「编辑」开出第二个看图窗口；文件管理器出现缩略图、双击打开 `320×200`；缩放按钮 `100%→156%→100%`、重做成功；无 pageerror | 本轮 |
-| 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSL(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
+| 2026-11-03 14:20 | 0.0.1.6：十个工具（六个完整 + 四个壳）+ CLI + `sptm` 占位 + 真实页面实测 + 自举 + 理念章节 | `build/55-tools.js`（ToolKit/CalcParser/CalcApp/ShotApp/MdApp/MaintApp + `modalPrompt`/`pickFileInFs`）、`build/56-data.js`（编解码原语/Base32/MD5/DataApp/UrlHash/UrlHashApp）、`build/57-color.js`（ColorMath 六种互转/ColorApp/色相环/取色）、`build/00-head.html`（`.tl*`/`.calc*`/`.col*`/`.shot*`/`.uh*` 样式 + 启动器滚动与 `soon` 态）、`build/10-body.html`（启动器加 10 项）、`build/30-core.js`（`APP_DEFS` + `sptm`）、`build/40-term.js`（`_render` 分支 + 标题尺寸表）、`25-compat.js`（13 条命令 + `inputBytes`/`codec` 辅助）、`70-boot.js`（`util.hash`/`util.codec`/`fs.sptm` RPC）、`20-worker.js`（`sptm` 转发）、`build.sh`（拼三个新文件）、版本号 4 处 | Playwright：计算器 `2^3^2=512`/`sin30=0.5`/`5!=120`/`1/0` 报「除数是 0」；Base64/Base32/往返/SHA-256/MD5 全对；颜色 `#F00 → HSB(0,100,50)`、Lab 与 YUV 往返回 `[255,0,0]`、CMYK 100/0/0/0 → `#00FFFF`；Markdown 渲染标题/粗体且 `<script>` 与 `javascript:` 被清掉；UrlHash 400 字符压缩往返一致；截图 1100px 并写入 `.home.-xxshot-…png`；CLI `b64/hash/ts/mount/tools` 全通；2048/WinBox/98.css/Chart.js/p5.js 在小浏览器里跑起来；自举内层执行三条命令正常；无 pageerror | 本轮 |
 | 2026-11-03 10:20 | 0.0.1.5：窗口间拖拽（文件↔文件/智能体/终端/浏览器）+ 小浏览器一键存网页 + 文件管理器多开 | `build/30-core.js`（`DRAG_MIME`/`DragBus`/`hasInternalDrag`/`uniquePathIn`/`isSameOrInside`/`dropIntoDir`/`htmlFileName`/`contentToDataUrl`）、`build/50-apps.js`（FilesApp `⧉` + `_bindDrop` 双通道 + dragstart 发布 item；BrowserApp 保存/下载按钮、`pageHtml`/`_pageName`/`saveToFs`/`downloadPage`/`openPath`/`_bindDrop`、标签 `draggable`、`.br-shield`）、`build/60-agent.js`（`addItems` + drop 分支）、`build/40-term.js`（`container.__term` + `insert()` 括号粘贴）、`build/70-boot.js`（`initDropImport` 双通道、`_termAt`、落点高亮、拖到终端先导入再粘路径、`dragend`/`blur`/`visibilitychange` 清场）、`build/00-head.html`（`.drop::after` 标签、`#term`/`.fm` 定位、`.br-shield`、`.txt` 按钮、`[draggable]` 光标）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.5）、`README.md`（第 7 章拖拽整节重写、第 11 章补 `dropIntoDir`/`DragBus`、日志、踩坑第 41 条） | 无头 Chromium：两个 FM 窗口 A→B 复制 / Shift 移动 / 目录整棵复制 / 同目录 `-2`；FM→桌面终端与终端窗口均显示 `.home> .home.alpha` 且未执行；FM→浏览器 `srcdoc` 含文件内容；标签→FM 存 html、标签→智能体附件含正文；保存生成 `.home.*-2ehtml`、标题带 `.html` 不重复；遮板拖拽中 `display:block`、结束后 `body.drag-internal` 归位；无 pageerror | `main` |
 | 2026-11-02 20:55 | 0.0.1.4：修「TUI 智能体进去就自己退出来」——`open()` 只打横幅不切模式 | `build/20-worker.js`（`AGENT_PROMPT`；`prompt()` 三路；`onSubmit` 新增 `mode==='agent'` 分支；`LineEditor` 新增 `onInterrupt` / `onCtrlD` 钩子并接进 `feed()`；`agentTui` 重写：`open/_run/line/send/queue/_drain/stop/close/helpOut` + `agentWidth/agentWrap` 折行 + `_startSpin/_stopSpin` 帧动画 + `_back` 记忆来路）、`build/30-core.js`（版本 0.0.1.4）、`modelserver.{py,js,go}`（版本）、`README.md`（§5.2 重写、§11 注明、开发日志、操作记录、踩坑第 40 条） | 无头 Chromium：`agentTui.open()` 后提示符变 `agent> ` 且停住；`:help` / `:q` 正常；未配置后端时错误留在 TUI 内不退出；`Ctrl+D` 回 `.home>` 后 `2+3` → `5`；mock 慢模型下 `Ctrl+C` 0.7s 中断并回提示符（`■ 已请求停止当前轮`）；窗口版 `agentOpen()` 仍存活；无 pageerror | `main` |
 | 2026-11-02 17:45 | 0.0.1.3：拖拽导入/导出 + spotfs（六 syscall + 名字转义 + `.savefile`） | `build/30-core.js`（`spotEscape/spotUnescape/spotExportName`、`SPOT_NAME_RE`、`checkName` 放行转义名、`DIRS` 加 `.savefile`、`FS.sptc/sptn/spta/sptr/sptx/sptd`、`flushSavefile`、`saveFileRaw`、`importFiles`、种子 readme 改 spotfs）、`build/70-boot.js`（`initDropImport` + 遮罩 + `_hasFiles/_dropTarget`、RPC `fs.spt*`/`fs.escape|unescape|exportName`、boot 调用）、`build/20-worker.js`（`sptc/sptn/spta/sptr/sptx/sptd` + `spotEsc/spotUnesc/spotExport`，`api`/`api.fs` 暴露）、`build/50-apps.js`（FilesApp `_bindDrop`/`_prefetchBlob`/draggable 行/`DownloadURL`、`upload`/`download` 走 `importFiles`/`saveFileRaw`）、`build/60-agent.js`（drop → `.queryfile` + 附件）、`build/00-head.html`（`#dropVeil` 与动画）、`build/10-body.html`（遮罩 DOM）、`build/30-core.js`+`modelserver.{py,js,go}`（版本）、`README.md`（第 7 章三节、第 11 章、日志、踩坑 38-39） | playwright：转义往返 5 例、六 syscall 全通过、`.savefile` 导出删除、FilesApp/#desk/智能体三种 drop 落点正确、遮罩显隐、`DownloadURL` 格式正确、无 pageerror | `main` |
 | 2026-11-02 15:30 | 0.0.1.2：智能体重复生成防护（连续 3 次相同输出 → 卡断 + 自动追问） | `build/60-agent.js`（`_turnSig` 输出签名、`_injectRepeatNudge` 自动追问、`run()` 循环内 `REPEAT_LIMIT=3` 计数与卡断、`render()` 处理 `system` 备注、`apiMessages()` 跳过 `system`、`AGENT_SYSTEM` 补一句）、`build/30-core.js`（`HT_VERSION`）、`modelserver.{py,js,go}`（版本）、`README.md`（9 章日志、10 章记录、12 章说明、踩坑 37） | 待 playwright 回归：构造一个会连续 3 次调同一工具的会话，确认第 3 次被卡断、日志出现「⚠ 已连续 3 次输出相同内容」、会话里多出一条 user 角色「【自动检查】…」、模型带着追问再跑一轮 | `main` |
-| 2026-11-02 13:50 | 0.0.1.1：原生 API 全部转发、JSHeL/HSL 彻底分家、HSL 栈嵌套、删无意义移植、fastfetch、nano/vim 重写 + 鼠标、对话持久化、产品名统一 | `build/20-worker.js`（`nativeCall` 转发 + `NATIVE_ALLOWED`、删 `globalThis.print`、`KEYS` 增删、`onSubmit` 按 mode 分流、删 `isShellLine` 与语法指路提示、`hsl()`/`hsl.run`、`setMode`/`onEditorResize`、`LineEditor` 两处 `finally` 判 `raw`、resize 重画全屏、`help()` 重写）、`build/25-compat.js`（HSL 栈 `hslPush/pop/depth`、`def('hsl')`/`exit`、删 9 条命令、`longFmt` 去 rwx、`fastfetch`/`neofetch`、`makeEditor` 重写：双宽排版 + 绝对定位 + 显式配色 + 鼠标、`realPath` 按 cwd、`tryExternal` 只认 `.bin`）、`build/70-boot.js`（`nativeCall` + `sysInfo` + `native`/`sys.info` RPC、`Drawer.refresh` 填 `#stAgent`）、`build/60-agent.js`（新增 `AgentStore`：`ht-agent` 库、Blob 打包、先 prepare 后开事务、800ms 防抖 `flushSession`、从 JSONL 迁移）、`build/65-tui.js`（`status()` 走 `HeadlessAgent.ensure()`）、`build/30-core.js`（`HT_VERSION`、种子 readme/welcome、`.perm` 措辞）、`build/10-body.html`（抽屉「对话」行）、`build/{00-head,40-term,50-apps}.js`（产品名）、`modelserver.{py,js,go}`（版本）、`README.md`（5.1 重写、5.3 新增、6 章开头、踩坑 36 条、日志）、`IDEAS.md`、`licenses/README.md` | playwright：`dialog` 事件抓到 `alert/confirm/prompt` 三条真原生框；`1+1`→`2`；`ls -la`/`nano readme` → 语法/引用错误 + 「是 HSL 命令」提示；`hsl('uname')`→`HTerMinaL`；`hsl`→`cd /`→`hsl`→`exit`（回第 1 层、目录回 `.home`）→`exit`（回 JSHeL）→`1+1`→`2`；`help` 里 10 条删掉的命令全无、`fastfetch`/`neofetch` 在；`fastfetch` 九项全真值；nano 顶栏可见、状态栏 `4/28 行 · 8 列`、鼠标点第 5 行第 8 列输入落点正确、`^X` 干净退出；vim `:wq` 后 `cat newfile` 为 `hello\nworld`；`ll` 表头无 rwx；`AgentStore.save('main',4条)`→`{sessions:1,messages:4}`、`indexedDB.databases()` 含 `ht-agent`、`reload()` 后显示「已恢复 4 条消息」 | `main` |
+| 2026-11-02 13:50 | 0.0.1.1：原生 API 全部转发、JSHeL/HSB 彻底分家、HSB 栈嵌套、删无意义移植、fastfetch、nano/vim 重写 + 鼠标、对话持久化、产品名统一 | `build/20-worker.js`（`nativeCall` 转发 + `NATIVE_ALLOWED`、删 `globalThis.print`、`KEYS` 增删、`onSubmit` 按 mode 分流、删 `isShellLine` 与语法指路提示、`hsl()`/`hsl.run`、`setMode`/`onEditorResize`、`LineEditor` 两处 `finally` 判 `raw`、resize 重画全屏、`help()` 重写）、`build/25-compat.js`（HSB 栈 `hslPush/pop/depth`、`def('hsl')`/`exit`、删 9 条命令、`longFmt` 去 rwx、`fastfetch`/`neofetch`、`makeEditor` 重写：双宽排版 + 绝对定位 + 显式配色 + 鼠标、`realPath` 按 cwd、`tryExternal` 只认 `.bin`）、`build/70-boot.js`（`nativeCall` + `sysInfo` + `native`/`sys.info` RPC、`Drawer.refresh` 填 `#stAgent`）、`build/60-agent.js`（新增 `AgentStore`：`ht-agent` 库、Blob 打包、先 prepare 后开事务、800ms 防抖 `flushSession`、从 JSONL 迁移）、`build/65-tui.js`（`status()` 走 `HeadlessAgent.ensure()`）、`build/30-core.js`（`HT_VERSION`、种子 readme/welcome、`.perm` 措辞）、`build/10-body.html`（抽屉「对话」行）、`build/{00-head,40-term,50-apps}.js`（产品名）、`modelserver.{py,js,go}`（版本）、`README.md`（5.1 重写、5.3 新增、6 章开头、踩坑 36 条、日志）、`IDEAS.md`、`licenses/README.md` | playwright：`dialog` 事件抓到 `alert/confirm/prompt` 三条真原生框；`1+1`→`2`；`ls -la`/`nano readme` → 语法/引用错误 + 「是 HSB 命令」提示；`hsl('uname')`→`HTerMinaL`；`hsl`→`cd /`→`hsl`→`exit`（回第 1 层、目录回 `.home`）→`exit`（回 JSHeL）→`1+1`→`2`；`help` 里 10 条删掉的命令全无、`fastfetch`/`neofetch` 在；`fastfetch` 九项全真值；nano 顶栏可见、状态栏 `4/28 行 · 8 列`、鼠标点第 5 行第 8 列输入落点正确、`^X` 干净退出；vim `:wq` 后 `cat newfile` 为 `hello\nworld`；`ll` 表头无 rwx；`AgentStore.save('main',4条)`→`{sessions:1,messages:4}`、`indexedDB.databases()` 含 `ht-agent`、`reload()` 后显示「已恢复 4 条消息」 | `main` |
 | 2026-11-02 13:05 | 0.0.1.0 里程碑：一致性梳理（补 `.bin` 可执行、`chmod`、`sudo`、`nuke`、长名 API、5 条 shell 命令、file:// 说明、版本号残留） | `build/30-core.js`（`FS.write` 保留/推断 kind、`askFile` 保留扩展名、`.sys.license` 清单）、`build/25-compat.js`（`chmod`/`sleep`/`rev`/`tee`/`stat`/`xargs`、`sudo`、`diff` 报错）、`build/20-worker.js`（`nuke()`、长名别名、`settings`/`threads`、`inspect` 的 Module 分支、Python 横幅、`HT_VERSION`）、`build/70-boot.js`（`nuke.run`/`settings.set`/`settings.all` RPC、`refresh`/`checkBackend` 判空、`file://` 提示、启动即注入版本）、`build/60-agent.js`（`file://` 下的报错文案）、`build/10-body.html`（版本占位符）、`build/00-head.html`（许可注释）、`build/65-tui.js`（注释更正）、`README.md`（11 章说明、9 章 Python 说明、踩坑 29 条、日志）、`IDEAS.md`（对话持久化待办） | playwright：`.bin.hi`→42、`chmod +x/-x` 可逆、`sudo echo B` 一次、`nuke()` 确认后 `.home` 只剩 readme/welcome、`remove/move/copy/openWindow/closeWindow/listWindows/openURL/threads/settings` 全部 define、`sleep 1` 真等 1 秒、`tee/rev/xargs/stat` 正确、`askFile`→`.queryfile.hello-txt`、`require('lodash-es@4')` 回显 `Module(322 exports)` 且 `_.chunk` 可用、启动屏与抽屉显示 `0.0.1.0`、`page.q`/`page.eval`/`document.title`/`1+1` 无回归 | `main` |
 | 2026-11-02 12:35 | 第三方许可证补齐 + `check-licenses.sh` + 对话持久化立项 | `licenses/LICENSE.marked.txt`、`licenses/LICENSE.html2canvas.txt`（新增，上游原文）、`licenses/README.md`（6 项清单、xterm 三个包共用 MIT、Markdown 渲染说明更正）、`check-licenses.sh`（新增）、`README.md`（11 章表、页脚版本、日志）、`IDEAS.md`（新增：对话持久化待办） | `./check-licenses.sh` → 6 项全「已登记」exit 0、4 个 `LICENSE.*.txt` 全存在；反向测试塞 `left-pad@1.3.0` → 「缺失 ✗」exit 1；playwright 起后端加载 `127.0.0.1:8787` 无 pageerror、`1+1`→`2`（确认 0.0.0.5 的安全头没把前端打挂） | `main` |
 | 2026-11-02 12:40 | 后端安全加固：拒绝跨域与 null Origin（0.0.0.5） | `modelserver.py`（`origin_allowed` 拒 null、`security_headers`、`_deny` 日志、`local_only` 四重校验、`Content-Type` 415、`serve_index` 带头）、`modelserver.js`（同上，`LOCAL_NAMES`/`securityHeaders`/`deny`）、`modelserver.go`（同上，`securityHeaders`/`deny`）、`build/30-core.js`（版本）、`IDEAS.md`（许可证待办）、`README.md`（13 章安全模型重写、日志） | curl 三份后端：正常 200、evil Origin 403、null Origin 403、本机 Origin 200+ACAO、cross-site 403、坏 Host 403、text/plain POST 415、任意路径 403；`X-Frame-Options`/`frame-ancestors`/`CORP`/`COOP`/`Referrer-Policy`/`Permissions-Policy` 均在。Go `go build` 通过、JS `node --check` 通过 | `main` |
 | 2026-11-02 12:10 | DOM 与 F12 对齐：真写、真节点、同步预取、事件回放（0.0.0.4） | `build/20-worker.js`（重写 DOM 代理：`DOMC` 镜像 + `nodeProxy` Proxy 句柄 + `prefetchDom` + `document` 重写 + `windowShim`、`Object.assign` 改逐个赋值、`open()` 认 URL、`self.onmessage` 加 `dom-event`）、`build/65-tui.js`（`DomRpc` 重写：`docWrite` 真调、`_tagAs` 预分配 ref、`snap`/`prefetch`/`queryAs`/`allIn`/`createAs`/`cloneAs`/`evalPage`/`listen` 事件转发、`_desc` 截断）、`build/40-term.js`（`_domSink` 注册与注销）、`build/70-boot.js`（`refresh` 加 null 守卫）、`build/30-core.js`（版本号）、`modelserver.{py,js,go}`（版本）、`IDEAS.md`（许可证待办）、`README.md`（5.3 重写、踩坑 27–29、日志） | 无头 Chromium：`document.write` 清空整页（`#desk` 消失、`#hi` 出现）、`body.innerHTML` 直写、`createElement`+`appendChild` 真入 `#topbar`、`style.color`/`classList`/`insertAdjacentHTML`/`remove` 生效、`el.addEventListener('click')` 回放后 `document.title=CLICKED`、`page.eval('1+1')=2`、`getBoundingClientRect().height=54`、`getComputedStyle().height=54px`、`matchMedia` 正确；s1–s14 回归全绿 | `main` |
 | 2026-11-02 08:30 | 修回 JS 环境 / help 合并 / 振动归位（0.0.0.3） | `build/20-worker.js`（`document.write/writeln/open/close`、`innerHTML`/`textContent`/`value` 属性、`help()` 输出两段命令）、`build/25-compat.js`（删 `def('help')`）、`build/65-tui.js`（`haptic` 去掉 Settings 判断、新增 `docWrite`/`setHtml` RPC）、`build/40-term.js`（删 `onData` 里的振动、`sendDir` 加 `haptic(7)`）、`build/10-body.html`（删按键振动开关）、`build/70-boot.js`（删 setHaptic 绑定）、`build/30-core.js`（删 `haptic` 默认值、版本号）、`modelserver.{py,js,go}`（版本）、`README.md` | 无头 Chromium：`document.write` 开窗渲染 `DOC-WRITE-OK`、二次 write 复用同一窗口、`document.body.innerHTML` 后主界面仍在；`help` 同时含「JSHeL 快速参考」与「Linux 兼容层」；键入 3 字符 `vibrate` 计数 0、摇杆拖动计数 4；`1+1`/`const`/`await ls()`/`page.q`/`document.title` 均正常 | `main` |
-| 2026-11-01 23:55 | 顶栏减负 / 兼容层 / TUI 智能体 / 窗动效 / HSL 记录（0.0.0.2） | `build/00-head.html`（删 `.tb-left` 系列、`.ht-cursor`、`body.fs`、`htWinIn/Out/Min/Restore` keyframes、`.ag-att`/markdown 样式、抽屉页脚随内容滚）、`build/10-body.html`（顶栏从 `⌃` 起、终端字号/显示行数/按键振动、步数 120、F 键说明）、`build/20-worker.js`（`convertEol` 后的历史游标修正、`prompt()` 固定格式、compat 挂载、`agentTui`、`shell`、`jshel`、DOM 代理）、`build/25-compat.js`（新增：MiniShell + coreutils + vim/nano + zsh）、`build/30-core.js`（`DEFAULTS`/`VOLATILE`/`_persisted`、`normPath` 重写、`rows`、`agentModel` 迁移、`write` 父目录校验）、`build/40-term.js`（自定义光标层、F5/F11/F12、`fixedRows`、`#desk` 相对拖拽、`loadScriptCached`、窗动效）、`build/50-apps.js`（sandbox、`srcdoc`、`htTok`、内部新标签、`window.open` patch）、`build/60-agent.js`（工具 `screenshot/window_html/ui`、`apiMessages` 配对、120 步、`stableKey`、三级降级、Markdown、多模态）、`build/65-tui.js`（新增：`AgentTuiHost` + DomRpc + `shot`）、`build/70-boot.js`（抽屉绑定、`wipeAllStorage`、`DepCache`、RPC 新增 `agent.*`/`dom.op`/`shot.*`、`toggleFullscreen` 统一）、`build.sh`、`modelserver.{py,js,go}`（根路径 + 403 + `scriptDir`）、`IDEAS.md`（新增：HSL 想法）、`README.md` | 无头 Chromium（s1–s13）：顶栏首键 `⌃`、`page.q('#topbar')` → `header/1280`、历史逐条回溯、`ls`/`ls('.home')` 一致、F 键 `defaultPrevented` `false/true/false`、窗动效类正确增删、拖拽穿 iframe、`mailto:` 面板块、`target=_blank` 内部标签、`shot` 307 KB、主题跟随、`write('.home.a.txt')` 报父目录不存在 | `main` |
+| 2026-11-01 23:55 | 顶栏减负 / 兼容层 / TUI 智能体 / 窗动效 / HSB 记录（0.0.0.2） | `build/00-head.html`（删 `.tb-left` 系列、`.ht-cursor`、`body.fs`、`htWinIn/Out/Min/Restore` keyframes、`.ag-att`/markdown 样式、抽屉页脚随内容滚）、`build/10-body.html`（顶栏从 `⌃` 起、终端字号/显示行数/按键振动、步数 120、F 键说明）、`build/20-worker.js`（`convertEol` 后的历史游标修正、`prompt()` 固定格式、compat 挂载、`agentTui`、`shell`、`jshel`、DOM 代理）、`build/25-compat.js`（新增：MiniShell + coreutils + vim/nano + zsh）、`build/30-core.js`（`DEFAULTS`/`VOLATILE`/`_persisted`、`normPath` 重写、`rows`、`agentModel` 迁移、`write` 父目录校验）、`build/40-term.js`（自定义光标层、F5/F11/F12、`fixedRows`、`#desk` 相对拖拽、`loadScriptCached`、窗动效）、`build/50-apps.js`（sandbox、`srcdoc`、`htTok`、内部新标签、`window.open` patch）、`build/60-agent.js`（工具 `screenshot/window_html/ui`、`apiMessages` 配对、120 步、`stableKey`、三级降级、Markdown、多模态）、`build/65-tui.js`（新增：`AgentTuiHost` + DomRpc + `shot`）、`build/70-boot.js`（抽屉绑定、`wipeAllStorage`、`DepCache`、RPC 新增 `agent.*`/`dom.op`/`shot.*`、`toggleFullscreen` 统一）、`build.sh`、`modelserver.{py,js,go}`（根路径 + 403 + `scriptDir`）、`IDEAS.md`（新增：HSB 想法）、`README.md` | 无头 Chromium（s1–s13）：顶栏首键 `⌃`、`page.q('#topbar')` → `header/1280`、历史逐条回溯、`ls`/`ls('.home')` 一致、F 键 `defaultPrevented` `false/true/false`、窗动效类正确增删、拖拽穿 iframe、`mailto:` 面板块、`target=_blank` 内部标签、`shot` 307 KB、主题跟随、`write('.home.a.txt')` 报父目录不存在 | `main` |
 | 2026-11-01 22:05 | 错位/顶栏/光标/拖拽/协议/主题/直连（0.0.0.1） | `build/00-head.html`（摇杆与开关/分段样式、无 logo、顶栏三段重排、`win-drag`、`.br-notice`）、`build/10-body.html`（顶栏结构、外观与智能体设置）、`build/30-core.js`（`Settings` 新增 `cursorStyle/agentMode/agentDirectUrl/agentKey/agentThinking`、`systemTheme`/`watchSystemTheme`）、`build/40-term.js`（`convertEol`、`unicode11`、`isStrictMono`/`xtermFont`、`_startDrag`/`_startResize` 重写、摇杆逻辑）、`build/50-apps.js`（`classifyUrl`/`schemeOf`、协议面板、iframe `sandbox`、同源注入）、`build/60-agent.js`（直连分支、`reasoning_content` 回传）、`build/70-boot.js`（开关/分段绑定、`syncAgentMode`、主题启动）、`modelserver.{py,js,go}`（版本）、`README.md`（顶栏图、直连说明、5.6/5.7、踩坑 15-17、日志） | 无头 Chromium：L1/L2/L3 均从第 0 列起；摇杆向下发 3×`\x1b[B` 且箭头高亮；拖动 +120/+60 精确、穿越 iframe +220 不丢事件；东侧改宽 +120 且 `left` 不变；`mailto:`/`tel:` 只出面板块且 `iframe.src` 不含协议；390×844 顶栏 46px、`docW=390`；`prefers-color-scheme` 切换即时跟；DeepSeek 直连 760/1256/5606 ms，工具与思考模式均无 400 | `main` |
 | 2026-11-01 20:20 | 版本号规则 + 前端布局重做（0.0.0.0） | `build/00-head.html`（整份重写）、`build/10-body.html`（整份重写）、`build/40-term.js`（新增 `Keys`/`initTopbarKeys`/`deskBox`，窗口坐标改桌面相对）、`build/70-boot.js`（`AppMenu`/`toggleFullscreen`/抽屉类名/版本注入）、`build/30-core.js`（`HT_VERSION`、`applyGrid`）、`build/20-worker.js`（`state.version`）、`modelserver.{py,js,go}`（版本）、`README.md`（重写为两部分 + 开发日志 + 本表） | 无头 Chromium：启动无 pageerror；`⌃` 锁定+`c`→`\u0003`；`⇥`/`␛`→`\t`/`\u001b`；启动器开文件窗口；最大化＝桌面尺寸、拖动位移精确；390×844 顶栏 46px 零溢出；浅色主题粗体可读；导入导出回环、Python 进出、`Ctrl+D` 重载、三份后端 `/health` 均返回 `0.0.0.0` | `main` |
 

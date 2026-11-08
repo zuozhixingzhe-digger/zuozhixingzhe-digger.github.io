@@ -160,11 +160,11 @@ const RPC = {
       case 'agent.reset': return AgentTuiHost.reset();
       /* ---- 嵌套 shell / 截图 ---- */
       case 'shell.open': { const w = WindowManager.open({ type:'shell', cwd:a[0] || undefined, banner:a[1] !== false }); return w ? { id:w.id, cwd:w.cwd || a[0] || '.home' } : null; }
-      /* ---- hsl2：可选组件，只有用户敲了 hsl2() 才会走到这里（才会下载） ---- */
-      case 'hsl2.open': return HSL2.open(a[0] || {});
-      case 'hsl2.stop': HSL2.stop(); return true;
-      case 'hsl2.clear': await HSL2.clearCache(); return true;
-      case 'hsl2.status': return { running:HSL2.running, cold:HSL2.cold, cached:await HSL2.usage() };
+      /* ---- hsb2：可选组件，只有用户敲了 hsb2() 才会走到这里（才会下载） ---- */
+      case 'hsb2.open': return HSB2.open(a[0] || {});
+      case 'hsb2.stop': HSB2.stop(); return true;
+      case 'hsb2.clear': await HSB2.clearCache(); return true;
+      case 'hsb2.status': return { running:HSB2.running, cold:HSB2.cold, cached:await HSB2.usage() };
       case 'shot.page': return await shot(a[0] || null, a[1] || {});
       case 'shot.window': return await shotWindow(a[0]);
       /* ---- 依赖缓存 ---- */
@@ -183,7 +183,7 @@ const RPC = {
       }
       case 'util.algos': return HASH_ALGS.slice();
       /* 编解码统一走这里：算法只有一份（本文件的 56-data 段），
-       * hsl1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
+       * hsb1 的 b64/hex/hash 命令和「数据」窗口共用，不各写一套。 */
       case 'util.codec': {
         const op = String(a[0] || '');
         const d = a[1];

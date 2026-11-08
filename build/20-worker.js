@@ -186,7 +186,7 @@ class LineEditor {
   reopen() {
     if (this.closed || this.raw) return;
     /* 先擦掉上一次画的块。正常提交后 _rows 已经是 0（光标停在新行行首），
-     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsl1 进/出层、
+     * erase 什么都不做；但有些路径**不换行就直接切提示符**——hsb1 进/出层、
      * agent 退出——那里 _rows 还是 1，不擦就会在原提示符后面再画一个，
      * 屏幕上出现「.home $ .home $ 」。 */
     this.erase();
@@ -673,7 +673,7 @@ function makeShell(ctx) {
     history: ctx.history || [],
     last: undefined,
     lastError: null,
-    mode: 'jshel',          // jshel | hsl1（hsl1 时整行交给 COMPAT，不认 JS）
+    mode: 'jshel',          // jshel | hsb1（hsb1 时整行交给 COMPAT，不认 JS）
     cols: ctx.cols || 80,
     rows: ctx.rows || 24
   };
@@ -980,7 +980,7 @@ function makeShell(ctx) {
   async function date() { out(new Date().toString() + '\r\n'); }
   async function echo(...a) { out(a.join(' ') + '\r\n'); }
   async function env() {
-    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsl1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
+    const o = { PWD:state.cwd, USER:state.user, SHELL:'hsb1', TERM:'xterm-256color', LANG:'zh_CN.UTF-8', HOME:'.home', HOST:'browser' };
     Object.entries(o).forEach(([k, v]) => out(k + '=' + v + '\r\n'));
   }
   async function ps() {
@@ -1025,10 +1025,10 @@ function makeShell(ctx) {
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
       ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
-      ['hsl1', 'hsl1() 进交互式 Linux 风格 shell；hsl1("ls -la") 跑一行；hsl1 里 help 看命令表'],
-      ['hsl2', '规划中的可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsl2() 看完整说明'],
+      ['hsb1', 'hsb1() 进交互式 Linux 风格 shell；hsb1("ls -la") 跑一行；hsb1 里 help 看命令表'],
+      ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
-      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsl1()。'],
+      ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -1088,7 +1088,7 @@ function makeShell(ctx) {
         const gone = /^(apt|ping|bash|sh|zsh|su|sudo|chmod|npm|pip|logout)$/.test(first);
         const known = typeof COMPAT !== 'undefined' && COMPAT.commands[first];
         if (first && (gone || known)) {
-          out(ANSI.gray + '提示：' + first + ' 是 hsl1 命令。hsl1() 进 shell，或 hsl1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
+          out(ANSI.gray + '提示：' + first + ' 是 hsb1 命令。hsb1() 进 shell，或 hsb1(' + JSON.stringify(String(code).trim()) + ')。' + ANSI.reset + '\r\n');
         }
       }
       if (e && e.stack) {
@@ -1990,15 +1990,15 @@ async function bootShell(init) {
 
   /* 三种模式并列，看提示符就知道自己在哪一层：
    *   `JSHeL> `          JSHeL（纯 JS 求值；固定提示符，不显示当前目录）
-   *   `/home/user $ `    hsl1（只当 shell 命令行）
+   *   `/home/user $ `    hsb1（只当 shell 命令行）
    *   `agent> `          智能体 TUI（整行发给智能体）
    */
   const AGENT_PROMPT = ANSI.cyan + 'agent' + ANSI.reset + '> ';
 
-  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 提示符用：
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsb1 提示符用：
    *   .            /              .home           /home/user
    *   .home.notes  /home/user/notes              .bin            /bin
-   * 这样 hsl1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
+   * 这样 hsb1 的提示符看起来就像真 Linux（/home/user $），而不是 .home $ 这种让人犯晕的形式。 */
   function dispPath(p) {
     if (!p || p === '.') return '/';
     if (p === '.home') return '/home/user';
@@ -2009,7 +2009,7 @@ async function bootShell(init) {
   const editor = new LineEditor({
     prompt: () => {
       if (api.__state.mode === 'agent') return AGENT_PROMPT;
-      if (api.__state.mode === 'hsl1') return dispPath(api.__state.cwd) + ' $ ';
+      if (api.__state.mode === 'hsb1') return dispPath(api.__state.cwd) + ' $ ';
       /* JSHeL 固定提示符：不显示当前目录，力求和真的 JS 控制台一致。 */
       return 'JSHeL> ';
     },
@@ -2038,7 +2038,7 @@ async function bootShell(init) {
       if (!line.trim()) return;
       /* 三条完全分开的路，中间没有「猜一下这行是什么」：
        *   agent → 整行发给智能体（不认 JS，也不认 shell）
-       *   hsl1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
+       *   hsb1  → 只当 shell 命令行（`1+1` 是「命令未找到」）
        *   jshel → 只当 JS 求值（`ls -la` 就是语法错误，不会被执行）
        * 以前是「首词命中命令表就当 shell」，于是同一行代码的行为取决于命令表里有没有同名命令，
        * 完全不可预测。分家之后，看提示符就知道自己在哪一层。 */
@@ -2046,7 +2046,7 @@ async function bootShell(init) {
         await agentTui.line(line);
         return;
       }
-      if (api.__state.mode === 'hsl1') {
+      if (api.__state.mode === 'hsb1') {
         const r = await COMPAT.execLine(line);
         if (r && r.exit) throw EXIT;
         return;
@@ -2055,9 +2055,9 @@ async function bootShell(init) {
     },
     onEOF: () => { post({ t:'exit', code:0 }); },
   });
-  /* ---------------------------------------------------------------- hsl1（Linux 风格 shell）
+  /* ---------------------------------------------------------------- hsb1（Linux 风格 shell）
    * 把命令执行需要的上下文交给 COMPAT：fs 走 RPC、cwd 走 state、输出走 out。
-   * 只有 mode === 'hsl1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
+   * 只有 mode === 'hsb1' 时整行才交给它；JSHeL 那一侧一行 shell 语法都不认。
    * 提示符会变成 `路径 $ `，一层一层可嵌套。
    */
 
@@ -2112,9 +2112,9 @@ async function bootShell(init) {
         return undefined;
       }
       this.on = true;
-      /* 记住从哪一层进来的：hsl1 里进来就回 hsl1，否则回 JSHeL。
+      /* 记住从哪一层进来的：hsb1 里进来就回 hsb1，否则回 JSHeL。
        * 只记一个值而不是布尔——布尔表达不了「原来在第几层」。 */
-      this._back = api.__state.mode === 'hsl1' ? 'hsl1' : 'jshel';
+      this._back = api.__state.mode === 'hsb1' ? 'hsb1' : 'jshel';
       api.__state.mode = 'agent';
       editor.promptStr = AGENT_PROMPT;
 
@@ -2269,9 +2269,9 @@ async function bootShell(init) {
       this._q.splice(0).forEach(i => i.resolve && i.resolve(''));
       this._stopSpin();
       this._busy = false;
-      /* 回原来那一层：hsl1 进的就回 hsl1，否则回 JSHeL。
+      /* 回原来那一层：hsb1 进的就回 hsb1，否则回 JSHeL。
        * 提示符由 promptText() 重算，调用方（submit 的 finally / onCtrlD）负责补上。 */
-      api.__state.mode = this._back === 'hsl1' ? 'hsl1' : 'jshel';
+      api.__state.mode = this._back === 'hsb1' ? 'hsb1' : 'jshel';
       editor.promptStr = editor.promptText();
       out(ANSI.gray + '已退出 agent（对话在 IndexedDB ht-agent，窗口版看到的是同一段）' + ANSI.reset + '\r\n');
       return true;
@@ -2293,40 +2293,40 @@ async function bootShell(init) {
   globalThis.shell = shell;
   globalThis.jshel = shell.open;
 
-  /* hsl1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl，已全量改名；hsl 不再支持）。
+  /* hsb1 —— JSHeL 里唯一通往 Linux 风格命令的入口（原名 hsl、hsl1，现统一为 hsb1；老名字不再支持）。
    *
-   *   hsl1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
-   *   hsl1('ls -la')    跑一行，输出直接进终端
-   *   await hsl1.run(x) 跑一行但不打印，返回 { code, out, err }
+   *   hsb1()            进交互层（可嵌套；exit 弹回上一层，最外层回到 JSHeL）
+   *   hsb1('ls -la')    跑一行，输出直接进终端
+   *   await hsb1.run(x) 跑一行但不打印，返回 { code, out, err }
    *
    * 这样 JSHeL 这一侧永远是纯 JS：不会因为你敲了 `ls -la` 就被悄悄当成 shell。
-   * 注意：必须写 hsl1()；裸敲 hsl1 只会被当成普通 JS 标识符求值。 */
-  function hsl1(cmd) {
+   * 注意：必须写 hsb1()；裸敲 hsb1 只会被当成普通 JS 标识符求值。 */
+  function hsb1(cmd) {
     if (cmd === undefined || cmd === null) {
-      /* 只打印横幅，不返回值：hsl1() 不该在下面多出一个 "1" */
-      const d = COMPAT.hslPush();
-      out(ANSI.gray + 'hsl1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
+      /* 只打印横幅，不返回值：hsb1() 不该在下面多出一个 "1" */
+      const d = COMPAT.hsbPush();
+      out(ANSI.gray + 'hsb1 · 第 ' + d + ' 层 · help 看命令，exit 退出这一层' + ANSI.reset + '\r\n');
       return undefined;
     }
     return COMPAT.execLine(String(cmd)).then(() => undefined);
   }
-  hsl1.run = (cmd) => COMPAT.execLine(String(cmd));
-  globalThis.hsl1 = hsl1;
+  hsb1.run = (cmd) => COMPAT.execLine(String(cmd));
+  globalThis.hsb1 = hsb1;
 
-  /* hsl2 —— WASM + v86 + FreeBSD 12.0 的真实入口（可选组件，用户已明确要求实现）。
+  /* hsb2 —— WASM + v86 + FreeBSD 12.0 的真实入口（可选组件，用户已明确要求实现）。
    * 这里只发一条 RPC 让主线程开窗口：v86 需要 DOM / WASM，Worker 里跑不了。
-   * 关键：不敲 hsl2() 就永远不会执行到这里，页面也就永远不会去碰那些 CDN 资源。 */
-  globalThis.hsl2 = (opts) => {
-    out(ANSI.yellow + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + ANSI.reset + '\r\n');
-    out(ANSI.gray + COMPAT.hsl2Notice() + ANSI.reset + '\r\n');
-    out(ANSI.gray + '正在打开 hsl2 窗口 …（从现在起才经 CDN 下载组件，并缓存到 IndexedDB）' + ANSI.reset + '\r\n');
-    call('hsl2.open', opts || {}).catch(e =>
-      out(ANSI.red + 'hsl2 启动失败：' + String(e && e.message || e) + ANSI.reset + '\r\n'));
+   * 关键：不敲 hsb2() 就永远不会执行到这里，页面也就永远不会去碰那些 CDN 资源。 */
+  globalThis.hsb2 = (opts) => {
+    out(ANSI.yellow + '⚠ hsb2 · 可选组件：WASM + v86 + FreeBSD 12.0' + ANSI.reset + '\r\n');
+    out(ANSI.gray + COMPAT.hsb2Notice() + ANSI.reset + '\r\n');
+    out(ANSI.gray + '正在打开 hsb2 窗口 …（从现在起才经 CDN 下载组件，并缓存到 IndexedDB）' + ANSI.reset + '\r\n');
+    call('hsb2.open', opts || {}).catch(e =>
+      out(ANSI.red + 'hsb2 启动失败：' + String(e && e.message || e) + ANSI.reset + '\r\n'));
     return undefined;
   };
-  hsl2.stop = () => call('hsl2.stop');
-  hsl2.clear = () => call('hsl2.clear');
-  hsl2.status = () => call('hsl2.status');
+  hsb2.stop = () => call('hsb2.stop');
+  hsb2.clear = () => call('hsb2.clear');
+  hsb2.status = () => call('hsb2.status');
 
   COMPAT.attach({
     out: (t) => out(t),
@@ -2344,7 +2344,7 @@ async function bootShell(init) {
     setMode: (m) => { api.__state.mode = m; },
     /* 切层之后由 COMPAT 调：不打印、只重画，避免和调用方的换行重复。
      * 这里**不要**手动把 _rows 清零——reopen() 靠它判断屏上还有没有旧块，
-     * 清了就擦不掉，于是 hsl1 进出层时会出现两个提示符并排。 */
+     * 清了就擦不掉，于是 hsb1 进出层时会出现两个提示符并排。 */
     kick: () => { editor.reopen(); },
     get onEditorResize() { return editor._onResize || null; },
     set onEditorResize(fn) { editor._onResize = fn || null; }
@@ -2355,7 +2355,7 @@ async function bootShell(init) {
   // 启动横幅必须在提示符之前
   if (init.banner !== false) {
     out(ANSI.gray + 'HTerMinaL · JSHeL · ' + new Date().toLocaleString('zh-CN') + ANSI.reset + '\r\n');
-    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsl1()；hsl2() 看规划说明。' + ANSI.reset + '\r\n\r\n');
+    out(ANSI.gray + '输入 help() 查看命令；一切皆文件。Linux 命令请先 hsb1()；真实 FreeBSD 用 hsb2()（可选，按需下载）。' + ANSI.reset + '\r\n\r\n');
   }
   editor.start();
 

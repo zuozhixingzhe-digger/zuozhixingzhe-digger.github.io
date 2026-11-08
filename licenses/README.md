@@ -16,13 +16,13 @@ hterminal 本体采用 `Apache-2.0 OR MIT` 双许可（见上级目录的 `LICEN
 | [marked](https://github.com/markedjs/marked) | 12.0.2 | MIT | `LICENSE.marked.txt` | CDN（jsdelivr / unpkg） | 把智能体回复的 Markdown 转成 HTML |
 | [html2canvas](https://github.com/niklasvh/html2canvas) | 1.4.1 | MIT | `LICENSE.html2canvas.txt` | CDN（jsdelivr / unpkg） | 智能体 `screenshot` 工具 |
 | [Pyodide](https://pyodide.org/) | 0.26.4 | MPL-2.0 | `LICENSE.pyodide.txt` | CDN（jsdelivr / unpkg） | 在浏览器里跑 CPython 3.12 (WASM) |
-| [v86](https://github.com/copy/v86) | 0.5.473 | Simplified BSD (BSD-2-Clause) | `LICENSE.v86.txt` | CDN（jsdelivr），**仅 hsl2 启动时** | hsl2：用 WASM 在浏览器里模拟 x86 主机 |
-| [FreeBSD](https://www.freebsd.org/) | 12.0（v86 官方镜像） | 主体 2-Clause BSD；base 含历史 GPL 组件，**见下方专门说明** | `LICENSE.freebsd.txt` | CDN（i.copy.sh），**仅 hsl2 启动时** | hsl2：跑真实的 FreeBSD 用户态 |
+| [v86](https://github.com/copy/v86) | 0.5.473 | Simplified BSD (BSD-2-Clause) | `LICENSE.v86.txt` | CDN（jsdelivr），**仅 hsb2 启动时** | hsb2：用 WASM 在浏览器里模拟 x86 主机 |
+| [FreeBSD](https://www.freebsd.org/) | 12.0（v86 官方镜像） | 主体 2-Clause BSD；base 含历史 GPL 组件，**见下方专门说明** | `LICENSE.freebsd.txt` | CDN（i.copy.sh），**仅 hsb2 启动时** | hsb2：跑真实的 FreeBSD 用户态 |
 
-> **hsl2 两行不是普通依赖。** v86 / WASM / BIOS / FreeBSD 磁盘镜像与 state 快照
-> **不打进 `index.html`、不进本仓库**，只在用户主动敲 `hsl2()` 之后才从第三方 CDN
+> **hsb2 两行不是普通依赖。** v86 / WASM / BIOS / FreeBSD 磁盘镜像与 state 快照
+> **不打进 `index.html`、不进本仓库**，只在用户主动敲 `hsb2()` 之后才从第三方 CDN
 > 下载并缓存进 IndexedDB。它们与前面几行"页面一打开就要用"的依赖性质不同，
-> 详见「hsl2：额外说明」。
+> 详见「hsb2：额外说明」。
 
 `@xterm/addon-fit`、`@xterm/addon-unicode11`、`@xterm/addon-canvas` 与 `xterm.js` 同属一个仓库、同一份 MIT 许可，
 因此共用 `LICENSE.xterm.js.txt`。
@@ -64,13 +64,13 @@ MPL-2.0 是**文件级**弱 copyleft：它要求"对 MPL 覆盖文件的修改�
 - 来源不明、无许可证声明、或仅口头授权的代码片段
 - 有版权但被当作"免费素材"传播的字体、图标集、示例文本、图片
 
-> **hsl2 是唯一需要单独说明的情况**，见下一节。它不是"把 GPL 代码引进仓库"，
+> **hsb2 是唯一需要单独说明的情况**，见下一节。它不是"把 GPL 代码引进仓库"，
 > 而是"用户主动启动后，由浏览器去第三方 CDN 拉一个独立的操作系统镜像"。两者
 > 性质不同，但风险真实存在，所以单列、单说明、默认不启用。
 
-## hsl2：额外说明（风险，必读）
+## hsb2：额外说明（风险，必读）
 
-hsl2 用 [v86](https://github.com/copy/v86)（**Simplified BSD / BSD-2-Clause**，
+hsb2 用 [v86](https://github.com/copy/v86)（**Simplified BSD / BSD-2-Clause**，
 `LICENSE.v86.txt`）在浏览器里以 WASM 模拟一台 x86 机器，并从 v86 官方镜像 CDN
 加载一个 **FreeBSD 12.0** 磁盘镜像与预启动 state 快照。
 
@@ -79,19 +79,19 @@ hsl2 用 [v86](https://github.com/copy/v86)（**Simplified BSD / BSD-2-Clause**�
 - FreeBSD 主体采用 2-Clause BSD（`LICENSE.freebsd.txt` 是该项目的 `COPYRIGHT` 原文），
   但其 base 系统历史上包含 GPL 许可的组件（工具链等），各类 contrib 各自带许可证。
   **授权情况复杂，本项目不做法律结论，也不替用户判断能否用于何种场景。**
-- 因此 hsl2 是**完全可选的**：不敲 `hsl2()`，这段代码一行都不会执行，功能零影响。
-  介意这个风险的直接用 hsl1（自研 POSIX 子集，纯 MIT）就好。
+- 因此 hsb2 是**完全可选的**：不敲 `hsb2()`，这段代码一行都不会执行，功能零影响。
+  介意这个风险的直接用 hsb1（自研 POSIX 子集，纯 MIT）就好。
 
 **本项目的四条处置：**
 
 1. **不分发**：仓库与 `index.html` 里没有 FreeBSD / v86 / WASM 的源码、二进制或镜像，
    也不打包 BIOS、磁盘镜像、state 快照。这里只有加载它们的代码和许可证原文。
 2. **不启动就不加载**：`index.html` 没有任何指向这些 CDN 的 `<script>` / `<link>`；
-   只有用户主动执行 `hsl2()`（或 hsl1 里的 `hsl2`）才会开始网络请求。
+   只有用户主动执行 `hsb2()`（或 hsb1 里的 `hsb2`）才会开始网络请求。
 3. **CDN 加载 + IndexedDB 缓存**：引擎（`libv86.js` / `v86.wasm` / BIOS）、
    `freebsd_state-v2.bin.zst` 与按需读取的 1 MB 磁盘分块，全部经 CDN 拉取后落进
-   IndexedDB；第二次启动优先读本地。缓存可用 `hsl2.clear()` 清除。
-4. **来源可查**：CDN 域名、版本、镜像地址全部写死在 `build/66-hsl2.js` 的 `A` 表里，
+   IndexedDB；第二次启动优先读本地。缓存可用 `hsb2.clear()` 清除。
+4. **来源可查**：CDN 域名、版本、镜像地址全部写死在 `build/66-hsb2.js` 的 `A` 表里，
    不经过任何中间代理；用户可自行审查或改成自己的镜像。
 
 `LICENSE.freebsd.txt` 取自 FreeBSD 源码树的 `COPYRIGHT`，只是**主许可证声明**，

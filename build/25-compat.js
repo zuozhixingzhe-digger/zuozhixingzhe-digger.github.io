@@ -1,5 +1,5 @@
 /* ============================================================================
- * HTerMinaL · hsl1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
+ * HTerMinaL · hsb1（迷你 shell + coreutils 子集 + vim/nano + fastfetch）
  * SPDX-License-Identifier: Apache-2.0 OR MIT
  * 由 AI 智能体生成并维护。
  *
@@ -7,13 +7,13 @@
  * 通用命令名（ls / grep / sed…），实现与任何发行版的源码无关。
  * vim / nano 是「同名精简编辑器」，不是真的 vim/nano，不支持插件与 vimscript。
  *
- * 用法：JSHeL 里敲 `hsl1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
- * 也可以在 JSHeL 里敲 `await hsl1('ls -la')` 跑一行。原命令名 hsl 已不再支持。
+ * 用法：JSHeL 里敲 `hsb1()` 进入（提示符变成 `/home/user $ `），`exit` 回到 JSHeL。
+ * 也可以在 JSHeL 里敲 `await hsb1('ls -la')` 跑一行。原命令名 hsl / hsl1 已统一为 hsb1，老名字不再支持。
  *
  * JSHeL 本身**不认** shell 语法：`ls -la` 在 JSHeL 里就是语法错误，不会被执行。
  * 两套东西彻底分开，才不会出现「这一行到底是 JS 还是 shell」的猜测。
  *
- * hsl2 是可选组件：def('hsl2') 只在用户主动敲命令时才让主线程加载 WASM + FreeBSD。
+ * hsb2 是可选组件：def('hsb2') 只在用户主动敲命令时才让主线程加载 WASM + FreeBSD。
  * 真身是 v86 0.5.473（BSD-2-Clause）+ FreeBSD 12.0，全部经 CDN 按需加载并缓存到
  * IndexedDB；本项目不分发任何相关源码 / 二进制，许可证原文见 licenses/。
  * ==========================================================================*/
@@ -96,7 +96,7 @@ const COMPAT = (function () {
     if (name === 'PWD') return IO.getCwd();
     if (name === 'HOME') return '.home';
     if (name === 'USER') return IO.state.user || 'human';
-    if (name === 'SHELL') return 'hsl1';
+    if (name === 'SHELL') return 'hsb1';
     if (name === 'RANDOM') return String(Math.floor(Math.random() * 32768));
     return ENV[name] === undefined ? '' : ENV[name];
   }
@@ -149,7 +149,7 @@ const COMPAT = (function () {
    *   .home.xxx 这种点分    → 绝对
    *   其余（裸名、./x、../x）→ 相对当前目录，改写成 normPath 认识的 @/x
    */
-  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsl1 的 pwd / 提示符用。
+  /* 把内部「点分路径」渲染成 ext4 风格的真实路径，专给 hsb1 的 pwd / 提示符用。
    * 与 20-worker.js 那份同名，但 COMPAT 是独立闭包，够不着那边，这里必须自带一份。 */
   function dispPath(p) {
     if (!p || p === '.') return '/';
@@ -232,9 +232,9 @@ const COMPAT = (function () {
   }, '格式化输出');
 
   def('pwd', async () => {
-    /* hsl1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
+    /* hsb1 里按 ext4 风格显示真实路径，与提示符一致；JSHeL 仍给内部点分路径。 */
     const p = IO.getCwd();
-    return { out: (IO.state.mode === 'hsl1' ? dispPath(p) : p) + '\n' };
+    return { out: (IO.state.mode === 'hsb1' ? dispPath(p) : p) + '\n' };
   }, '当前目录');
 
   def('cd', async (a) => {
@@ -784,7 +784,7 @@ const COMPAT = (function () {
   }, '系统信息');
 
   def('env', async () => {
-    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsl1', TERM:'xterm-256color' };
+    const o = { PWD: IO.getCwd(), HOME:'.home', USER:IO.state.user, SHELL:'hsb1', TERM:'xterm-256color' };
     Object.assign(o, ENV);
     return { out: Object.entries(o).map(([k, v]) => k + '=' + v).join('\n') + '\n' };
   }, '环境变量');
@@ -930,12 +930,12 @@ const COMPAT = (function () {
    * 以前这里 def('help') 把内置的那个顶掉了，用户敲 help 只看得到兼容层，
    * 会以为 JSHeL 的函数全没了。 */
 
-  /* help 只属于 hsl1。JSHeL 里的 help() 是另一个东西（列 JS API），
+  /* help 只属于 hsb1。JSHeL 里的 help() 是另一个东西（列 JS API），
    * 两者不共享实现，也不需要抢名字——一个在 JS 命名空间里，一个在命令表里。 */
   def('help', async () => {
     const names = Object.keys(CMDS).sort();
     const w = 78;
-    let s = CYAN + 'hsl1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
+    let s = CYAN + 'hsb1 命令' + R + DIM + '（Linux 风格的自研子集：管道/重定向/变量/通配符可用，不是完整的 POSIX shell）' + R + '\n';
     let line = '  ';
     for (const n of names) {
       const seg = n + '  ';
@@ -943,7 +943,7 @@ const COMPAT = (function () {
       line += seg;
     }
     s += line + '\n';
-    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsl1 再进一层 · hsl2 启动可选组件' + R + '\n';
+    s += '\n' + DIM + 'man <命令> 看单条说明 · exit 退出这一层 · hsb1 再进一层 · hsb2 启动可选组件' + R + '\n';
     return { out: s };
   }, '命令表');
 
@@ -997,7 +997,7 @@ const COMPAT = (function () {
       version: IO.version || '0.0.0.0',
       engine: info.engine || 'n/a',
       os: info.os || 'n/a',
-      shell: 'JSHeL + hsl1',
+      shell: 'JSHeL + hsb1',
       term: 'xterm.js · ' + IO.cols + 'x' + IO.rows,
       res: info.screen || 'n/a',
       dpr: info.dpr || 1,
@@ -1402,72 +1402,72 @@ const COMPAT = (function () {
     return { hold: true };
   }, '编辑器（易用模式）');
 
-  /* hsl1 是一个**可嵌套**的交互层：每敲一次 hsl1 压一层，exit 弹一层。
+  /* hsb1 是一个**可嵌套**的交互层：每敲一次 hsb1 压一层，exit 弹一层。
    * 用栈而不是一个布尔开关，是因为布尔量表达不了「第 2 层退出后回到第 1 层的目录」。
    * 每一层记住进入时的 cwd，弹栈时恢复——这就是 subshell 的语义。 */
-  const HSL = [];
-  function hslDepth() { return HSL.length; }
-  function hslPush() {
-    HSL.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
-    IO.setMode('hsl1');
+  const HSB = [];
+  function hsbDepth() { return HSB.length; }
+  function hsbPush() {
+    HSB.push({ cwd: IO.getCwd(), env: Object.assign({}, ENV) });
+    IO.setMode('hsb1');
     IO.kick();
-    return HSL.length;
+    return HSB.length;
   }
-  function hslPop() {
-    const f = HSL.pop();
+  function hsbPop() {
+    const f = HSB.pop();
     if (!f) return false;
     ENV = Object.assign(Object.create(null), f.env);
     IO.setCwd(f.cwd);
-    IO.setMode(HSL.length ? 'hsl1' : 'jshel');
+    IO.setMode(HSB.length ? 'hsb1' : 'jshel');
     IO.kick();
     return true;
   }
 
-  def('hsl1', async () => {
-    const d = hslPush();
-    return { out: DIM + 'hsl1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
-  }, '再进一层 hsl1（可嵌套）');
+  def('hsb1', async () => {
+    const d = hsbPush();
+    return { out: DIM + 'hsb1: 第 ' + d + ' 层（exit 退出这一层）' + R + '\n' };
+  }, '再进一层 hsb1（可嵌套）');
 
-  /* ---------------------------------------------------------------- hsl2：可选组件
+  /* ---------------------------------------------------------------- hsb2：可选组件
    * 用户已明确要求实现：WASM + v86 + 真实 FreeBSD 12.0 用户态。
-   * 四条硬约束不变（风险、可选、不分发、不启动不加载），见 HSL2_NOTICE。 */
-  const HSL2_NOTICE = [
-    'hsl2 用 WASM（v86）在浏览器里模拟 x86，跑真实的 FreeBSD 12.0 用户态。',
+   * 四条硬约束不变（风险、可选、不分发、不启动不加载），见 HSB2_NOTICE。 */
+  const HSB2_NOTICE = [
+    'hsb2 用 WASM（v86）在浏览器里模拟 x86，跑真实的 FreeBSD 12.0 用户态。',
     '',
     '风险与合规（请务必先读）：',
     '  · FreeBSD 及其工具链有 GPL 相关的历史遗留问题，授权情况复杂；',
-    '  · 因此 hsl2 是【可选的】：可以完全不用，默认功能不受任何影响；',
+    '  · 因此 hsb2 是【可选的】：可以完全不用，默认功能不受任何影响；',
     '  · 本项目【不分发】FreeBSD / v86 / WASM 相关的源码或二进制；',
-    '  · 组件只在用户【主动启动 hsl2】时才经 CDN 加载，并缓存到 IndexedDB；',
+    '  · 组件只在用户【主动启动 hsb2】时才经 CDN 加载，并缓存到 IndexedDB；',
     '    用户不启动，就不会下载、不会加载，也不占用任何空间；',
     '  · 第三方许可证原文见 licenses/，专门章节见 README §5.4。',
     '',
-    '用法：hsl2() 启动；hsl2({cold:true}) 跳过快照走冷启动；hsl2.stop() 停止；hsl2.clear() 清缓存。'
+    '用法：hsb2() 启动；hsb2({cold:true}) 跳过快照走冷启动；hsb2.stop() 停止；hsb2.clear() 清缓存。'
   ].join('\n');
 
-  def('hsl2', async (a) => {
+  def('hsb2', async (a) => {
     const cold = a.includes('--cold') || a.includes('-c');
-    const r = await IO.call('hsl2.open', cold ? { cold: true } : {}, true);
+    const r = await IO.call('hsb2.open', cold ? { cold: true } : {}, true);
     return {
-      out: YELLOW + '⚠ hsl2 · 可选组件：WASM + v86 + FreeBSD 12.0' + R + '\n'
-         + DIM + HSL2_NOTICE + R + '\n'
-         + DIM + (r && r.reused ? '已复用 hsl2 窗口' : '已打开 hsl2 窗口') + '，组件开始按需下载。' + R + '\n'
+      out: YELLOW + '⚠ hsb2 · 可选组件：WASM + v86 + FreeBSD 12.0' + R + '\n'
+         + DIM + HSB2_NOTICE + R + '\n'
+         + DIM + (r && r.reused ? '已复用 hsb2 窗口' : '已打开 hsb2 窗口') + '，组件开始按需下载。' + R + '\n'
     };
-  }, '启动 hsl2（WASM + FreeBSD + v86，可选组件；有许可证风险，可选不用）');
+  }, '启动 hsb2（WASM + FreeBSD + v86，可选组件；有许可证风险，可选不用）');
 
-  /* 从 hsl1 里敲 jshel：与 hsl1 对称，回到 JSHeL（弹出这一层），
-   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSL、还多出来一个窗口」的困惑，
-   * 也正是「hsl1 打不开 jshel」的根源：hsl1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
+  /* 从 hsb1 里敲 jshel：与 hsb1 对称，回到 JSHeL（弹出这一层），
+   * 而不是再开一个窗口——否则会出现「敲了 jshel 却还在 HSB、还多出来一个窗口」的困惑，
+   * 也正是「hsb1 打不开 jshel」的根源：hsb1 能进，jshel 却回不去（旧逻辑只会开新窗口）。
    * 想开「独立 JSHeL 窗口」（旧语义：新 worker、新环境、exit 关窗互不牵连）时显式加 -n / --new。 */
   def('jshel', async (a) => {
     const newWin = a.includes('-n') || a.includes('--new');
     const dirArg = a.find(x => x !== '-n' && x !== '--new');
-    if (hslDepth() > 0 && !newWin) {
-      const d = hslDepth();
-      hslPop();
-      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsl1）' : '') + R + '\n' };
+    if (hsbDepth() > 0 && !newWin) {
+      const d = hsbDepth();
+      hsbPop();
+      return { out: DIM + 'jshel: 回到 JSHeL' + (d > 1 ? '（退出第 ' + d + ' 层 hsb1）' : '') + R + '\n' };
     }
-    if (hslDepth() === 0 && !dirArg && !newWin) {
+    if (hsbDepth() === 0 && !dirArg && !newWin) {
       return { out: DIM + 'jshel: 已经是 JSHeL' + R + '\n' };
     }
     /* 开一个新的独立 JSHeL 窗口，cwd 继承当前目录（可带一个目录参数） */
@@ -1481,13 +1481,13 @@ const COMPAT = (function () {
     const r = await IO.call('shell.open', cwd, true);
     if (!r) return { code: 1, err: 'jshel: 打开窗口失败\n' };
     return { out: DIM + 'jshel: 新窗口 ' + (r.cwd || cwd) + '（独立会话，exit 关闭）' + R + '\n' };
-  }, '回到 JSHeL（与 hsl1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
+  }, '回到 JSHeL（与 hsb1 对称）；jshel -n [目录] 开新的独立 JSHeL 窗口');
 
   def('exit', async () => {
-    if (hslDepth()) {
-      const d = HSL.length;
-      hslPop();
-      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsl1' : 'exit: 回到 JSHeL') + R + '\n' };
+    if (hsbDepth()) {
+      const d = HSB.length;
+      hsbPop();
+      return { out: DIM + (d > 1 ? 'exit: 回到第 ' + (d - 1) + ' 层 hsb1' : 'exit: 回到 JSHeL') + R + '\n' };
     }
     return { exit: true };
   }, '退出这一层（最外层退出终端）');
@@ -1591,7 +1591,7 @@ const COMPAT = (function () {
   }
 
   /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
-   * 以前这里会去 IO.api[name] 找同名函数，于是 hsl1 里敲 `write` 就真去写文件了，
+   * 以前这里会去 IO.api[name] 找同名函数，于是 hsb1 里敲 `write` 就真去写文件了，
    * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
   async function tryExternal(name, args) {
     for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
@@ -1621,7 +1621,7 @@ const COMPAT = (function () {
 
   function attach(io) {
     IO = io;
-    HSL.length = 0;
+    HSB.length = 0;
     ENV.PATH = '/bin:/usr/bin';
     ENV.TERM = 'xterm-256color';
     ENV.HOME = '.home';
@@ -1629,7 +1629,7 @@ const COMPAT = (function () {
 
   return {
     attach, execLine, commands: CMDS, lex,
-    hslPush, hslPop, hslDepth, hsl2Notice: () => HSL2_NOTICE,
+    hsbPush, hsbPop, hsbDepth, hsb2Notice: () => HSB2_NOTICE,
     editor: makeEditor,
     get ENV() { return ENV; }
   };
