@@ -33,6 +33,9 @@ function writeErr(s) { out(ANSI.red + s + ANSI.reset); }
  * 有表就一律按表算——折行与光标列必须和屏幕上的渲染完全一致，
  * 差一列，打字时光标就会一路往右跑。表由主线程用 unicodeService.wcwidth 导出。 */
 let WC2 = null, WC0 = null;
+/* 主线程在 init 里发过来的「对象 → 成员」目录，Tab 补全查它。
+ * 为什么不在 Worker 里反射：这里的 document 是 Proxy，跨线程拿不到真成员。 */
+let SURFACE = null;
 function inRanges(r, cp) {
   if (!r) return false;
   let lo = 0, hi = r.length - 1;
@@ -541,6 +544,15 @@ class LineEditor {
       }
       return;
     }
+    /* 手机输入法的粘贴**不会**带括号粘贴标记（\x1b[200~…）：xterm 的 onData
+     * 一次就给一整段带 \n 的文本。按字符流处理会把每个 \n 当成回车，
+     * 于是「粘一段函数」变成「逐行执行 N 条命令」——第一行 SyntaxError，后面全乱。
+     * 真实按一次 Enter 只给一个 \r（长度 1），所以「长度 > 1 且含 \n」可以安全地
+     * 当作粘贴，不需要猜。桌面拖拽/右键粘贴走的是带标记那条路，不受影响。 */
+    if (!this.paste && data.length > 1 && data.indexOf('\n') >= 0) {
+      this.insert(data.replace(/\r\n?/g, '\n'));
+      return;
+    }
     let i = 0;
     while (i < data.length) {
       // 粘贴模式
@@ -639,15 +651,29 @@ class LineEditor {
           p.then(res => {
             this.busy = false;
             if (!res) { this.redraw(); return; }
-            if (res.candidates && res.candidates.length > 1) {
-              out('\r\n');
-              out(res.candidates.map(c => c.name).join('   ') + '\r\n');
-              this.redraw();
-            } else if (res.value !== undefined) {
+            const sameSpot = this._tabAt === before;
+            this._tabAt = before;
+            /* 有公共前缀就先补进去（bash 的手感）；已经在同一位置按过第二次，
+             * 或者本来就没得补，才把候选表打出来。一次刷 80 个名字等于没补。 */
+            if (res.value !== undefined && res.value !== before) {
               this.buf = res.value + after;
               this.cur = res.value.length;
               this.redraw();
+              return;
             }
+            if (res.candidates && res.candidates.length > 1) {
+              if (sameSpot || !res.value) {
+                out('\r\n');
+                const lines = res.lines || [res.candidates.map(c => c.name).join('   ')];
+                out(lines.join('\r\n') + '\r\n');
+                this._tabAt = '';
+                this.redraw();
+                return;
+              }
+              this.redraw();
+              return;
+            }
+            this.redraw();
           }).catch(() => { this.busy = false; this.redraw(); });
         }
         continue;
@@ -1141,6 +1167,8 @@ function makeShell(ctx) {
       ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.app 放应用（脚本也是应用，不是二进制），.bin 已并入 .app，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
+      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。连按两次 Tab 列出候选。'],
+      ['全表', 'api() 打印全部内置 API（分组 + 一句话说明），api("窗口") 只看某一组。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -1150,6 +1178,84 @@ function makeShell(ctx) {
 
   async function historyList() {
     state.history.forEach((h, i) => out(String(i + 1).padStart(4) + '  ' + h + '\r\n'));
+  }
+
+  /* ------------------------------------------------------------ 全部 API 表
+   * `api()` 把 JSHeL 认得的每一样东西排成表：分组的名字、签名、一句话说明。
+   * 分组表在这里手写（顺序与措辞比自动分类有用），成员是否存在以 `api` 为准。
+   * 不在任何组里的键归到「其它」——加了新 API 忘了登记也不会漏掉，只是没说明。 */
+  const API_GROUPS = [
+    ['文件', ['ls','ll','dir','cd','pwd','cat','write','writeFile','readFile','listDir','append',
+              'mkdir','rm','mv','cp','stat','exists','tree','find','head','tail','grep',
+              'open','exec','run','du','df','mount']],
+    ['spotfs', ['sptc','sptn','spta','sptr','sptx','sptd','sptm','spotEscape','spotUnescape','spotExportName']],
+    ['包', ['install','uninstall','requirePkg','pkg']],
+    ['窗口', ['spawn','winOpen','winClose','winList','openWindow','closeWindow','listWindows','agentOpen','jshel']],
+    ['系统', ['python','py','saveFile','askFile','fetchText','openUrl','notify','perm','requestPermission',
+              'settings','threads','processes','ps','kill','nuke','clear','history','exit']],
+    ['输出', ['print','echo','toast','inspect','api','apiList']],
+    ['页面', ['page','$','$$','query','queryAll','text','html']],
+    ['DOM', ['document','window','navigator','location','console','fetch']],
+    ['智能体', ['agent','agentTui','agentOpen']]
+  ];
+
+  const API_DESC = {
+    ls:'列目录', ll:'详细列表', cd:'切目录（只影响文件 API 的相对路径）', pwd:'当前目录',
+    cat:'打印文件内容', write:'写文件', readFile:'读文件（返回字符串）', listDir:'列目录（原始数组）',
+    append:'追加内容', mkdir:'建目录', rm:'删除', mv:'移动/改名', cp:'复制', stat:'元信息',
+    exists:'是否存在', tree:'目录树', find:'按名字找', head:'前 N 行', tail:'后 N 行', grep:'按内容搜',
+    open:'用合适的窗口打开', exec:'按类型执行（html→浏览器，js→shell）', run:'执行一段 JS', du:'占用', df:'挂载点', mount:'列挂载',
+    sptc:'创建节点', sptn:'新建（opts）', spta:'追加', sptr:'读取', sptx:'执行', sptd:'删除', sptm:'（占位）',
+    install:'装包', uninstall:'卸包', requirePkg:'require 一个包', pkg:'包管理命名空间',
+    spawn:'开 shell 窗口跑一段代码', winOpen:'开窗口', winClose:'关窗口', winList:'窗口列表',
+    python:'Python（Pyodide）', saveFile:'存到本机', askFile:'选文件', fetchText:'抓网页文本',
+    openUrl:'开链接', notify:'系统通知', perm:'权限', settings:'设置', threads:'线程列表',
+    kill:'结束线程', nuke:'清空 .home', clear:'清屏', history:'历史命令', exit:'退出 shell',
+    print:'打印到终端', toast:'弹一条提示', api:'打印这张表（可带过滤词）', apiList:'同 api()',
+    echo:'print 的别名', console:'浏览器控制台（log/table/time…）', inspect:'对象的可读描述',
+    document:'页面文档（和 F12 里那个是同一个）', window:'全局对象',
+    navigator:'浏览器/设备信息', location:'当前地址', fetch:'发 HTTP 请求',
+    copy:'复制文本到剪贴板', date:'当前时间（格式化字符串）',
+    page:'页面操作命名空间', $:'querySelector 简写', $$:'querySelectorAll 简写',
+    agent:'问智能体一句', agentTui:'智能体 TUI'
+  };
+
+  function apiTable(filter) {
+    const keys = Object.keys(api).filter(k => typeof api[k] !== 'undefined' && k[0] !== '_');
+    const seen = new Set();
+    const cols = Math.max(40, state.cols || 80);
+    const q = String(filter == null ? '' : filter).trim();
+    const hit = (s) => !q || s.indexOf(q) >= 0;
+
+    out('\r\n' + ANSI.bold + ANSI.cyan + 'HTerMinaL · JSHeL API 表' + ANSI.reset
+      + ANSI.gray + '   （Tab 补全 / api("窗口") 过滤）' + ANSI.reset + '\r\n\r\n');
+
+    for (const [group, names] of API_GROUPS) {
+      const list = names.filter(n => keys.includes(n) && !seen.has(n))
+        .map(n => ({ n, d: API_DESC[n] || '' }))
+        .filter(x => hit(x.n) || hit(x.d) || hit(group));
+      if (!list.length) continue;
+      list.forEach(x => seen.add(x.n));
+      out(ANSI.yellow + '── ' + group + ' ' + '─'.repeat(Math.max(2, Math.min(46, cols - strWidth(group) - 6))) + ANSI.reset + '\r\n');
+      const wn = Math.min(22, Math.max(...list.map(x => strWidth(x.n))) + 2);
+      for (const x of list) {
+        const pad = ' '.repeat(Math.max(0, wn - strWidth(x.n)));
+        const room = Math.max(12, cols - wn - 3);
+        const body = wrapText(x.d, room);
+        out('  ' + ANSI.cyan + x.n + ANSI.reset + pad + ANSI.gray + (body[0] || '') + ANSI.reset + '\r\n');
+        for (let i = 1; i < body.length; i++) out('  ' + ' '.repeat(wn) + ANSI.gray + body[i] + ANSI.reset + '\r\n');
+      }
+    }
+
+    const rest = keys.filter(k => !seen.has(k)).sort();
+    if (rest.length) {
+      const list = rest.filter(hit).map(n => ({ n, d: API_DESC[n] || '' }));
+      if (list.length) {
+        out(ANSI.yellow + '── 其它 ' + '─'.repeat(Math.max(2, Math.min(46, cols - 8))) + ANSI.reset + '\r\n');
+        for (const x of list) out('  ' + ANSI.cyan + x.n + ANSI.reset + '  ' + ANSI.gray + x.d + ANSI.reset + '\r\n');
+      }
+    }
+    if (q) out(ANSI.gray + '\r\n（只显示匹配「' + q + '」的项；api() 看全部）' + ANSI.reset + '\r\n');
   }
 
   async function exit(code) {
@@ -1242,29 +1348,190 @@ function makeShell(ctx) {
     });
   }
 
-  /* ---- 补全 ---- */
-  async function complete(before) {
-    const m = before.match(/([^\s()\[\]{}'"`,;]*)$/);
-    const frag = m ? m[1] : '';
-    const head = before.slice(0, before.length - frag.length);
-    let candidates = [];
-    if (/^\.?(?:[\w\u4e00-\u9fa5-]*\.)*[\w\u4e00-\u9fa5-]*$/.test(frag) && (frag.startsWith('.') || before.trim() === frag || /\b(ls|cd|cat|open|exec|rm|stat)\s*\(?['"]?$/.test(head))) {
+  /* ================================================================ 补全
+   *
+   * 用户按 Tab 想补的是什么？**JS 里的东西**：全局函数、对象成员、自己
+   * 声明的变量。不是「当前目录的文件」——JSHeL 是求值器，不是 shell，
+   * 这里根本没有「当前目录」这个概念（要看文件请 ls()）。
+   * 以前 `before.trim() === frag` 这个条件让**任何**单个词都落进文件分支，
+   * 于是 `doc<Tab>` 补出来的是当前目录里叫 doc 的文件（没有就啥都没有）。
+   *
+   * 只有一种情况补文件：他明确打出了路径（/  ./  ../  ~，或者已经带斜杠）。
+   */
+  function surfaceOf(base) {
+    if (!SURFACE) return null;
+    return SURFACE.members[base] || SURFACE.ctors[base] || null;
+  }
+
+  function kindOf(v) {
+    if (v === null) return 'null';
+    const t = typeof v;
+    if (t === 'function') return /^[A-Z]/.test(v.name || '') ? 'class' : 'func';
+    if (Array.isArray(v)) return 'array';
+    return t;
+  }
+
+  /* 求值一个成员链（document.body / FS / Math），拿它的成员名。
+   * 求不到就返回 null —— 补全失败不该抛错，更不该打断输入。 */
+  function membersOfPath(path) {
+    const direct = surfaceOf(path);
+    if (direct) return direct;
+    let obj;
+    try { obj = Function('return (' + path + ')')(); } catch (e) { return null; }
+    if (obj == null) return null;
+    const out = new Set();
+    let o = obj, n = 0;
+    while (o && n < 3) {
       try {
-        const slash = frag.lastIndexOf('.');
-        const dirPart = slash >= 0 ? frag.slice(0, slash) : '';
-        const namePart = slash >= 0 ? frag.slice(slash + 1) : frag;
-        const dir = await call('fs.resolve', dirPart || state.cwd);
-        const rows = await fsls(dir);
-        candidates = rows.filter(r => r.name.toLowerCase().startsWith(namePart.toLowerCase()))
-          .map(r => ({ name:r.name + (r.kind === 'dir' ? '.' : ''), value:(slash >= 0 ? frag.slice(0, slash + 1) : '') + r.name + (r.kind === 'dir' ? '.' : '') }));
-      } catch (e) {}
-    } else {
-      const keys = new Set(Object.getOwnPropertyNames(globalThis));
-      candidates = [...keys].filter(k => k.toLowerCase().startsWith(frag.toLowerCase()) && !k.startsWith('__'))
-        .slice(0, 80).map(k => ({ name:k, value:k }));
+        for (const k of Object.getOwnPropertyNames(o)) {
+          if (k === 'constructor' || k === '__proto__' || k[0] === '_') continue;
+          out.add(k);
+        }
+      } catch (e) { break; }
+      try { o = Object.getPrototypeOf(o); } catch (e) { break; }
+      n++;
     }
-    if (candidates.length === 1) return { value:head + candidates[0].value, candidates };
-    return { candidates, value:undefined };
+    /* 静态成员（Array.from 这种）在函数自己身上，上面已经覆盖 */
+    return [...out];
+  }
+
+  function descFor(base, name) {
+    if (!SURFACE || !SURFACE.desc) return '';
+    return SURFACE.desc[base + '.' + name] || SURFACE.desc[name] || '';
+  }
+
+  /* 候选按「类型上色 + 名字对齐 + 一句话说明」排成表。
+   * 名字列的宽度按显示宽度算（中文/emoji 占两格），不能按字符数。 */
+  function tabLines(cands, cols) {
+    const color = k => k === 'func' ? ANSI.cyan : k === 'class' ? ANSI.magenta
+      : k === 'dir' ? ANSI.blue : k === 'string' ? ANSI.green : k === 'number' ? ANSI.yellow : '';
+    const plain = cands.map(c => c.name + (c.kind === 'func' ? '()' : ''));
+    const wn = Math.max(8, Math.min(26, Math.max(...plain.map(s => strWidth(s))) + 2));
+    const lines = [];
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
+      const pad = ' '.repeat(Math.max(0, wn - strWidth(plain[i])));
+      const meta = c.kind === 'func' ? '函数' : c.kind === 'class' ? '类'
+        : c.kind === 'dir' ? '目录' : c.kind === 'file' ? '文件'
+        : c.kind === 'string' ? '字符串' : c.kind === 'number' ? '数字'
+        : c.kind === 'array' ? '数组' : c.kind === 'boolean' ? '布尔' : '对象';
+      const d = c.desc ? '  ' + c.desc : '';
+      lines.push(ANSI.reset + color(c.kind) + plain[i] + ANSI.reset + pad
+        + ANSI.gray + meta + d + ANSI.reset);
+      /* 说明太长就折到下一行，保持表格不横向溢出 */
+      if (strWidth(lines[lines.length - 1]) > cols - 2) {
+        const s = (c.desc || '');
+        const room = Math.max(10, cols - wn - 8);
+        if (strWidth(s) > room) {
+          lines.pop();
+          lines.push(ANSI.reset + color(c.kind) + plain[i] + ANSI.reset + pad + ANSI.gray + meta + ANSI.reset);
+          for (const chunk of wrapText(s, room)) lines.push(' '.repeat(wn) + ANSI.gray + chunk + ANSI.reset);
+        }
+      }
+    }
+    return lines;
+  }
+
+  function wrapText(s, width) {
+    const out = [];
+    let cur = '';
+    for (const ch of String(s)) {
+      if (strWidth(cur + ch) > width) { out.push(cur); cur = ch; }
+      else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function commonPrefix(list) {
+    if (!list.length) return '';
+    let p = list[0];
+    for (const s of list) {
+      let i = 0;
+      while (i < p.length && i < s.length && p[i] === s[i]) i++;
+      p = p.slice(0, i);
+      if (!p) break;
+    }
+    return p;
+  }
+
+  async function completePath(typed, head) {
+    const slash = typed.lastIndexOf('/');
+    const dirPart = slash >= 0 ? typed.slice(0, slash + 1) : '';
+    const namePart = slash >= 0 ? typed.slice(slash + 1) : typed;
+    let rows = [];
+    try {
+      const dir = await call('fs.resolve', dirPart || state.cwd);
+      rows = await fsls(dir);
+    } catch (e) { return { candidates: [], value: undefined }; }
+    const cands = rows
+      .filter(r => r.name.toLowerCase().startsWith(namePart.toLowerCase()))
+      .map(r => ({
+        name: r.name + (r.kind === 'dir' ? '/' : ''),
+        value: r.name + (r.kind === 'dir' ? '/' : ''),
+        kind: r.kind === 'dir' ? 'dir' : 'file',
+        desc: r.kind === 'dir' ? '目录' : (fmtBytes(r.size || 0))
+      }));
+    if (cands.length === 1) return { value: head + dirPart + cands[0].value, candidates: cands };
+    const cp = commonPrefix(cands.map(c => c.name));
+    const value = (cands.length > 1 && cp.length > namePart.length) ? head + dirPart + cp : undefined;
+    return { candidates: cands, value, lines: tabLines(cands, state.cols) };
+  }
+
+  async function complete(before) {
+    /* 1) 明确的路径：/  ./  ../  ~  或已经带斜杠的片段 */
+    const pm = before.match(/(^|[\s(,='"[{])((?:\.{0,2}\/|~\/)[^\s'"`,;()]*)$/);
+    if (pm) return await completePath(pm[2], before.slice(0, before.length - pm[2].length));
+
+    /* 2) 成员链：document.bo / Math.ma / FS.wr */
+    const mm = before.match(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)?$/);
+    if (mm) {
+      const base = mm[1], part = mm[2] || '';
+      const head = before.slice(0, before.length - mm[0].length) + base + '.';
+      const all = membersOfPath(base);
+      if (all) {
+        const cands = all.filter(k => k.toLowerCase().startsWith(part.toLowerCase()))
+          .map(k => ({ name: k, value: k, kind: (() => { try { return kindOf(Function('return (' + base + ')')()[k]); } catch (e) { return 'obj'; } })(),
+                       desc: descFor(base, k) }))
+          .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
+          .slice(0, 200);
+        if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+        const cp = commonPrefix(cands.map(c => c.name));
+        return {
+          candidates: cands,
+          value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
+          lines: tabLines(cands, state.cols)
+        };
+      }
+      return { candidates: [], value: undefined };
+    }
+
+    /* 3) 纯标识符：全局 + 自己声明的变量 */
+    const im = before.match(/([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)$/);
+    const part = im ? im[1] : '';
+    const head = im ? before.slice(0, before.length - part.length) : before;
+    const keys = new Set();
+    try { Object.getOwnPropertyNames(globalThis).forEach(k => keys.add(k)); } catch (e) {}
+    if (SURFACE) {
+      (SURFACE.extra || []).forEach(k => keys.add(k));
+      Object.keys(SURFACE.members || {}).forEach(k => keys.add(k));
+    }
+    const cands = [...keys]
+      .filter(k => !k.startsWith('__') && k !== 'globalThis' && k.toLowerCase().startsWith(part.toLowerCase()))
+      .map(k => {
+        let kind = 'obj', desc = descFor('', k);
+        try { kind = kindOf(globalThis[k]); } catch (e) {}
+        return { name: k, value: k, kind, desc };
+      })
+      .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
+      .slice(0, 200);
+    if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+    const cp = commonPrefix(cands.map(c => c.name));
+    return {
+      candidates: cands,
+      value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
+      lines: tabLines(cands, state.cols)
+    };
   }
 
   /* ---- 组装全局 API ---- */
@@ -1314,6 +1581,10 @@ function makeShell(ctx) {
     __state:state
   };
   api.__complete = complete;
+  /* `api()` 是给人看的：全部内置 API 分组表。挂在这里是因为它要遍历 api 自己，
+   * 挂在对象外面就得再抄一份名单，抄着抄着就不同步了。 */
+  api.api = apiTable;
+  api.apiList = apiTable;
   api.hterm = api;
   api.global = globalThis;
   return api;
@@ -3020,6 +3291,7 @@ self.onmessage = async (ev) => {
       HT_VERSION = m.version || HT_VERSION;
       /* 渲染层的宽度表：先于任何折行/提示符绘制生效 */
       if (m.wc && m.wc.w2 && m.wc.w0) { WC2 = m.wc.w2; WC0 = m.wc.w0; }
+      if (m.surface) { SURFACE = m.surface; }
       if (m.role === 'python') await bootPython(m);
       else await bootShell(m);
     } catch (e) {

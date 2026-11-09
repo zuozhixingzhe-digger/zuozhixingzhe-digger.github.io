@@ -1924,6 +1924,41 @@ body.drag-internal .br-shield{display:block}
   border-radius:7px;padding:8px;color:var(--fg-dim);max-height:130px;overflow:auto}
 
 /* =====================================================================
+ * HTML 编辑器（canvas 自绘代码区 + iframe 预览）
+ * ===================================================================== */
+.hx{display:flex;flex-direction:column;height:100%;min-height:0}
+.hx-bar{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);
+  background:var(--panel-solid);flex:0 0 auto;flex-wrap:wrap}
+.hx-sp{flex:1 1 auto}
+.hx-chk{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--fg-dim);
+  padding:2px 6px;border-radius:6px;cursor:pointer;user-select:none}
+.hx-chk:hover{background:rgba(127,127,127,.10)}
+.hx-chk input{margin:0;accent-color:var(--accent)}
+.hx-body{display:grid;grid-template-columns:1fr 6px 1fr;flex:1 1 auto;min-height:0;min-width:0}
+.hx-edit{position:relative;min-width:0;min-height:0;overflow:hidden;background:#0f1617}
+body.light .hx-edit{background:#fff}
+.hx-cv{display:block;width:100%;height:100%;touch-action:none;cursor:text}
+/* 输入层：1px、透明、贴在光标下面。它不显示任何文字——文字在 canvas 上。
+ * 留着它是为了输入法（候选框要贴着光标）、粘贴、原生撤销。 */
+.hx-in{position:absolute;left:0;top:0;width:2px;height:1.2em;padding:0;margin:0;
+  border:0;outline:0;resize:none;overflow:hidden;background:transparent;color:transparent;
+  caret-color:transparent;font:inherit;opacity:.01;z-index:2;white-space:pre;overflow-wrap:normal}
+.hx-gutter{background:var(--line);cursor:col-resize;touch-action:none;position:relative}
+.hx-gutter:hover{background:var(--accent-dim)}
+.hx-gutter::after{content:'';position:absolute;left:50%;top:50%;width:2px;height:22px;
+  margin:-11px 0 0 -1px;border-radius:2px;background:var(--fg-mute);opacity:.5}
+.hx-prev{position:relative;min-width:0;min-height:0;background:#fff}
+.hx-frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
+.hx-foot{display:flex;align-items:center;gap:10px;padding:3px 9px;border-top:1px solid var(--line);
+  font-size:10.5px;color:var(--fg-mute);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.hx-foot .hx-sp{flex:1 1 auto}
+.hx-foot [data-f="run"]{color:var(--accent-dim)}
+@media (max-width:560px){
+  .hx-bar{gap:4px;padding:5px 6px}
+  .hx-foot [data-f="hint"]{display:none}
+}
+
+/* =====================================================================
  * 响应式
  * ===================================================================== */
 @media (max-width:560px){

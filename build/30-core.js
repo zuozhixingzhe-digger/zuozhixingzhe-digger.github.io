@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.31';
+const HT_VERSION = '0.0.1.32';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -472,6 +472,7 @@ const APP_DEFS = [
   { name:'data', title:'数据', desc:'编码 / 时间戳 / 哈希 / 随机', type:'data', icon:'⇄' },
   { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
   { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
+  { name:'htmlapp', title:'HTML 编辑器', desc:'写 HTML，右边实时渲染（canvas 代码区）', type:'htmlapp', icon:'</>' },
   { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
   { name:'timer', title:'计时器', desc:'秒表与倒计时，到点响铃', type:'timer', icon:'◷' },
   { name:'image', title:'看图修图', desc:'查看图片、裁剪标注打码（截图搭档）', type:'image', icon:'▩' },

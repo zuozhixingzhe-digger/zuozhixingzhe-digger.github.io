@@ -351,6 +351,131 @@ function initTopbarKeys() {
   window.addEventListener('blur', () => { Keys.held = { ctrl:false }; Keys.refresh(); });
 }
 
+/* ---------------------------------------------------------------- 补全目录
+ * Tab 补全要知道「有哪些对象、每个对象有哪些成员、每个成员是干什么的」。
+ *
+ * 为什么在主线程算一次再发给 Worker：Worker 里的 `document` 是 Proxy，
+ * `Object.getOwnPropertyNames` 拿不到真成员（跨线程没有同步反射）；而主线程
+ * 反射一次只要 2~3ms，结果还能被所有终端复用。算完按对象名分组成表。
+ *
+ * 说明文字（DESC）只给常用项，剩下的靠反射补名单——宁可不解释，也不要漏。
+ */
+const HT_MEMBER_DESC = {
+  'document.querySelector': '找第一个匹配的元素',
+  'document.querySelectorAll': '找全部匹配的元素',
+  'document.createElement': '建元素（还没进页面）',
+  'document.getElementById': '按 id 找元素',
+  'document.body': '页面 <body>',
+  'document.head': '页面 <head>',
+  'document.title': '标签页标题',
+  'document.cookie': 'cookie（读写）',
+  'document.write': '真·document.write，会清空整页',
+  'document.addEventListener': '绑事件',
+  'window.innerWidth': '视口宽',
+  'window.innerHeight': '视口高',
+  'window.open': '开新标签（本应用里被接管）',
+  'window.location': '当前地址',
+  'window.localStorage': '本地存储',
+  'window.fetch': '发 HTTP 请求',
+  'console.log': '打印（终端里显示）',
+  'console.table': '打印表格',
+  'console.time': '开始计时',
+  'console.timeEnd': '结束计时并打印耗时',
+  'FS.read': '读文件，返回内容',
+  'FS.write': '写文件',
+  'FS.list': '列目录',
+  'FS.remove': '删除',
+  'FS.move': '移动 / 改名',
+  'FS.copy': '复制',
+  'FS.exists': '是否存在',
+  'FS.mkdir': '建目录',
+  'FS.stat': '元信息',
+  'Settings.get': '读设置',
+  'Settings.set': '写设置',
+  'Settings.all': '全部设置',
+  'WindowManager.open': '开窗口',
+  'WindowManager.close': '关窗口',
+  'WindowManager.minimize': '最小化',
+  'WindowManager.maxMode': '四种最大化',
+  'WindowManager.snap': '吸附到预置布局',
+  'WindowManager.list': '所有窗口',
+  'TerminalManager.open': '开一个终端',
+  'TerminalManager.active': '当前终端',
+  'Math.random': '随机数 [0,1)',
+  'Math.max': '最大值',
+  'Math.floor': '向下取整',
+  'JSON.stringify': '对象转字符串',
+  'JSON.parse': '字符串转对象',
+  'Promise.all': '等全部完成',
+  'Promise.allSettled': '等全部落定（不抛错）',
+  'Array.from': '类数组转数组',
+  'Array.isArray': '是不是数组',
+  'Object.keys': '取键',
+  'Object.entries': '取键值对',
+  'Object.assign': '合并属性',
+  'String.raw': '模板串原始文本'
+};
+
+/* 这些是 Worker 里没有、但用户会想在 JSHeL 里调的主线程对象。
+ * 只把名字发过去；成员靠 members 表。 */
+const HT_SURFACE_NAMES = ['FS', 'Settings', 'WindowManager', 'TerminalManager', 'Drawer',
+  'Guard', 'AppMenu', 'APP_DEFS', 'APP_DESC', 'HT_VERSION', 'toast', 'modal',
+  'confirmDlg', 'promptDlg'];
+
+let _htSurface = null;
+function htSurface() {
+  if (_htSurface) return _htSurface;
+  /* 沿原型链收集到 3 层：DOM 的方法大多在 Element / Node 上，不在实例自己身上 */
+  const members = (obj, depth) => {
+    const out = new Set();
+    let o = obj, n = 0;
+    while (o && o !== Object.prototype && n < (depth || 3)) {
+      try {
+        for (const k of Object.getOwnPropertyNames(o)) {
+          if (k === 'constructor' || k === '__proto__') continue;
+          if (k[0] === '_') continue;          // 内部字段不进补全
+          out.add(k);
+        }
+      } catch (e) {}
+      try { o = Object.getPrototypeOf(o); } catch (e) { break; }
+      n++;
+    }
+    return [...out].sort();
+  };
+  const roots = {
+    window, document, console, Math, JSON, navigator, location, history,
+    screen, localStorage, sessionStorage, performance, crypto, indexedDB,
+    FS: typeof FS !== 'undefined' ? FS : null,
+    Settings: typeof Settings !== 'undefined' ? Settings : null,
+    WindowManager: typeof WindowManager !== 'undefined' ? WindowManager : null,
+    TerminalManager: typeof TerminalManager !== 'undefined' ? TerminalManager : null,
+    Drawer: typeof Drawer !== 'undefined' ? Drawer : null,
+    Guard: typeof Guard !== 'undefined' ? Guard : null,
+    AppMenu: typeof AppMenu !== 'undefined' ? AppMenu : null,
+    APP_DEFS: typeof APP_DEFS !== 'undefined' ? APP_DEFS : null
+  };
+  const out = {};
+  for (const [name, obj] of Object.entries(roots)) {
+    if (!obj) continue;
+    try { out[name] = members(obj); } catch (e) {}
+  }
+  /* 构造器：静态方法（Array.from / Object.keys）也要能补出来 */
+  const ctors = {};
+  for (const k of ['Array','String','Object','Number','Boolean','Function','Promise','Map','Set',
+                   'Symbol','BigInt','RegExp','Date','Error','JSON','Math','Reflect','Intl',
+                   'ArrayBuffer','Uint8Array','Float64Array','DataView','TextEncoder','TextDecoder',
+                   'URL','URLSearchParams','Blob','File','FormData','Headers','Request','Response',
+                   'AbortController','EventTarget','Event','CustomEvent','Node','Element','HTMLElement',
+                   'HTMLCanvasElement','HTMLInputElement','HTMLElement']) {
+    try {
+      const c = window[k] || globalThis[k];
+      if (c) ctors[k] = members(c, 2);
+    } catch (e) {}
+  }
+  _htSurface = { members: out, ctors, desc: HT_MEMBER_DESC, extra: HT_SURFACE_NAMES };
+  return _htSurface;
+}
+
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
 function deskBox() {
   const d = document.getElementById('desk');
@@ -716,7 +841,10 @@ class TerminalSession {
       cols:dims.cols, rows:dims.rows, history:this.opts.history || [], code:this.opts.code || '',
       banner:this.opts.banner !== false,
       /* 宽度表跟着 init 一起走：Worker 的折行/光标列必须和渲染层用同一张表 */
-      wc: termWidthTable(this.term)
+      wc: termWidthTable(this.term),
+      /* 补全要用的「对象 → 成员」目录。主线程反射一次，Worker 直接查表：
+       * Worker 里的 document 是代理，ownKeys 拿不到真成员；在这儿算一次最省。 */
+      surface: htSurface()
     });
   }
 
@@ -1000,11 +1128,11 @@ const WindowManager = {
 
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
-      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
+      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', htmlapp:'HTML 编辑器', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
       recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD',
       applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
-      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
+      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], htmlapp:[1040, 660], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
       recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600],
       applist:[720, 560], hanzi:[880, 640] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
@@ -1195,6 +1323,7 @@ const WindowManager = {
         case 'data': win.content = new DataApp(win.body, opts); break;
         case 'color': win.content = new ColorApp(win.body, opts); break;
         case 'markdown': win.content = new MdApp(win.body, opts); break;
+        case 'htmlapp': win.content = new HtmlApp(win.body, opts); break;
         case 'shot': win.content = new ShotApp(win.body, opts); break;
         case 'timer': win.content = new TimerApp(win.body, opts); break;
         case 'image': win.content = new ImageApp(win.body, opts); break;
@@ -1267,23 +1396,33 @@ const WindowManager = {
 
       /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一，
        * 贴底中间 = 最小化（黄色提示框）。角优先于边——不然在左上角永远只能拿到「左半屏」。
-       * 判定同时看指针和窗口自身边缘：触屏拖到屏幕外时指针会先离开浏览器，
-       * 只看指针会出现「靠右能吸、靠左吸不到」。 */
-      const px = ev.clientX - box.left, py = ev.clientY - box.top;
-      const wl = parseFloat(win.el.style.left) || 0, wt = parseFloat(win.el.style.top) || 0;
-      const EDGE = 46, CORNER = Math.min(170, Math.round(box.w * 0.2));
-      const nearL = px <= EDGE || wl <= 6;
-      const nearR = px >= box.w - EDGE || wl + w0 >= box.w - 6;
-      const nearT = py <= EDGE || wt <= 4;
-      /* 底边判定放宽到 140px：用户是「拖到 Dock 附近」而不是「精确贴住最后一行像素」 */
-      const nearB = py >= box.h - 140;
-      const midX = px > CORNER && px < box.w - CORNER;
+       *
+       * 判据只有一个：**提手（把手）的位置**。
+       *   不看指针 —— 指针在窗口中间，窗口贴着左边，用户没打算吸边；
+       *   不看窗口边框/标题条/内容区 —— 提手是唯一的抓取点，它贴边才叫贴边。
+       *   阈值 10px：肉眼「几乎紧贴」，不是「靠近了就算」。以前 46px 太松，
+       *   稍微偏一点就弹绿框，用户的原话是「我只是往左偏一点点」。
+       * 底部同理：提手底边沉到画布底部 40px 内才算「拖到底」。 */
+      const SNAP = 10, BOTTOM = 40;
+      const hEl = win.el.querySelector('.win-handle');
+      const hr0 = hEl ? hEl.getBoundingClientRect() : null;
+      const hx = hr0 ? hr0.left - box.left : 0;
+      const hy = hr0 ? hr0.top - box.top : 0;
+      const hw = hr0 ? hr0.width : 0;
+      const hh = hr0 ? hr0.height : (win._hh || 42);
+      const hcx = hx + hw / 2;
+      const nearL = hx <= SNAP;
+      const nearR = hx + hw >= box.w - SNAP;
+      const nearT = hy <= SNAP;
+      const nearB = hy + hh >= box.h - BOTTOM;
+      /* 底部中间：提手中心落在画布中段，且不贴左右（贴角另有语义） */
+      const midX = !nearL && !nearR && hcx > box.w * 0.25 && hcx < box.w * 0.75;
       if (nearB && midX) snapPos = 'min';
       else if (nearT && nearL) snapPos = 'tl';
       else if (nearT && nearR) snapPos = 'tr';
       else if (nearT) snapPos = 'full';
-      else if (nearL && py >= box.h - CORNER) snapPos = 'bl';
-      else if (nearR && py >= box.h - CORNER) snapPos = 'br';
+      else if (nearL && nearB) snapPos = 'bl';
+      else if (nearR && nearB) snapPos = 'br';
       else if (nearL) snapPos = 'left';
       else if (nearR) snapPos = 'right';
       else snapPos = null;

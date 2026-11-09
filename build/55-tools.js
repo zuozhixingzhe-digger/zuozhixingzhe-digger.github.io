@@ -940,6 +940,7 @@ const APP_DESC = {
   geo:'定位（维护中）', view3d:'3D 视图（维护中）', audio:'音频播放（维护中）',
   hsb2:'WASM 里的 FreeBSD 12.0（可选）', applist:'所有应用，就是这一页',
   hanzi:'十六进制 ↔ 汉字，三种方案自动识别',
+  htmlapp:'代码区用 canvas 自绘，右侧 iframe 老实渲染（不过滤脚本）。',
   timer:'秒表：计次、暂停、厘秒显示；倒计时：到点响三声。最小化后仍在计时。',
 };
 
@@ -1175,9 +1176,37 @@ class TimerApp {
         </div>
       </div>`;
     this._bind();
+    this._cacheEls();
     this._paint();
-    /* 50ms 足够让厘秒看起来是连续的，又不会把主线程压死 */
-    this._timer = setInterval(() => this._paint(), 50);
+    /* 心跳按需起停：秒表跑着才要 50ms（厘秒要连续），倒计时 200ms 就够
+     * （它只显示到秒），全停的时候一个定时器都不留。
+     * 以前是无条件 setInterval(50)，开着窗口什么都不做也在每秒重建 20 次 DOM。 */
+    this._timer = 0;
+    this._syncTick();
+  }
+
+  _cacheEls() {
+    const q = s => this.el.querySelector(s);
+    this.$ = {
+      swTime: q('[data-f="swTime"]'), swState: q('[data-f="swState"]'),
+      swGo: q('[data-a="swGo"]'), swLap: q('[data-a="swLap"]'),
+      laps: q('[data-f="laps"]'),
+      cdTime: q('[data-f="cdTime"]'), cdState: q('[data-f="cdState"]'),
+      cdGo: q('[data-a="cdGo"]'),
+      h: q('[data-f="h"]'), m: q('[data-f="m"]'), s: q('[data-f="s"]')
+    };
+  }
+
+  /* 只在文字真的变了才写 DOM。textContent 赋值即使内容相同也会产生一条
+   * characterData 变更，MutationObserver / 无障碍层 / 布局都可能被惊动。 */
+  _txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
+
+  _syncTick() {
+    const want = this.sw.on ? 50 : (this.cd.on ? 200 : 0);
+    if (want === this._tickMs) return;
+    this._tickMs = want;
+    if (this._timer) { clearInterval(this._timer); this._timer = 0; }
+    if (want) this._timer = setInterval(() => this._paint(), want);
   }
 
   _bind() {
@@ -1277,31 +1306,42 @@ class TimerApp {
   }
 
   _paint() {
-    const q = s => this.el.querySelector(s);
-    if (!q('[data-f="swTime"]')) return;
-    q('[data-f="swTime"]').textContent = this._fmtSw(this._swElapsed());
-    q('[data-f="swState"]').textContent = this.sw.on ? '计时中' : (this.sw.acc ? '已暂停' : '未开始');
-    q('[data-a="swGo"]').textContent = this.sw.on ? '暂停' : (this.sw.acc ? '继续' : '开始');
-    q('[data-a="swLap"]').disabled = !this.sw.on;
+    const E = this.$;
+    if (!E || !E.swTime || !E.swTime.isConnected) return;
+
+    const swOn = this.sw.on, swAcc = this.sw.acc;
+    this._txt(E.swTime, this._fmtSw(this._swElapsed()));
+    this._txt(E.swState, swOn ? '计时中' : (swAcc ? '已暂停' : '未开始'));
+    this._txt(E.swGo, swOn ? '暂停' : (swAcc ? '继续' : '开始'));
+    const lapDis = !swOn;
+    if (E.swLap.disabled !== lapDis) E.swLap.disabled = lapDis;
+
+    /* 计次列表只在数量变化时重建：它是唯一会「一堆节点全换」的地方，
+     * 每秒 20 次 innerHTML 换同一个内容，是之前主要的渲染风暴来源。 */
     const laps = this.sw.laps;
-    q('[data-f="laps"]').innerHTML = laps.length
-      ? laps.map((t, i) => {
-          const prev = i ? laps[i - 1] : 0;
-          return `<div class="tm-lap"><b>#${i + 1}</b><code>${this._fmtSw(t)}</code><em>+${this._fmtSw(t - prev)}</em></div>`;
-        }).reverse().join('')
-      : '<div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div>';
+    if (this._lapSig !== laps.length) {
+      this._lapSig = laps.length;
+      E.laps.innerHTML = laps.length
+        ? laps.map((t, i) => {
+            const prev = i ? laps[i - 1] : 0;
+            return `<div class="tm-lap"><b>#${i + 1}</b><code>${this._fmtSw(t)}</code><em>+${this._fmtSw(t - prev)}</em></div>`;
+          }).reverse().join('')
+        : '<div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div>';
+    }
 
     const left = this._cdLeft();
-    q('[data-f="cdTime"]').textContent = this._fmtCd(left);
-    q('[data-f="cdState"]').textContent = this.cd.on ? '倒计时中' : (left <= 0 ? '已结束' : (left < this.cd.total ? '已暂停' : '就绪'));
-    q('[data-a="cdGo"]').textContent = this.cd.on ? '暂停' : (left < this.cd.total && left > 0 ? '继续' : '开始');
-    this.el.querySelectorAll('[data-f="h"],[data-f="m"],[data-f="s"]').forEach(x => { x.disabled = this.cd.on; });
+    this._txt(E.cdTime, this._fmtCd(left));
+    this._txt(E.cdState, this.cd.on ? '倒计时中' : (left <= 0 ? '已结束' : (left < this.cd.total ? '已暂停' : '就绪')));
+    this._txt(E.cdGo, this.cd.on ? '暂停' : (left < this.cd.total && left > 0 ? '继续' : '开始'));
+    const setDis = this.cd.on;
+    [E.h, E.m, E.s].forEach(x => { if (x && x.disabled !== setDis) x.disabled = setDis; });
 
     if (this.cd.on && left <= 0) {
       this.cd.on = false;
       this.cd.left = 0;
       if (!this.cd.done) { this.cd.done = true; this._ring(); }
     }
+    this._syncTick();
   }
 
   _ring() {

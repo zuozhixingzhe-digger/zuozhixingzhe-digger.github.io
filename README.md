@@ -1,9 +1,9 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.31**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.32**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 644 KB，无构建依赖、可直接双击打开）。
+`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 1.2 MB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主——宿主里的那个智能体，
 连同它背后的 harness，叫 **HarTMLes**。
@@ -36,7 +36,7 @@ readme     welcome
 2. [三十秒上手](#2-三十秒上手)
 3. [界面：顶栏 / 桌面 / 更多](#3-界面顶栏--桌面--更多)
 4. [快捷键](#4-快捷键)
-5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsb2：WASM + FreeBSD + v86](#hsb2)）
+5. [JSHeL 速查](#5-jshel-速查)（含 [5.4 hsb2：WASM + FreeBSD + v86](#hsb2)、[5.5 Tab 补全](#55-tab-补全)）
 6. [文件系统](#6-文件系统)
 7. [一切皆文件](#7-一切皆文件)
 8. [窗口与线程](#8-窗口与线程)
@@ -99,7 +99,7 @@ readme     welcome
 | 文件系统 | 点分隔路径、命名像标识符、**一切皆文件**（函数、设备、进程、权限都是文件） |
 | 内核 | 每个终端窗口一个 Web Worker，真多线程 |
 | 智能体 | **HarTMLes**——单会话 harness，能直接在当前沙箱执行 JS，不问许可 |
-| 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / 截图 / 看图修图 / 链接即状态（见[§15](#15-沙箱里的工具)） |
+| 工具 | 计算器 / 数据转换 / 调色盘 / Markdown / HTML 编辑器 / 截图 / 看图修图 / 链接即状态 / 计时器（见[§15](#15-沙箱里的工具)） |
 
 它**不需要后端**。后端（`modelserver.*`）只用于替你保管 API 密钥，可选。
 
@@ -150,7 +150,7 @@ readme     welcome
 - **右**：`▦` 应用启动器 / `⛶` 全屏 / **`≥` 更多**（原来的 `☰` 换成 `≥`，单字符更利落）。
 
 `▦` 里分三段：基础应用（终端/浏览器/文件/编辑器/Python/智能体）、**工具**
-（计算器/数据转换/调色盘/Markdown/截图/看图修图/链接即状态，见[§15](#15-沙箱里的工具)）、
+（计算器/数据转换/调色盘/Markdown/HTML 编辑器/截图/看图修图/链接即状态/计时器，见[§15](#15-沙箱里的工具)）、
 以及媒体与 3D（录音机/定位/3D 视图/音频播放）。这四项 0.0.1.15 之前一直是「维护中」，
 现在都能用了；拿不到权限或 WebGL 时，界面会直接说清是哪一种限制，而不是转圈。
 
@@ -745,6 +745,56 @@ Ctrl-E 走 scancode。窗口顶部有风险提示条，另有「停止 / 重启 
 - 2 GB 磁盘按需分块拉取，进系统后某些操作会触发额外下载（同样会进缓存）。
 - 只跑文本模式，鼠标 / 声卡关掉，v86 网卡未接后端（客户机里没有网络）。
 - 模拟的是 32 位 x86（Pentium 级），慢，别拿它干重活。
+
+## <a id="tab"></a>5.5 Tab 补全
+
+`⇥`（手机顶栏那个键，或键盘 Tab）在 JSHeL 里补三样东西，**不补「当前目录里的文件」**——
+控制台没有「当前目录」这个概念，敲半截就得靠猜的那是文件路径，不是 JS。所以补全先看
+你要补的东西长什么样，再决定去哪个库里找：
+
+| 你敲的 | 补什么 | 例子 |
+| --- | --- | --- |
+| `./`、`../`、`~/`、带斜杠的片段 | **路径**（spotfs 里真有这个目录才补） | `cat .home/` → `.home/a.txt` |
+| `obj.`、`obj.a.b.` 成员链 | **这个对象的成员**（含原型链 3 层、含静态成员） | `Math.` → `abs acos …` |
+| 光秃秃一个词 | **全局标识符**（`window` + 自己声明过的） | `doc` → `document` |
+
+**按一次补公共前缀，在同一个位置再按一次才列表**。这是刻意分开的：多数时候你只想少敲几个字母，
+不想被一张表糊一脸；真要挑的时候，第二下才把表拍出来。
+
+```text
+> document.quer⇥
+> document.querySelector          ← 第一下：唯一候选直接补全
+> Math.⇥                          ← 没有公共前缀可补
+> Math.⇥                          ← 第二下：出表
+abs ()    函数   绝对值
+acos ()   函数   反余弦
+…
+```
+
+表里三列：**名字（带颜色和类型后缀）+ 类型 + 一句话说明**。颜色按类型分——函数青、类紫、
+目录蓝、字符串绿、数字黄；名字列按**显示宽度**对齐（中文和 emoji 占两格，按字符数算必歪），
+说明太长会折到下一行，不会把窄窗口撑出横向滚动。
+
+看完这一整张表，你就知道「这台机器上到底有什么能用」：
+
+```js
+api()        // 全部内置 API，按 文件 / spotfs / 包 / 窗口 / 系统 / 输出 / 页面 / DOM / 智能体 分组
+api('窗口')   // 过滤：名字或说明里含「窗口」的
+```
+
+`api()` 打出来的就是补全用的同一份名单（`API_GROUPS` + `API_DESC` 手写维护），
+**新加一个全局函数必须同时登记进这两张表**，否则它补不出来、`api()` 里也看不见。
+
+### 成员目录是主线程送过来的
+
+`document.querySelector` 这种补全，Worker 靠 `Function('return (document)')()` 是拿不到真东西的
+（Worker 里的 `document` 只是代理壳）。所以每次开 shell，主线程会沿原型链爬一遍
+`window` / `document` / `console` / `Math` / `JSON` / `FS` / `Settings` / `WindowManager` 和 41 个构造器，
+把成员名和一句话说明打包成约 39 KB 的 `surface` 一起塞进 `init` 消息。
+实测 `window` 一项就有 1366 个成员——**名字全在，查表毫秒级，不需要跨线程往返**。
+
+补全永远不该打断输入：求值失败、路径不存在、成员拿不到，一律返回「没有候选」，
+你敲的字符原样留在那儿。候选上限 200 条，再多就得先多打一个字母。
 
 ## 6. 文件系统
 
@@ -2044,7 +2094,7 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 入口有三个，都是同一个东西：
 
 ```text
-顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / 汉字码 / Markdown / 截图 / 看图修图 / 链接即状态 / 所有应用
+顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / 汉字码 / Markdown / HTML 编辑器 / 截图 / 看图修图 / 链接即状态 / 计时器 / 所有应用
 终端里        → tool calc        （不带参数敲 tools 看清单）
 文件系统      → .app.calc 也能 open
 ```
@@ -2055,9 +2105,11 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 | **数据转换** `data` | 完整 | 编码互转（文本/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体）、时间戳与时区、哈希（SHA-1/256/384/512 + MD5）、随机数 |
 | **调色盘** `color` | 完整 | 色相环 + RGB/HSL/HSV/CMYK/YUV/Lab 六种表示联动、EyeDropper、从页面截图取色、WCAG 对比度、历史色 |
 | **Markdown** `markdown` | 完整 | 分栏实时预览、白名单清洗（`<script>`/`on*`/`javascript:` 一律删）、导出 HTML、下载 `.md` |
+| **HTML 编辑器** `htmlapp` | 完整 | **代码区是 canvas 自绘的**（行号、语法高亮、光标、选区、撤销栈，1px 透明 textarea 只做 IME 代理），右边 iframe **老实渲染**——`<script>`、`on*`、`javascript:` 全不拦，默认带 `sandbox` 可一键摘掉；分栏随窗口宽度自动改上下，改一个字就重渲染（180ms 防抖），保留滚动位置，显示渲染耗时与体积。存 `.home` / 读本地文件 |
 | **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载；拍完点「编辑」直接送进看图窗口 |
 | **看图修图** `image` | 完整 | 缩放/适应/拖拽平移、裁剪、旋转 90°、水平/垂直翻转、按宽度缩放；矩形 / 箭头 / 画笔 / 文字 / 打码五种标注（带暗色描边，落在同色底上也看得见）；Alt+点击取色、Ctrl+V 粘贴剪贴板图片、Ctrl+Z 撤销（按像素数自动限步）、导出 PNG/JPEG/WebP |
 | **链接即状态** `urlhash` | 完整 | 把文本或 JS 压进 URL 的 `#` 片段，复制链接即可还原；带 `run=1` 时**先弹确认框**再执行 |
+| **计时器** `timer` | 完整 | 秒表（计次、暂停、清零）+ 倒计时（时/分/秒、响铃、最小化不停）；空闲时一个定时器都不留，跑起来才按需要 50ms / 200ms 刷 |
 | **录音机** `recorder` | 完整 | `MediaRecorder` + `AudioContext` 实时波形、暂停/继续、计时、设备选择；停止后试听、存进 `.home`、下载。关窗即停音轨 |
 | **定位** `geo` | 完整 | 单次 / `watchPosition` 持续跟踪，纬度、经度、精度、海拔、速度、方向、时间；复制坐标、存成 `.home.geo-json`、在浏览器里打开 OSM |
 | **3D 视图** `view3d` | 完整 | 自写 WebGL（不引 three.js）：环面结 / 立方体 / 球 / 二十面体，轨道相机（拖动旋转、滚轮缩放）、自转、线框、fps |
@@ -2206,7 +2258,12 @@ build/
   59-media.js              ← RecorderApp（MediaRecorder+波形）/ GeoApp（Geolocation）/ AudioApp
                              （WebAudio 波形与播放）/ View3DApp（自写 WebGL + mat4 + 四种几何体）
   60-agent.js              ← 智能体：prompt、工具定义、循环、JSONL 会话、Markdown 渲染
+  61-html.js               ← HtmlApp（HTML 编辑与实时渲染）：canvas 自绘代码区 + Worker 词法着色
+                             + 真 iframe 渲染（不过滤）
   65-tui.js                ← 终端内智能体宿主（AgentTuiHost）+ DOM RPC + 截图
+  66b-hanzi-data.js        ← 汉字码数据表（4096 / 2048 两张字表，生成物，勿手改）
+  67-hanzi.js              ← HanziApp（汉字码）：hex ↔ 汉字三种方案、末尾标记字自动识别
+  68-guard.js              ← Guard（渲染守护）：Worker 心跳 + resize 巡检 + 几何修正
   70-boot.js               ← RPC 分发、AppMenu、Drawer、window API、快捷键、启动流程、DepCache
 modelserver.py             ← 后端（Python）
 modelserver.js             ← 后端（Node）
@@ -3104,6 +3161,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.32 | 2026-11-09 | **HTML 编辑器（canvas 自绘）+ Tab 补全重写 + 吸附只认提手 + 渲染风暴清零**：①新增应用 **HTML 编辑与实时渲染器 `htmlapp`**：代码区**用 canvas 2D 自己画**——行号、关键字/标签/属性/字符串/注释/数字着色、真光标与选区、点击定位、Ctrl+Z 撤销 / Ctrl+Shift+Z 重做、Tab 整块缩进、Ctrl+S 存盘 / Ctrl+Enter 立即运行；上面盖 1px 透明 textarea 只当 IME 代理（中文输入法靠它，caret 设透明），所以「原生」得没有 contenteditable 那些脾气。高亮在 **Worker 里做词法**（token 数组回传主线程着色，3 秒超时降级成单色）。右侧 iframe **老实渲染**——`<script>`、`on*`、`javascript:` 一个都不过滤，默认带 `sandbox`，需要时点「隔离」摘掉；边打边渲染（180ms 防抖、保留滚动位置、显示耗时与体积），分栏在 620px 以下自动改上下；深浅两套调色板。存进 `.home`、也能读本地文件。与小浏览器**并存**，互不替代。②**Tab 补全整个重写**：修掉「补的是当前目录文件」——控制台没有当前目录，补全先判类型：**路径**（`./` `../` `~/`）才去问文件系统，**成员链**（`Math.` `document.quer` `FS.wr`）走成员目录，**光秃秃一个词**走全局标识符。成员目录由主线程沿原型链爬 3 层后随 `init` 送进 Worker（~39 KB，`window` 一项 1366 个成员），不跨线程往返。候选排成表：按类型上色、名字列按**显示宽度**对齐（中文占两格）、每个带一句话说明、超宽自动折行；**按一次补公共前缀，同位置再按一次才列表**。新增 `api()` / `api("窗口")` 打印全部内置 API（9 组手写名单 + 说明），`help()` 补「补全」「全表」两行。③**吸附只认提手**：阈值收回 10px，判定矩形就是 `.win-handle` 自己的 `getBoundingClientRect`——窗口别的地方、别的参数一律不参与；底部 40px 那条黄框判「最小化」，中间带用提手中心 25%–75% 判。于是「往左偏一点点就贴合」没了：离边 30px 不吸，贴到 2px 才吸。④**桌面卡顿**：计时器从「无条件 `setInterval(50)`」改成**按需**——秒表跑才 50ms、倒计时才 200ms、不跑直接 `clearInterval`；9 个元素引用缓存下来，值没变就不写 DOM，计次列表只在条数变化时重建。⑤**手机粘贴多行不再断**：手机 IME 粘贴**不带** xterm 的括号粘贴标记（`\x1b[200~`），于是整段代码被当成一串回车逐行执行——只有第一行跑了，后面全变成「命令不存在」。改成在 `feed()` 里识别「一次性到达的多字符且含 `\n`」→ 当作整段插入缓冲，交给 `scanJs()` 判断括号闭合后一次执行。 |
 | 0.0.1.31 | 2026-11-09 | **窗口交互大修 + 渲染守护 + 计时器**：①标题栏双击最大化；**绿点的隐藏式最大化改成「顶栏只留一个 26px 图标」**——无文字、无原生 tooltip，且同一时刻只允许一扇窗占据（新的进来，旧的退回常规最大化）；**长按色点 / 胶囊 / Dock 图标统一弹「红黄绿蓝四圆钮」**，框里一个字都没有，点外部或 Esc 关闭。②**红点 = 强制关闭**：`close()` 立刻 dispose（智能体 abort + 落盘、hsb2 停 v86），这里没有「后台」这种东西。③**窗口拖到画布底部中间出现黄框，松手最小化**；吸附判定从 10px 放宽到 46px 并同时看指针与窗口边缘，修掉「靠右能吸、靠左吸不到」。④四色点改为指定色 `#e01715 / #f5b900 / #8de312 / #19e6f0`。⑤新开窗口的高度不再压住 Dock（默认下限），只有用户随后拖动才可越过。⑥「彻底全屏」真的发 `requestFullscreen`，并点亮顶栏全屏按钮；Esc / F11 退出浏览器全屏时同步退出该模式。⑦**新增渲染守护 `Guard`**：Worker 每 10 秒心跳 + resize 立即巡检，修正 NaN / 过小 / 过大 / 完全出界的窗口、比窗口还高的提手、文档横向溢出；修正后 15 秒「睡死时间」防闪烁。⑧卡顿：动画去掉 `filter:blur`、取消 `.win` 常驻 `will-change`、拖动与几何过渡期间关闭 `backdrop-filter`。⑨调色盘 HSV 选区镜像——HSV 的 S 被当成 HSL 的 S 存，点上方却选中下方；改成先算 RGB 再反解 HSL，标记点改用 HSV 的 S/V。⑩智能体：**只贴图片、不写字也能发送**；新增收敛护栏（单轮 8 分钟、观察结果连续两次相同即停、连续 4 次 JS 失败即停、重复输出追问最多 2 次）；「更多」里的会话清空也弹确认框。⑪`.bin` 全部并入 `.app`（旧数据自动迁移、hsb1 保留回退），README 增补 `.app` 目录索引。⑫「所有应用」按**系统预装 / 已安装（来自 .app）**分组，新增列表 / 方块两种视图。⑬数据转换：去掉所有「换算」按钮改成四格实时联动（秒 / 毫秒 / 日期 / 时区都能填），删掉「现在」栏目改成标题栏按钮，卡片补标题栏、顶部改真选项卡。⑭汉字码：汉字侧识别出方案后顶部选项卡自动跟随；删掉「自检通过」「已按 4096 字编码」。⑮截图新增「截图时隐藏本窗口」。⑯新增**计时器 / 秒表**应用（计次、倒计时响铃、最小化不停）。⑰致谢 seekHarness（wingchi-leung）：借鉴其步数预算、停滞检测与收尾追问三条机制。 |
 | 0.0.1.30 | 2026-11-09 | **统一对话框 + 拖拽遮罩三修 + 文件管理器双击/打开/执行**：①按用户手绘重做**应用内唯一一套对话框**：卡片标题居中（危险操作整条标红）、左下「取消」右下「确认」，卡片底边垂下一个写着「?」的梯形把手，两端各一枚圆形按钮——灰禁止符=取消、红垃圾桶=删除、绿右箭头=确认输入；**文字与图标是同一个动作的两个热区**，点蒙层=取消，Esc=取消，保留背景模糊；单按钮提醒框不画把手。`modal()` 换皮不换接口，11 处调用点（清空数据 / 重命名 / 选文件 / 加文字 / 链接运行脚本…）零改动；**浏览器原生 alert/confirm/prompt 一个字没动**。②修拖拽三件事：**页面内拖动不再弹外部导入遮罩**（文件管理器 dragstart 写了 DownloadURL，Chrome 会把 `Files` 塞进 `dataTransfer.types`，只看 types 必然误判；改成先判内部拖拽的 `DRAG_MIME` / DragBus）；**松手必收**（capture 阶段收 drop + `dragend` / `pointerup` / `blur` 兜底 + 1.5 秒无 dragover 的看门狗，drop 落进 iframe 也不会把遮罩留在屏幕上）；遮罩右上角加**明确的 ✕ 关闭**。③文件管理器：双击改成**事件委托 + 420ms 时间窗**（列表每次 fs 事件整体重建，`ondblclick` 绑在旧节点上，第二下永远落空），`open()` 加 500ms 去重防止双开；工具栏新增**打开**（文本进编辑器 / 图片进看图 / 目录就进去）与**执行**（HTML 进浏览器窗口、JS 进 shell 窗口真跑，输出落在终端；app/func 走各自入口），Enter / Ctrl+Enter 同效；顺带修选中高亮在列表重建后丢失。 |
 | 0.0.1.29 | 2026-11-08 | **执行器补全 + `.app` 挑战集**：①**重写共享求值器的顶层解析**：不再按行拆，而是按括号深度 0 的 `;` / 换行切语句（跳过字符串、模板串、注释、正则），于是 `const a = {` 跨行粘贴不再被拆成残句。②声明改写覆盖 **class / 解构 / 多声明**：`class A{}`、`const {a, b: c} = o`、`const x = 1, y = 2` 都能在下一行继续用；整段都是声明时**不回显值**（和浏览器控制台一致）。③新增 `_`（上次结果）、`$` / `$$`（querySelector 简写）、`//# sourceURL=HTRepl.js` 让报错堆栈显示 `HTRepl.js:3:7` 而不是 `blob:null/4b39…:2796`。④`console` 补齐 **time / timeEnd / timeLog / count / countReset / group / groupEnd / assert**，`table` 输出对齐表格。⑤**DOM 加本地影子节点**：`createElement` / `createTextNode` / `cloneNode` 立刻有本地描述，`setAttribute` / `dataset` / `textContent` / `innerHTML` 写完立刻可读；`appendChild` 维护父子树与 id 索引，`document.getElementById` / `querySelector('#id')` 同步命中（不再等跨线程快照）。⑥`canvas.getContext('2d')` 用真 `OffscreenCanvas`，`getImageData` 拿到真像素；补 `toDataURL` / `toBlob`（异步，OffscreenCanvas 无同步编码器）。⑦补 `document.forms / images / links / scripts / getSelection / createRange / appendChild` 等原生成员。⑧修四个旧 bug：**`.app` 脚本里的 `print` 从来没定义过**（种子示例一跑就 ReferenceError）、`sptx` 的 html 分支引用主线程的 `baseName` 导致**打开任何 HTML 都崩**、`api.console` 覆盖掉新 console、事件同时绑 document/window 导致**一次点击回放两次**。⑨`open()` 认 HTML：打开 `.app.html-*` 直接进浏览器窗口。⑩`.app` 新增 11 个挑战脚本：`audit`（25 项能力自检）、`bench`（9 项基准）、`nqueens`（位运算 1–12 皇后）、`maze`（DFS 生成 + A*）、`raytrace`（逐像素光线追踪 ASCII 出图）、`expr`（手写词法 + 递归下降解释器）、`crypto`（SHA/HMAC/PBKDF2/AES-GCM）、`async`（并发池/allSettled/超时/异步流水线）、`reactive`（Proxy 依赖收集 + 真 DOM 更新）、`gen`（无限流/惰性管道/zip）、`life`（生命游戏动画）。⑪新增 6 个 HTML：`html-particles`（Canvas 粒子 + 鼠标斥力）、`html-snake`（完整贪吃蛇）、`html-mandelbrot`（分形缩放）、`html-lisp`（页面内 Lisp 解释器）、`html-webgl`（手写着色器立方体）、`html-audio`（Web Audio 合成器 + 频谱）。 |
@@ -3151,6 +3209,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-09 21:50 | 0.0.1.32：HTML 编辑器（canvas 代码区）+ Tab 补全重写 + 吸附只认提手 + 渲染风暴清零 | `build/61-html.js`（**新增** ~700 行：`HxWorker` 共享 Worker 词法着色 + 3s 超时降级、`HX_SAMPLE`、`class HtmlApp`：`_build/_bind/_layout/_resizeCanvas/_metrics/_lines/_pos/_colX/_hitTest/_draw/_paint/_segments/_colorOf/_applyTheme/_scheduleToken/_pushUndo/_setText/_syncTa/_onInput/_onKey/_insert/_deleteSel/_move/_indentBlock/_ensureCaretVisible/_onDown/_onMove/_onUp/_onWheel/_onSplit/_startBlink/_cycleView/_layoutFrame/_scheduleRun/_render/_openFile/_saveFile/onResize/dispose`）、`build/00-head.html`（`.hx/.hx-bar/.hx-sp/.hx-chk/.hx-body/.hx-edit/.hx-cv/.hx-in/.hx-gutter/.hx-prev/.hx-frame/.hx-foot` 全套 + 窄屏媒体查询）、`build/10-body.html`（启动器加 htmlapp）、`build/30-core.js`（`HT_VERSION` 0.0.1.32、`APP_DEFS` 加 htmlapp）、`build/40-term.js`（吸附重写：`SNAP=10` + 只取 `.win-handle` 的 rect + `BOTTOM=40` + 提手中心 25%–75% 判中间带；新增 `HT_MEMBER_DESC`/`HT_SURFACE_NAMES`/`_htSurface`/`htSurface()`，`_spawn` 的 `init` 带 `surface`；`TYPE_TITLES`/`TYPE_SIZE` 加 htmlapp、`_render` 加分发）、`build/20-worker.js`（`feed()` 整段粘贴识别；`SURFACE` + `init.surface`；`surfaceOf/kindOf/membersOfPath/descFor/tabLines/wrapText/commonPrefix/completePath/complete` 全新；Tab 键改「先补公共前缀、同位置再按才列表」；`API_GROUPS`/`API_DESC`/`apiTable` 与 `api`/`apiList` 全局；`help()` 补两行）、`build/55-tools.js`（`TimerApp` 去掉无条件 `setInterval(50)`，改 `_cacheEls/_txt/_syncTick/_paint` 按需刷新；`APP_DESC` 加 htmlapp）、`build.sh`（拼 61-html.js）、`modelserver.{py,js,go}`（版本）、`tests/test_complete.py`、`tests/test_htmlapp.py`、`tests/test_snap_paste.py`（新增）、`README.md`（§5.5 Tab 补全、§15 工具表加 htmlapp/timer、文件地图、日志）、`TASKS.md` | Playwright（无头 Chromium）：**吸附** 提手离左缘 30px → `pos:null`，贴 2px → `pos:"left"` 且 `{x:0,w:700}`；**手机粘贴** 一次投入 14 行 IIFE → 终端先 `[粘贴 14 行]` 再 `done 49`（49 个按钮真变红），无半截残留；**Tab 补全** `doc⇥`→`document`、`document.quer⇥`→`document.query`、同位置再按列出 6 项含「querySelector() 函数 找第一个匹配的元素」、`Math.⇥⇥` 9 项、`./⇥⇥` 7 个目录（蓝色）、`api()` 打出 9 组分组表；**HTML 编辑器** canvas 画出 28 行 + 行号，点第二行 `{row:1,col:9,focused:true}`，键入立即出现，Tab 缩进 +2、Ctrl+Z 回退，改文本 → iframe 内出现 `HELLO-RENDER`，`<script>` 真执行（`RAN`），保存 `{found:true,content:"<p id=\"s\">saved</p>"}`，分栏 1/0 切换正常、430px 窄窗自动 `320px 6px 1fr` 上下排、浅色主题可读；**性能** 7 窗空闲 6s DOM 变更 **0**（修前同场景 1280+），帧间隔 空闲 `p50 16.7/p95 16.8/max 16.8`、拖动 40 步 `p95 16.8/p99 33.3`、连打 60 字 `p95 16.7`，长任务 **0**；0 pageerror | 本轮 |
 | 2026-11-09 19:45 | 0.0.1.31：窗口交互大修（18 条）+ 渲染守护 + 计时器 | `build/00-head.html`（四色变量 `--dot-red/yellow/green/blue`；`#hidChip` 改 26px 纯图标；新增 `.dotmenu` 四圆钮框与 `dmIn`；`.win-snap[data-pos="min"]` 黄框；动画删 `filter:blur`、去常驻 `will-change`、拖动期关 `backdrop-filter`；`.al-views/.al-list/.al-row`；`.tl-tabs/.tl-tab` 改真选项卡 + `.tl-card`；`.tm-*` 计时器）、`build/10-body.html`（胶囊去文字、启动器加 timer）、`build/30-core.js`（`HT_VERSION`、`DIRS` `.bin`→`.app`、全部种子改 `.app.*`、`APP_DEFS` 加 timer、`write()`/`remove()` 只保护 `kind==='app'`、新增 `migrateBinDir()`、正则 `/^\.app\./`）、`build/25-compat.js`（`tryExternal` 先 `.app.` 再 `.bin.`）、`build/40-term.js`（`WIN_DOT_SVG` 常量、`DotMenu` 对象、`_bindDotMenu` 550ms、`_bindDockMenu`、`maxMode/minimize/close/focus` 调 `DotMenu.close()`、`_syncModeChrome` 去 `title`、吸附 `EDGE=46` 双条件、`_snapRect.min`、松手 `minimize`、`open()` 的 `dockReserve`、`_enterBrowserFS/_exitBrowserFS`、`TYPE_TITLES/TYPE_SIZE` 加 timer）、`build/55-tools.js`（`AppListApp` 重写：双视图 + 分组 + `_runInstalled`；`ShotApp` 加隐藏窗口；新增 `TimerApp`）、`build/56-data.js`（`buildTime` 四格联动、删 `refreshNow`）、`build/57-color.js`（`pickSV` 走 RGB 反解、`sync()` 用 HSV 的 s/v）、`build/60-agent.js`（发送判空改看附件、`run()` 加 `TIME_BUDGET`/`obsKey`/`jsFails`/`nudges` + `REASON` 文案）、`build/67-hanzi.js`（删 `hz-foot`/`_paintSelf`/`selfTest`、`_len` 联动选项卡）、`build/68-guard.js`（**新增**：Worker 心跳 10s + resize 巡检 + `every()` 注册口 + `_guardUntil` 睡死时间）、`build/70-boot.js`（`agentClear` 确认框、`fullscreenOn` 认 `immersive`、`toggleFullscreen` 走 `exitImmersive`、监听 `fullscreenchange`、boot 调 `Guard.init()`）、`build.sh`、`modelserver.{py,js,go}`（版本）、`README.md`（§5.9 四色点规范、§8.2 致谢 seekHarness、`.app` 目录索引、日志）、`TASKS.md` | Playwright（无头 Chromium）：双击标题 `{mode:'max', width:'100%'}`；长按红点 `{n:4, txt:''}` 无文字、Dock 长按 `n=4`、胶囊 `{txt:'', w:26, title:null, svg:true}` 且第二扇窗进来旧的退回 `max`；彻底全屏 `{body:true, fsBtn:true, ball:'grid'}`；左缘吸附 `{'pos':'left'}` 命中、底部中段黄框松手 → `minimize`；守护把 40×30 / left 5000 / top −200 修正为 `280×188, l:1110, t:0` 且 15s 内不反复；时间戳填 `1700000000` → `ms 1700000000000 / dt 2023-11-15 06:13:20`，反向填日期同步 sec/ms，「现在」按钮生效；汉字码 2048 编码粘回 → 顶部自动切 `['B']`、解码回 `48656c6c6f`；HSV top `5.1%/v95`、bottom `94.9%/v5`、mid `49.8%/v50` 无镜像；计时器秒表 `00:01.29` + 计次 `#1 00:01.34`、倒计时 `01:00→00:59 倒计时中`；截图隐藏窗口 `2200×1532 · 1.31 MB` 且事后 `visibility:visible`；智能体纯图片 `{called:1, t:'', atts:1}`、停滞停在 `⏹ 连续多次输出相同内容，自动追问两次仍未改变，已停止本轮。`；所有应用系统预装 20 + 已安装 20（14 func + 6 html）、`.app` 目录 40 项；`tests/test_dialog.py`、`tests/test_fm.py` 全绿，0 pageerror | 本轮 |
 | 2026-11-03 23:05 | 0.0.1.16：后端内部渗透测试（84 项）与加固 | `modelserver.py`（`Server` 类：backlog 128 / 128 并发上限 / 503；`Handler.timeout=15`、`sys_version=""`、`version_string`、`get_all` 拒重复头、非 dict body、provider 类型、`parse_constant`、BrokenPipe）、`modelserver.js`（body 形状、headersTimeout/requestTimeout/maxConnections）、`modelserver.go`（`Values` 拒重复头、`body == nil`、IdleTimeout、MaxHeaderBytes）、`build/30-core.js` + 三份后端版本号、`README.md`（§13 自测记录、踩坑 60–62、日志） | 原始 socket 构造 84 项：访问控制 16 / 路由 18 / 解析 15 / 泄露 5 / SSRF 30 / 韧性 6。修复前 8 项 FAIL；修复后全过。并发 200：7.05 s→0.06 s，p95 5428 ms→29 ms；半开连接 15.0 s 被断开；100 个占住连接下正常请求 9 ms；三份后端对 `null`/`[]`/重复头行为一致（400/400/403）；前端启动无 pageerror，版本 0.0.1.16 | 本轮 |
 | 2026-11-03 22:10 | 0.0.1.15：光标滚出画布隐藏、智能体 403 / 抓新闻、四个维护中工具完成 | `build/40-term.js`（`.xterm-viewport` 监听、隐藏时 `init=false`、四工具接入、窗口尺寸）、`build/00-head.html`（媒体工具样式）、`build/59-media.js`（新增：Recorder/Geo/View3D/Audio）、`build/55-tools.js`（删 `MaintApp` 壳子）、`build/30-core.js`（APP_DEFS 描述、版本）、`build/60-agent.js`（`rawFetch`/`readable`/`agentNews`、`news` 工具、`AGENT_ENV`、保存路径）、`build.sh`（拼入 59-media）、`modelserver.{py,js,go}`（`/v1/fetch` + SSRF、头值大小写、`Permissions-Policy`、版本）、`README.md`（§0、§12、§13、§15、踩坑 54–59、日志） | Playwright：真实 DeepSeek 后端（`deepseek-flash`）「给我抓取最近10条新闻」→ 一次 `news` 调用、3.3 s 返回 10 条，窗口版排版成表格；TUI `agentTui.open()` 同一任务 6.9 s 出结果、`agent>` 提示符只有一条、光标落在提示符后（`cy=23 rows=24`）；滚轮上滚 `display:none`、回滚 `display:block`；录音 15.4 KB webm 落盘、波形绘制 447 px；定位 31.2304/121.4737 ±18 m 并存 `.home.geo-json`；音频波形 900 桶、播放 `currentTime=0.63`；3D 在 xvfb + swiftshader 下 58–60 fps、四种几何体索引数正确、拖动改变 yaw、线框/自转/复位正常；无 pageerror | 本轮 |
@@ -3238,5 +3297,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.31 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.32 · 桌面就是终端 · 一切皆文件</sub>
 </p>

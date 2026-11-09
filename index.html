@@ -1924,6 +1924,41 @@ body.drag-internal .br-shield{display:block}
   border-radius:7px;padding:8px;color:var(--fg-dim);max-height:130px;overflow:auto}
 
 /* =====================================================================
+ * HTML 编辑器（canvas 自绘代码区 + iframe 预览）
+ * ===================================================================== */
+.hx{display:flex;flex-direction:column;height:100%;min-height:0}
+.hx-bar{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);
+  background:var(--panel-solid);flex:0 0 auto;flex-wrap:wrap}
+.hx-sp{flex:1 1 auto}
+.hx-chk{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:var(--fg-dim);
+  padding:2px 6px;border-radius:6px;cursor:pointer;user-select:none}
+.hx-chk:hover{background:rgba(127,127,127,.10)}
+.hx-chk input{margin:0;accent-color:var(--accent)}
+.hx-body{display:grid;grid-template-columns:1fr 6px 1fr;flex:1 1 auto;min-height:0;min-width:0}
+.hx-edit{position:relative;min-width:0;min-height:0;overflow:hidden;background:#0f1617}
+body.light .hx-edit{background:#fff}
+.hx-cv{display:block;width:100%;height:100%;touch-action:none;cursor:text}
+/* 输入层：1px、透明、贴在光标下面。它不显示任何文字——文字在 canvas 上。
+ * 留着它是为了输入法（候选框要贴着光标）、粘贴、原生撤销。 */
+.hx-in{position:absolute;left:0;top:0;width:2px;height:1.2em;padding:0;margin:0;
+  border:0;outline:0;resize:none;overflow:hidden;background:transparent;color:transparent;
+  caret-color:transparent;font:inherit;opacity:.01;z-index:2;white-space:pre;overflow-wrap:normal}
+.hx-gutter{background:var(--line);cursor:col-resize;touch-action:none;position:relative}
+.hx-gutter:hover{background:var(--accent-dim)}
+.hx-gutter::after{content:'';position:absolute;left:50%;top:50%;width:2px;height:22px;
+  margin:-11px 0 0 -1px;border-radius:2px;background:var(--fg-mute);opacity:.5}
+.hx-prev{position:relative;min-width:0;min-height:0;background:#fff}
+.hx-frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
+.hx-foot{display:flex;align-items:center;gap:10px;padding:3px 9px;border-top:1px solid var(--line);
+  font-size:10.5px;color:var(--fg-mute);flex:0 0 auto;font-variant-numeric:tabular-nums}
+.hx-foot .hx-sp{flex:1 1 auto}
+.hx-foot [data-f="run"]{color:var(--accent-dim)}
+@media (max-width:560px){
+  .hx-bar{gap:4px;padding:5px 6px}
+  .hx-foot [data-f="hint"]{display:none}
+}
+
+/* =====================================================================
  * 响应式
  * ===================================================================== */
 @media (max-width:560px){
@@ -2050,6 +2085,7 @@ body.drag-internal .br-shield{display:block}
   <button type="button" data-app="data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg>数据转换<i>编码/哈希</i></button>
   <button type="button" data-app="color"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="3"/><path d="M12 3.8v4.4"/></svg>调色盘<i>设计</i></button>
   <button type="button" data-app="hanzi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V6.2A2.2 2.2 0 0 1 6.2 4h11.6A2.2 2.2 0 0 1 20 6.2v13.3"/><path d="M4 19.5h16M8 8h8M8 11.5h8M12 8v11.5"/></svg>汉字码<i>Hex ↔ 汉字</i></button>
+  <button type="button" data-app="htmlapp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 4 12l5 5M15 7l5 5-5 5"/><path d="M13 5.5 11 18.5"/></svg>HTML<i>实时渲染</i></button>
   <button type="button" data-app="markdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M6.5 15V9l3 3 3-3v6M16 9v6M16 15l2.2-2.4M16 15l-2.2-2.4"/></svg>Markdown<i>渲染</i></button>
   <button type="button" data-app="shot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M20 8.5V6a2 2 0 0 0-2-2h-2.5M4 15.5V18a2 2 0 0 0 2 2h2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5"/><circle cx="12" cy="12" r="3"/></svg>截图<i>页面内</i></button>
   <button type="button" data-app="image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.6" cy="10" r="1.5"/><path d="M4.2 17.2l4.6-4.4 3 2.8 3.2-2.6 4.8 4.4"/></svg>看图修图<i>截图搭档</i></button>
@@ -2276,6 +2312,9 @@ function writeErr(s) { out(ANSI.red + s + ANSI.reset); }
  * 有表就一律按表算——折行与光标列必须和屏幕上的渲染完全一致，
  * 差一列，打字时光标就会一路往右跑。表由主线程用 unicodeService.wcwidth 导出。 */
 let WC2 = null, WC0 = null;
+/* 主线程在 init 里发过来的「对象 → 成员」目录，Tab 补全查它。
+ * 为什么不在 Worker 里反射：这里的 document 是 Proxy，跨线程拿不到真成员。 */
+let SURFACE = null;
 function inRanges(r, cp) {
   if (!r) return false;
   let lo = 0, hi = r.length - 1;
@@ -2784,6 +2823,15 @@ class LineEditor {
       }
       return;
     }
+    /* 手机输入法的粘贴**不会**带括号粘贴标记（\x1b[200~…）：xterm 的 onData
+     * 一次就给一整段带 \n 的文本。按字符流处理会把每个 \n 当成回车，
+     * 于是「粘一段函数」变成「逐行执行 N 条命令」——第一行 SyntaxError，后面全乱。
+     * 真实按一次 Enter 只给一个 \r（长度 1），所以「长度 > 1 且含 \n」可以安全地
+     * 当作粘贴，不需要猜。桌面拖拽/右键粘贴走的是带标记那条路，不受影响。 */
+    if (!this.paste && data.length > 1 && data.indexOf('\n') >= 0) {
+      this.insert(data.replace(/\r\n?/g, '\n'));
+      return;
+    }
     let i = 0;
     while (i < data.length) {
       // 粘贴模式
@@ -2882,15 +2930,29 @@ class LineEditor {
           p.then(res => {
             this.busy = false;
             if (!res) { this.redraw(); return; }
-            if (res.candidates && res.candidates.length > 1) {
-              out('\r\n');
-              out(res.candidates.map(c => c.name).join('   ') + '\r\n');
-              this.redraw();
-            } else if (res.value !== undefined) {
+            const sameSpot = this._tabAt === before;
+            this._tabAt = before;
+            /* 有公共前缀就先补进去（bash 的手感）；已经在同一位置按过第二次，
+             * 或者本来就没得补，才把候选表打出来。一次刷 80 个名字等于没补。 */
+            if (res.value !== undefined && res.value !== before) {
               this.buf = res.value + after;
               this.cur = res.value.length;
               this.redraw();
+              return;
             }
+            if (res.candidates && res.candidates.length > 1) {
+              if (sameSpot || !res.value) {
+                out('\r\n');
+                const lines = res.lines || [res.candidates.map(c => c.name).join('   ')];
+                out(lines.join('\r\n') + '\r\n');
+                this._tabAt = '';
+                this.redraw();
+                return;
+              }
+              this.redraw();
+              return;
+            }
+            this.redraw();
           }).catch(() => { this.busy = false; this.redraw(); });
         }
         continue;
@@ -3384,6 +3446,8 @@ function makeShell(ctx) {
       ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.app 放应用（脚本也是应用，不是二进制），.bin 已并入 .app，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
+      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。连按两次 Tab 列出候选。'],
+      ['全表', 'api() 打印全部内置 API（分组 + 一句话说明），api("窗口") 只看某一组。'],
     ];
     for (const [k, v] of lines) {
       if (!k) { out(ANSI.bold + ANSI.cyan + v + ANSI.reset + '\r\n'); continue; }
@@ -3393,6 +3457,84 @@ function makeShell(ctx) {
 
   async function historyList() {
     state.history.forEach((h, i) => out(String(i + 1).padStart(4) + '  ' + h + '\r\n'));
+  }
+
+  /* ------------------------------------------------------------ 全部 API 表
+   * `api()` 把 JSHeL 认得的每一样东西排成表：分组的名字、签名、一句话说明。
+   * 分组表在这里手写（顺序与措辞比自动分类有用），成员是否存在以 `api` 为准。
+   * 不在任何组里的键归到「其它」——加了新 API 忘了登记也不会漏掉，只是没说明。 */
+  const API_GROUPS = [
+    ['文件', ['ls','ll','dir','cd','pwd','cat','write','writeFile','readFile','listDir','append',
+              'mkdir','rm','mv','cp','stat','exists','tree','find','head','tail','grep',
+              'open','exec','run','du','df','mount']],
+    ['spotfs', ['sptc','sptn','spta','sptr','sptx','sptd','sptm','spotEscape','spotUnescape','spotExportName']],
+    ['包', ['install','uninstall','requirePkg','pkg']],
+    ['窗口', ['spawn','winOpen','winClose','winList','openWindow','closeWindow','listWindows','agentOpen','jshel']],
+    ['系统', ['python','py','saveFile','askFile','fetchText','openUrl','notify','perm','requestPermission',
+              'settings','threads','processes','ps','kill','nuke','clear','history','exit']],
+    ['输出', ['print','echo','toast','inspect','api','apiList']],
+    ['页面', ['page','$','$$','query','queryAll','text','html']],
+    ['DOM', ['document','window','navigator','location','console','fetch']],
+    ['智能体', ['agent','agentTui','agentOpen']]
+  ];
+
+  const API_DESC = {
+    ls:'列目录', ll:'详细列表', cd:'切目录（只影响文件 API 的相对路径）', pwd:'当前目录',
+    cat:'打印文件内容', write:'写文件', readFile:'读文件（返回字符串）', listDir:'列目录（原始数组）',
+    append:'追加内容', mkdir:'建目录', rm:'删除', mv:'移动/改名', cp:'复制', stat:'元信息',
+    exists:'是否存在', tree:'目录树', find:'按名字找', head:'前 N 行', tail:'后 N 行', grep:'按内容搜',
+    open:'用合适的窗口打开', exec:'按类型执行（html→浏览器，js→shell）', run:'执行一段 JS', du:'占用', df:'挂载点', mount:'列挂载',
+    sptc:'创建节点', sptn:'新建（opts）', spta:'追加', sptr:'读取', sptx:'执行', sptd:'删除', sptm:'（占位）',
+    install:'装包', uninstall:'卸包', requirePkg:'require 一个包', pkg:'包管理命名空间',
+    spawn:'开 shell 窗口跑一段代码', winOpen:'开窗口', winClose:'关窗口', winList:'窗口列表',
+    python:'Python（Pyodide）', saveFile:'存到本机', askFile:'选文件', fetchText:'抓网页文本',
+    openUrl:'开链接', notify:'系统通知', perm:'权限', settings:'设置', threads:'线程列表',
+    kill:'结束线程', nuke:'清空 .home', clear:'清屏', history:'历史命令', exit:'退出 shell',
+    print:'打印到终端', toast:'弹一条提示', api:'打印这张表（可带过滤词）', apiList:'同 api()',
+    echo:'print 的别名', console:'浏览器控制台（log/table/time…）', inspect:'对象的可读描述',
+    document:'页面文档（和 F12 里那个是同一个）', window:'全局对象',
+    navigator:'浏览器/设备信息', location:'当前地址', fetch:'发 HTTP 请求',
+    copy:'复制文本到剪贴板', date:'当前时间（格式化字符串）',
+    page:'页面操作命名空间', $:'querySelector 简写', $$:'querySelectorAll 简写',
+    agent:'问智能体一句', agentTui:'智能体 TUI'
+  };
+
+  function apiTable(filter) {
+    const keys = Object.keys(api).filter(k => typeof api[k] !== 'undefined' && k[0] !== '_');
+    const seen = new Set();
+    const cols = Math.max(40, state.cols || 80);
+    const q = String(filter == null ? '' : filter).trim();
+    const hit = (s) => !q || s.indexOf(q) >= 0;
+
+    out('\r\n' + ANSI.bold + ANSI.cyan + 'HTerMinaL · JSHeL API 表' + ANSI.reset
+      + ANSI.gray + '   （Tab 补全 / api("窗口") 过滤）' + ANSI.reset + '\r\n\r\n');
+
+    for (const [group, names] of API_GROUPS) {
+      const list = names.filter(n => keys.includes(n) && !seen.has(n))
+        .map(n => ({ n, d: API_DESC[n] || '' }))
+        .filter(x => hit(x.n) || hit(x.d) || hit(group));
+      if (!list.length) continue;
+      list.forEach(x => seen.add(x.n));
+      out(ANSI.yellow + '── ' + group + ' ' + '─'.repeat(Math.max(2, Math.min(46, cols - strWidth(group) - 6))) + ANSI.reset + '\r\n');
+      const wn = Math.min(22, Math.max(...list.map(x => strWidth(x.n))) + 2);
+      for (const x of list) {
+        const pad = ' '.repeat(Math.max(0, wn - strWidth(x.n)));
+        const room = Math.max(12, cols - wn - 3);
+        const body = wrapText(x.d, room);
+        out('  ' + ANSI.cyan + x.n + ANSI.reset + pad + ANSI.gray + (body[0] || '') + ANSI.reset + '\r\n');
+        for (let i = 1; i < body.length; i++) out('  ' + ' '.repeat(wn) + ANSI.gray + body[i] + ANSI.reset + '\r\n');
+      }
+    }
+
+    const rest = keys.filter(k => !seen.has(k)).sort();
+    if (rest.length) {
+      const list = rest.filter(hit).map(n => ({ n, d: API_DESC[n] || '' }));
+      if (list.length) {
+        out(ANSI.yellow + '── 其它 ' + '─'.repeat(Math.max(2, Math.min(46, cols - 8))) + ANSI.reset + '\r\n');
+        for (const x of list) out('  ' + ANSI.cyan + x.n + ANSI.reset + '  ' + ANSI.gray + x.d + ANSI.reset + '\r\n');
+      }
+    }
+    if (q) out(ANSI.gray + '\r\n（只显示匹配「' + q + '」的项；api() 看全部）' + ANSI.reset + '\r\n');
   }
 
   async function exit(code) {
@@ -3485,29 +3627,190 @@ function makeShell(ctx) {
     });
   }
 
-  /* ---- 补全 ---- */
-  async function complete(before) {
-    const m = before.match(/([^\s()\[\]{}'"`,;]*)$/);
-    const frag = m ? m[1] : '';
-    const head = before.slice(0, before.length - frag.length);
-    let candidates = [];
-    if (/^\.?(?:[\w\u4e00-\u9fa5-]*\.)*[\w\u4e00-\u9fa5-]*$/.test(frag) && (frag.startsWith('.') || before.trim() === frag || /\b(ls|cd|cat|open|exec|rm|stat)\s*\(?['"]?$/.test(head))) {
+  /* ================================================================ 补全
+   *
+   * 用户按 Tab 想补的是什么？**JS 里的东西**：全局函数、对象成员、自己
+   * 声明的变量。不是「当前目录的文件」——JSHeL 是求值器，不是 shell，
+   * 这里根本没有「当前目录」这个概念（要看文件请 ls()）。
+   * 以前 `before.trim() === frag` 这个条件让**任何**单个词都落进文件分支，
+   * 于是 `doc<Tab>` 补出来的是当前目录里叫 doc 的文件（没有就啥都没有）。
+   *
+   * 只有一种情况补文件：他明确打出了路径（/  ./  ../  ~，或者已经带斜杠）。
+   */
+  function surfaceOf(base) {
+    if (!SURFACE) return null;
+    return SURFACE.members[base] || SURFACE.ctors[base] || null;
+  }
+
+  function kindOf(v) {
+    if (v === null) return 'null';
+    const t = typeof v;
+    if (t === 'function') return /^[A-Z]/.test(v.name || '') ? 'class' : 'func';
+    if (Array.isArray(v)) return 'array';
+    return t;
+  }
+
+  /* 求值一个成员链（document.body / FS / Math），拿它的成员名。
+   * 求不到就返回 null —— 补全失败不该抛错，更不该打断输入。 */
+  function membersOfPath(path) {
+    const direct = surfaceOf(path);
+    if (direct) return direct;
+    let obj;
+    try { obj = Function('return (' + path + ')')(); } catch (e) { return null; }
+    if (obj == null) return null;
+    const out = new Set();
+    let o = obj, n = 0;
+    while (o && n < 3) {
       try {
-        const slash = frag.lastIndexOf('.');
-        const dirPart = slash >= 0 ? frag.slice(0, slash) : '';
-        const namePart = slash >= 0 ? frag.slice(slash + 1) : frag;
-        const dir = await call('fs.resolve', dirPart || state.cwd);
-        const rows = await fsls(dir);
-        candidates = rows.filter(r => r.name.toLowerCase().startsWith(namePart.toLowerCase()))
-          .map(r => ({ name:r.name + (r.kind === 'dir' ? '.' : ''), value:(slash >= 0 ? frag.slice(0, slash + 1) : '') + r.name + (r.kind === 'dir' ? '.' : '') }));
-      } catch (e) {}
-    } else {
-      const keys = new Set(Object.getOwnPropertyNames(globalThis));
-      candidates = [...keys].filter(k => k.toLowerCase().startsWith(frag.toLowerCase()) && !k.startsWith('__'))
-        .slice(0, 80).map(k => ({ name:k, value:k }));
+        for (const k of Object.getOwnPropertyNames(o)) {
+          if (k === 'constructor' || k === '__proto__' || k[0] === '_') continue;
+          out.add(k);
+        }
+      } catch (e) { break; }
+      try { o = Object.getPrototypeOf(o); } catch (e) { break; }
+      n++;
     }
-    if (candidates.length === 1) return { value:head + candidates[0].value, candidates };
-    return { candidates, value:undefined };
+    /* 静态成员（Array.from 这种）在函数自己身上，上面已经覆盖 */
+    return [...out];
+  }
+
+  function descFor(base, name) {
+    if (!SURFACE || !SURFACE.desc) return '';
+    return SURFACE.desc[base + '.' + name] || SURFACE.desc[name] || '';
+  }
+
+  /* 候选按「类型上色 + 名字对齐 + 一句话说明」排成表。
+   * 名字列的宽度按显示宽度算（中文/emoji 占两格），不能按字符数。 */
+  function tabLines(cands, cols) {
+    const color = k => k === 'func' ? ANSI.cyan : k === 'class' ? ANSI.magenta
+      : k === 'dir' ? ANSI.blue : k === 'string' ? ANSI.green : k === 'number' ? ANSI.yellow : '';
+    const plain = cands.map(c => c.name + (c.kind === 'func' ? '()' : ''));
+    const wn = Math.max(8, Math.min(26, Math.max(...plain.map(s => strWidth(s))) + 2));
+    const lines = [];
+    for (let i = 0; i < cands.length; i++) {
+      const c = cands[i];
+      const pad = ' '.repeat(Math.max(0, wn - strWidth(plain[i])));
+      const meta = c.kind === 'func' ? '函数' : c.kind === 'class' ? '类'
+        : c.kind === 'dir' ? '目录' : c.kind === 'file' ? '文件'
+        : c.kind === 'string' ? '字符串' : c.kind === 'number' ? '数字'
+        : c.kind === 'array' ? '数组' : c.kind === 'boolean' ? '布尔' : '对象';
+      const d = c.desc ? '  ' + c.desc : '';
+      lines.push(ANSI.reset + color(c.kind) + plain[i] + ANSI.reset + pad
+        + ANSI.gray + meta + d + ANSI.reset);
+      /* 说明太长就折到下一行，保持表格不横向溢出 */
+      if (strWidth(lines[lines.length - 1]) > cols - 2) {
+        const s = (c.desc || '');
+        const room = Math.max(10, cols - wn - 8);
+        if (strWidth(s) > room) {
+          lines.pop();
+          lines.push(ANSI.reset + color(c.kind) + plain[i] + ANSI.reset + pad + ANSI.gray + meta + ANSI.reset);
+          for (const chunk of wrapText(s, room)) lines.push(' '.repeat(wn) + ANSI.gray + chunk + ANSI.reset);
+        }
+      }
+    }
+    return lines;
+  }
+
+  function wrapText(s, width) {
+    const out = [];
+    let cur = '';
+    for (const ch of String(s)) {
+      if (strWidth(cur + ch) > width) { out.push(cur); cur = ch; }
+      else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function commonPrefix(list) {
+    if (!list.length) return '';
+    let p = list[0];
+    for (const s of list) {
+      let i = 0;
+      while (i < p.length && i < s.length && p[i] === s[i]) i++;
+      p = p.slice(0, i);
+      if (!p) break;
+    }
+    return p;
+  }
+
+  async function completePath(typed, head) {
+    const slash = typed.lastIndexOf('/');
+    const dirPart = slash >= 0 ? typed.slice(0, slash + 1) : '';
+    const namePart = slash >= 0 ? typed.slice(slash + 1) : typed;
+    let rows = [];
+    try {
+      const dir = await call('fs.resolve', dirPart || state.cwd);
+      rows = await fsls(dir);
+    } catch (e) { return { candidates: [], value: undefined }; }
+    const cands = rows
+      .filter(r => r.name.toLowerCase().startsWith(namePart.toLowerCase()))
+      .map(r => ({
+        name: r.name + (r.kind === 'dir' ? '/' : ''),
+        value: r.name + (r.kind === 'dir' ? '/' : ''),
+        kind: r.kind === 'dir' ? 'dir' : 'file',
+        desc: r.kind === 'dir' ? '目录' : (fmtBytes(r.size || 0))
+      }));
+    if (cands.length === 1) return { value: head + dirPart + cands[0].value, candidates: cands };
+    const cp = commonPrefix(cands.map(c => c.name));
+    const value = (cands.length > 1 && cp.length > namePart.length) ? head + dirPart + cp : undefined;
+    return { candidates: cands, value, lines: tabLines(cands, state.cols) };
+  }
+
+  async function complete(before) {
+    /* 1) 明确的路径：/  ./  ../  ~  或已经带斜杠的片段 */
+    const pm = before.match(/(^|[\s(,='"[{])((?:\.{0,2}\/|~\/)[^\s'"`,;()]*)$/);
+    if (pm) return await completePath(pm[2], before.slice(0, before.length - pm[2].length));
+
+    /* 2) 成员链：document.bo / Math.ma / FS.wr */
+    const mm = before.match(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)?$/);
+    if (mm) {
+      const base = mm[1], part = mm[2] || '';
+      const head = before.slice(0, before.length - mm[0].length) + base + '.';
+      const all = membersOfPath(base);
+      if (all) {
+        const cands = all.filter(k => k.toLowerCase().startsWith(part.toLowerCase()))
+          .map(k => ({ name: k, value: k, kind: (() => { try { return kindOf(Function('return (' + base + ')')()[k]); } catch (e) { return 'obj'; } })(),
+                       desc: descFor(base, k) }))
+          .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
+          .slice(0, 200);
+        if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+        const cp = commonPrefix(cands.map(c => c.name));
+        return {
+          candidates: cands,
+          value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
+          lines: tabLines(cands, state.cols)
+        };
+      }
+      return { candidates: [], value: undefined };
+    }
+
+    /* 3) 纯标识符：全局 + 自己声明的变量 */
+    const im = before.match(/([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*)$/);
+    const part = im ? im[1] : '';
+    const head = im ? before.slice(0, before.length - part.length) : before;
+    const keys = new Set();
+    try { Object.getOwnPropertyNames(globalThis).forEach(k => keys.add(k)); } catch (e) {}
+    if (SURFACE) {
+      (SURFACE.extra || []).forEach(k => keys.add(k));
+      Object.keys(SURFACE.members || {}).forEach(k => keys.add(k));
+    }
+    const cands = [...keys]
+      .filter(k => !k.startsWith('__') && k !== 'globalThis' && k.toLowerCase().startsWith(part.toLowerCase()))
+      .map(k => {
+        let kind = 'obj', desc = descFor('', k);
+        try { kind = kindOf(globalThis[k]); } catch (e) {}
+        return { name: k, value: k, kind, desc };
+      })
+      .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
+      .slice(0, 200);
+    if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+    const cp = commonPrefix(cands.map(c => c.name));
+    return {
+      candidates: cands,
+      value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
+      lines: tabLines(cands, state.cols)
+    };
   }
 
   /* ---- 组装全局 API ---- */
@@ -3557,6 +3860,10 @@ function makeShell(ctx) {
     __state:state
   };
   api.__complete = complete;
+  /* `api()` 是给人看的：全部内置 API 分组表。挂在这里是因为它要遍历 api 自己，
+   * 挂在对象外面就得再抄一份名单，抄着抄着就不同步了。 */
+  api.api = apiTable;
+  api.apiList = apiTable;
   api.hterm = api;
   api.global = globalThis;
   return api;
@@ -5263,6 +5570,7 @@ self.onmessage = async (ev) => {
       HT_VERSION = m.version || HT_VERSION;
       /* 渲染层的宽度表：先于任何折行/提示符绘制生效 */
       if (m.wc && m.wc.w2 && m.wc.w0) { WC2 = m.wc.w2; WC0 = m.wc.w0; }
+      if (m.surface) { SURFACE = m.surface; }
       if (m.role === 'python') await bootPython(m);
       else await bootShell(m);
     } catch (e) {
@@ -7708,7 +8016,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.31';
+const HT_VERSION = '0.0.1.32';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -8175,6 +8483,7 @@ const APP_DEFS = [
   { name:'data', title:'数据', desc:'编码 / 时间戳 / 哈希 / 随机', type:'data', icon:'⇄' },
   { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
   { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
+  { name:'htmlapp', title:'HTML 编辑器', desc:'写 HTML，右边实时渲染（canvas 代码区）', type:'htmlapp', icon:'</>' },
   { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
   { name:'timer', title:'计时器', desc:'秒表与倒计时，到点响铃', type:'timer', icon:'◷' },
   { name:'image', title:'看图修图', desc:'查看图片、裁剪标注打码（截图搭档）', type:'image', icon:'▩' },
@@ -9854,6 +10163,131 @@ function initTopbarKeys() {
   window.addEventListener('blur', () => { Keys.held = { ctrl:false }; Keys.refresh(); });
 }
 
+/* ---------------------------------------------------------------- 补全目录
+ * Tab 补全要知道「有哪些对象、每个对象有哪些成员、每个成员是干什么的」。
+ *
+ * 为什么在主线程算一次再发给 Worker：Worker 里的 `document` 是 Proxy，
+ * `Object.getOwnPropertyNames` 拿不到真成员（跨线程没有同步反射）；而主线程
+ * 反射一次只要 2~3ms，结果还能被所有终端复用。算完按对象名分组成表。
+ *
+ * 说明文字（DESC）只给常用项，剩下的靠反射补名单——宁可不解释，也不要漏。
+ */
+const HT_MEMBER_DESC = {
+  'document.querySelector': '找第一个匹配的元素',
+  'document.querySelectorAll': '找全部匹配的元素',
+  'document.createElement': '建元素（还没进页面）',
+  'document.getElementById': '按 id 找元素',
+  'document.body': '页面 <body>',
+  'document.head': '页面 <head>',
+  'document.title': '标签页标题',
+  'document.cookie': 'cookie（读写）',
+  'document.write': '真·document.write，会清空整页',
+  'document.addEventListener': '绑事件',
+  'window.innerWidth': '视口宽',
+  'window.innerHeight': '视口高',
+  'window.open': '开新标签（本应用里被接管）',
+  'window.location': '当前地址',
+  'window.localStorage': '本地存储',
+  'window.fetch': '发 HTTP 请求',
+  'console.log': '打印（终端里显示）',
+  'console.table': '打印表格',
+  'console.time': '开始计时',
+  'console.timeEnd': '结束计时并打印耗时',
+  'FS.read': '读文件，返回内容',
+  'FS.write': '写文件',
+  'FS.list': '列目录',
+  'FS.remove': '删除',
+  'FS.move': '移动 / 改名',
+  'FS.copy': '复制',
+  'FS.exists': '是否存在',
+  'FS.mkdir': '建目录',
+  'FS.stat': '元信息',
+  'Settings.get': '读设置',
+  'Settings.set': '写设置',
+  'Settings.all': '全部设置',
+  'WindowManager.open': '开窗口',
+  'WindowManager.close': '关窗口',
+  'WindowManager.minimize': '最小化',
+  'WindowManager.maxMode': '四种最大化',
+  'WindowManager.snap': '吸附到预置布局',
+  'WindowManager.list': '所有窗口',
+  'TerminalManager.open': '开一个终端',
+  'TerminalManager.active': '当前终端',
+  'Math.random': '随机数 [0,1)',
+  'Math.max': '最大值',
+  'Math.floor': '向下取整',
+  'JSON.stringify': '对象转字符串',
+  'JSON.parse': '字符串转对象',
+  'Promise.all': '等全部完成',
+  'Promise.allSettled': '等全部落定（不抛错）',
+  'Array.from': '类数组转数组',
+  'Array.isArray': '是不是数组',
+  'Object.keys': '取键',
+  'Object.entries': '取键值对',
+  'Object.assign': '合并属性',
+  'String.raw': '模板串原始文本'
+};
+
+/* 这些是 Worker 里没有、但用户会想在 JSHeL 里调的主线程对象。
+ * 只把名字发过去；成员靠 members 表。 */
+const HT_SURFACE_NAMES = ['FS', 'Settings', 'WindowManager', 'TerminalManager', 'Drawer',
+  'Guard', 'AppMenu', 'APP_DEFS', 'APP_DESC', 'HT_VERSION', 'toast', 'modal',
+  'confirmDlg', 'promptDlg'];
+
+let _htSurface = null;
+function htSurface() {
+  if (_htSurface) return _htSurface;
+  /* 沿原型链收集到 3 层：DOM 的方法大多在 Element / Node 上，不在实例自己身上 */
+  const members = (obj, depth) => {
+    const out = new Set();
+    let o = obj, n = 0;
+    while (o && o !== Object.prototype && n < (depth || 3)) {
+      try {
+        for (const k of Object.getOwnPropertyNames(o)) {
+          if (k === 'constructor' || k === '__proto__') continue;
+          if (k[0] === '_') continue;          // 内部字段不进补全
+          out.add(k);
+        }
+      } catch (e) {}
+      try { o = Object.getPrototypeOf(o); } catch (e) { break; }
+      n++;
+    }
+    return [...out].sort();
+  };
+  const roots = {
+    window, document, console, Math, JSON, navigator, location, history,
+    screen, localStorage, sessionStorage, performance, crypto, indexedDB,
+    FS: typeof FS !== 'undefined' ? FS : null,
+    Settings: typeof Settings !== 'undefined' ? Settings : null,
+    WindowManager: typeof WindowManager !== 'undefined' ? WindowManager : null,
+    TerminalManager: typeof TerminalManager !== 'undefined' ? TerminalManager : null,
+    Drawer: typeof Drawer !== 'undefined' ? Drawer : null,
+    Guard: typeof Guard !== 'undefined' ? Guard : null,
+    AppMenu: typeof AppMenu !== 'undefined' ? AppMenu : null,
+    APP_DEFS: typeof APP_DEFS !== 'undefined' ? APP_DEFS : null
+  };
+  const out = {};
+  for (const [name, obj] of Object.entries(roots)) {
+    if (!obj) continue;
+    try { out[name] = members(obj); } catch (e) {}
+  }
+  /* 构造器：静态方法（Array.from / Object.keys）也要能补出来 */
+  const ctors = {};
+  for (const k of ['Array','String','Object','Number','Boolean','Function','Promise','Map','Set',
+                   'Symbol','BigInt','RegExp','Date','Error','JSON','Math','Reflect','Intl',
+                   'ArrayBuffer','Uint8Array','Float64Array','DataView','TextEncoder','TextDecoder',
+                   'URL','URLSearchParams','Blob','File','FormData','Headers','Request','Response',
+                   'AbortController','EventTarget','Event','CustomEvent','Node','Element','HTMLElement',
+                   'HTMLCanvasElement','HTMLInputElement','HTMLElement']) {
+    try {
+      const c = window[k] || globalThis[k];
+      if (c) ctors[k] = members(c, 2);
+    } catch (e) {}
+  }
+  _htSurface = { members: out, ctors, desc: HT_MEMBER_DESC, extra: HT_SURFACE_NAMES };
+  return _htSurface;
+}
+
 /** 桌面（#desk）的可用尺寸：窗口定位一律相对它，而不是整个视口 */
 function deskBox() {
   const d = document.getElementById('desk');
@@ -10219,7 +10653,10 @@ class TerminalSession {
       cols:dims.cols, rows:dims.rows, history:this.opts.history || [], code:this.opts.code || '',
       banner:this.opts.banner !== false,
       /* 宽度表跟着 init 一起走：Worker 的折行/光标列必须和渲染层用同一张表 */
-      wc: termWidthTable(this.term)
+      wc: termWidthTable(this.term),
+      /* 补全要用的「对象 → 成员」目录。主线程反射一次，Worker 直接查表：
+       * Worker 里的 document 是代理，ownKeys 拿不到真成员；在这儿算一次最省。 */
+      surface: htSurface()
     });
   }
 
@@ -10503,11 +10940,11 @@ const WindowManager = {
 
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
-      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
+      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', htmlapp:'HTML 编辑器', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
       recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD',
       applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
-      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
+      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], htmlapp:[1040, 660], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
       recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600],
       applist:[720, 560], hanzi:[880, 640] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
@@ -10698,6 +11135,7 @@ const WindowManager = {
         case 'data': win.content = new DataApp(win.body, opts); break;
         case 'color': win.content = new ColorApp(win.body, opts); break;
         case 'markdown': win.content = new MdApp(win.body, opts); break;
+        case 'htmlapp': win.content = new HtmlApp(win.body, opts); break;
         case 'shot': win.content = new ShotApp(win.body, opts); break;
         case 'timer': win.content = new TimerApp(win.body, opts); break;
         case 'image': win.content = new ImageApp(win.body, opts); break;
@@ -10770,23 +11208,33 @@ const WindowManager = {
 
       /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一，
        * 贴底中间 = 最小化（黄色提示框）。角优先于边——不然在左上角永远只能拿到「左半屏」。
-       * 判定同时看指针和窗口自身边缘：触屏拖到屏幕外时指针会先离开浏览器，
-       * 只看指针会出现「靠右能吸、靠左吸不到」。 */
-      const px = ev.clientX - box.left, py = ev.clientY - box.top;
-      const wl = parseFloat(win.el.style.left) || 0, wt = parseFloat(win.el.style.top) || 0;
-      const EDGE = 46, CORNER = Math.min(170, Math.round(box.w * 0.2));
-      const nearL = px <= EDGE || wl <= 6;
-      const nearR = px >= box.w - EDGE || wl + w0 >= box.w - 6;
-      const nearT = py <= EDGE || wt <= 4;
-      /* 底边判定放宽到 140px：用户是「拖到 Dock 附近」而不是「精确贴住最后一行像素」 */
-      const nearB = py >= box.h - 140;
-      const midX = px > CORNER && px < box.w - CORNER;
+       *
+       * 判据只有一个：**提手（把手）的位置**。
+       *   不看指针 —— 指针在窗口中间，窗口贴着左边，用户没打算吸边；
+       *   不看窗口边框/标题条/内容区 —— 提手是唯一的抓取点，它贴边才叫贴边。
+       *   阈值 10px：肉眼「几乎紧贴」，不是「靠近了就算」。以前 46px 太松，
+       *   稍微偏一点就弹绿框，用户的原话是「我只是往左偏一点点」。
+       * 底部同理：提手底边沉到画布底部 40px 内才算「拖到底」。 */
+      const SNAP = 10, BOTTOM = 40;
+      const hEl = win.el.querySelector('.win-handle');
+      const hr0 = hEl ? hEl.getBoundingClientRect() : null;
+      const hx = hr0 ? hr0.left - box.left : 0;
+      const hy = hr0 ? hr0.top - box.top : 0;
+      const hw = hr0 ? hr0.width : 0;
+      const hh = hr0 ? hr0.height : (win._hh || 42);
+      const hcx = hx + hw / 2;
+      const nearL = hx <= SNAP;
+      const nearR = hx + hw >= box.w - SNAP;
+      const nearT = hy <= SNAP;
+      const nearB = hy + hh >= box.h - BOTTOM;
+      /* 底部中间：提手中心落在画布中段，且不贴左右（贴角另有语义） */
+      const midX = !nearL && !nearR && hcx > box.w * 0.25 && hcx < box.w * 0.75;
       if (nearB && midX) snapPos = 'min';
       else if (nearT && nearL) snapPos = 'tl';
       else if (nearT && nearR) snapPos = 'tr';
       else if (nearT) snapPos = 'full';
-      else if (nearL && py >= box.h - CORNER) snapPos = 'bl';
-      else if (nearR && py >= box.h - CORNER) snapPos = 'br';
+      else if (nearL && nearB) snapPos = 'bl';
+      else if (nearR && nearB) snapPos = 'br';
       else if (nearL) snapPos = 'left';
       else if (nearR) snapPos = 'right';
       else snapPos = null;
@@ -13586,6 +14034,7 @@ const APP_DESC = {
   geo:'定位（维护中）', view3d:'3D 视图（维护中）', audio:'音频播放（维护中）',
   hsb2:'WASM 里的 FreeBSD 12.0（可选）', applist:'所有应用，就是这一页',
   hanzi:'十六进制 ↔ 汉字，三种方案自动识别',
+  htmlapp:'代码区用 canvas 自绘，右侧 iframe 老实渲染（不过滤脚本）。',
   timer:'秒表：计次、暂停、厘秒显示；倒计时：到点响三声。最小化后仍在计时。',
 };
 
@@ -13821,9 +14270,37 @@ class TimerApp {
         </div>
       </div>`;
     this._bind();
+    this._cacheEls();
     this._paint();
-    /* 50ms 足够让厘秒看起来是连续的，又不会把主线程压死 */
-    this._timer = setInterval(() => this._paint(), 50);
+    /* 心跳按需起停：秒表跑着才要 50ms（厘秒要连续），倒计时 200ms 就够
+     * （它只显示到秒），全停的时候一个定时器都不留。
+     * 以前是无条件 setInterval(50)，开着窗口什么都不做也在每秒重建 20 次 DOM。 */
+    this._timer = 0;
+    this._syncTick();
+  }
+
+  _cacheEls() {
+    const q = s => this.el.querySelector(s);
+    this.$ = {
+      swTime: q('[data-f="swTime"]'), swState: q('[data-f="swState"]'),
+      swGo: q('[data-a="swGo"]'), swLap: q('[data-a="swLap"]'),
+      laps: q('[data-f="laps"]'),
+      cdTime: q('[data-f="cdTime"]'), cdState: q('[data-f="cdState"]'),
+      cdGo: q('[data-a="cdGo"]'),
+      h: q('[data-f="h"]'), m: q('[data-f="m"]'), s: q('[data-f="s"]')
+    };
+  }
+
+  /* 只在文字真的变了才写 DOM。textContent 赋值即使内容相同也会产生一条
+   * characterData 变更，MutationObserver / 无障碍层 / 布局都可能被惊动。 */
+  _txt(el, v) { if (el && el.textContent !== v) el.textContent = v; }
+
+  _syncTick() {
+    const want = this.sw.on ? 50 : (this.cd.on ? 200 : 0);
+    if (want === this._tickMs) return;
+    this._tickMs = want;
+    if (this._timer) { clearInterval(this._timer); this._timer = 0; }
+    if (want) this._timer = setInterval(() => this._paint(), want);
   }
 
   _bind() {
@@ -13923,31 +14400,42 @@ class TimerApp {
   }
 
   _paint() {
-    const q = s => this.el.querySelector(s);
-    if (!q('[data-f="swTime"]')) return;
-    q('[data-f="swTime"]').textContent = this._fmtSw(this._swElapsed());
-    q('[data-f="swState"]').textContent = this.sw.on ? '计时中' : (this.sw.acc ? '已暂停' : '未开始');
-    q('[data-a="swGo"]').textContent = this.sw.on ? '暂停' : (this.sw.acc ? '继续' : '开始');
-    q('[data-a="swLap"]').disabled = !this.sw.on;
+    const E = this.$;
+    if (!E || !E.swTime || !E.swTime.isConnected) return;
+
+    const swOn = this.sw.on, swAcc = this.sw.acc;
+    this._txt(E.swTime, this._fmtSw(this._swElapsed()));
+    this._txt(E.swState, swOn ? '计时中' : (swAcc ? '已暂停' : '未开始'));
+    this._txt(E.swGo, swOn ? '暂停' : (swAcc ? '继续' : '开始'));
+    const lapDis = !swOn;
+    if (E.swLap.disabled !== lapDis) E.swLap.disabled = lapDis;
+
+    /* 计次列表只在数量变化时重建：它是唯一会「一堆节点全换」的地方，
+     * 每秒 20 次 innerHTML 换同一个内容，是之前主要的渲染风暴来源。 */
     const laps = this.sw.laps;
-    q('[data-f="laps"]').innerHTML = laps.length
-      ? laps.map((t, i) => {
-          const prev = i ? laps[i - 1] : 0;
-          return `<div class="tm-lap"><b>#${i + 1}</b><code>${this._fmtSw(t)}</code><em>+${this._fmtSw(t - prev)}</em></div>`;
-        }).reverse().join('')
-      : '<div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div>';
+    if (this._lapSig !== laps.length) {
+      this._lapSig = laps.length;
+      E.laps.innerHTML = laps.length
+        ? laps.map((t, i) => {
+            const prev = i ? laps[i - 1] : 0;
+            return `<div class="tm-lap"><b>#${i + 1}</b><code>${this._fmtSw(t)}</code><em>+${this._fmtSw(t - prev)}</em></div>`;
+          }).reverse().join('')
+        : '<div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div>';
+    }
 
     const left = this._cdLeft();
-    q('[data-f="cdTime"]').textContent = this._fmtCd(left);
-    q('[data-f="cdState"]').textContent = this.cd.on ? '倒计时中' : (left <= 0 ? '已结束' : (left < this.cd.total ? '已暂停' : '就绪'));
-    q('[data-a="cdGo"]').textContent = this.cd.on ? '暂停' : (left < this.cd.total && left > 0 ? '继续' : '开始');
-    this.el.querySelectorAll('[data-f="h"],[data-f="m"],[data-f="s"]').forEach(x => { x.disabled = this.cd.on; });
+    this._txt(E.cdTime, this._fmtCd(left));
+    this._txt(E.cdState, this.cd.on ? '倒计时中' : (left <= 0 ? '已结束' : (left < this.cd.total ? '已暂停' : '就绪')));
+    this._txt(E.cdGo, this.cd.on ? '暂停' : (left < this.cd.total && left > 0 ? '继续' : '开始'));
+    const setDis = this.cd.on;
+    [E.h, E.m, E.s].forEach(x => { if (x && x.disabled !== setDis) x.disabled = setDis; });
 
     if (this.cd.on && left <= 0) {
       this.cd.on = false;
       this.cd.left = 0;
       if (!this.cd.done) { this.cd.done = true; this._ring(); }
     }
+    this._syncTick();
   }
 
   _ring() {
@@ -18773,6 +19261,950 @@ class AgentApp {
     try { this.abort && this.abort.abort(); } catch (e) {}
     /* 关窗就是「这一轮到此为止」：必须立刻落盘，不能等防抖（页面可能马上就关了） */
     this.flushSession().catch(() => {});
+  }
+}
+
+/* ============================================================================
+ * HTML 编辑器与渲染器（htmlapp）
+ * SPDX-License-Identifier: Apache-2.0 OR MIT
+ *
+ * 两块：左边 canvas 自绘的代码区，右边真 iframe 的预览区。
+ *   · 代码区不用 contenteditable / textarea 显示文字 —— 文字、行号、选区、
+ *     光标全部自己画。textarea 缩成 1px 藏在光标底下，只负责接输入法
+ *     （中文候选框要贴着光标，所以它得跟着光标走）。
+ *   · 高亮在 Worker 里算：把 token 跑完只回一串 {s,e,k}，主线程照着上色。
+ *     一屏 30 行、每行几十个 token，主线程只做 fillText，不做词法分析。
+ *   · 预览是**老实渲染**：iframe 不加 sandbox，脚本照跑、同源可达。
+ *     用户明确要的就是这个（"我们明确不做安全检测与过滤"）。想要隔离
+ *     可以在工具栏里打开「隔离」——那是可选，不是默认。
+ *
+ * 和小浏览器（browser 窗口）并存：那个是上网的，这个是写页面的。
+ * ==========================================================================*/
+
+/* ---------------------------------------------------------------- 宽度表
+ * 主线程没有共享的 charWidth（那是 Worker 侧的），这里只要「这个字符占几格」。
+ * 等宽字体下：ASCII 1 格，CJK / emoji 2 格，组合符 0 格。 */
+function hxCharW(cp) {
+  if (cp === 0) return 0;
+  if (cp < 32) return 0;
+  if (cp < 0x1100) return 1;
+  if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0x2E80 && cp <= 0xA4CF) ||
+      (cp >= 0xAC00 && cp <= 0xD7A3) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+      (cp >= 0xFE30 && cp <= 0xFE6F) || (cp >= 0xFF00 && cp <= 0xFF60) ||
+      (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1F64F) ||
+      (cp >= 0x1F900 && cp <= 0x1F9FF) || (cp >= 0x20000 && cp <= 0x3FFFD)) return 2;
+  if (cp >= 0x300 && cp <= 0x36F) return 0;   // 组合用附加符
+  return 1;
+}
+
+/* ---------------------------------------------------------------- 词法 Worker
+ * 一个共享 Worker 给所有编辑窗口用：新建一个编辑器就再开一个线程太浪费，
+ * 而且文本小的很，串行排队完全够。 */
+const HxWorker = {
+  w: null, seq: 0, waiting: new Map(), failed: false,
+
+  ensure() {
+    if (this.w || this.failed) return this.w;
+    try {
+      const src = `
+        function tok(src) {
+          const out = [];
+          const push = (s, e, k) => { if (e > s) out.push(s + ',' + e + ',' + k); };
+          let i = 0; const n = src.length;
+          const isName = c => /[\\w:.-]/.test(c);
+          while (i < n) {
+            if (src.startsWith('<!--', i)) {
+              const e = src.indexOf('-->', i + 4);
+              const end = e < 0 ? n : e + 3;
+              push(i, end, 'cmt'); i = end; continue;
+            }
+            if (src[i] === '<' && src[i + 1] === '!') {
+              const e = src.indexOf('>', i);
+              const end = e < 0 ? n : e + 1;
+              push(i, end, 'meta'); i = end; continue;
+            }
+            if (src[i] === '<' && /[a-zA-Z\\/]/.test(src[i + 1] || '')) {
+              const start = i;
+              push(i, i + 1, 'punc');
+              i++;
+              let closing = false;
+              if (src[i] === '/') { closing = true; push(i, i + 1, 'punc'); i++; }
+              const ns = i;
+              while (i < n && isName(src[i])) i++;
+              push(ns, i, closing ? 'tagx' : 'tag');
+              while (i < n && src[i] !== '>') {
+                if (/\\s/.test(src[i])) { i++; continue; }
+                if (src[i] === '/') { push(i, i + 1, 'punc'); i++; continue; }
+                const as = i;
+                while (i < n && !/[\\s=\\/>]/.test(src[i])) i++;
+                if (i > as) push(as, i, 'attr');
+                while (i < n && /\\s/.test(src[i])) i++;
+                if (src[i] === '=') {
+                  push(i, i + 1, 'punc'); i++;
+                  while (i < n && /\\s/.test(src[i])) i++;
+                  const q = src[i];
+                  if (q === '"' || q === "'") {
+                    const qs = i; i++;
+                    while (i < n && src[i] !== q) i++;
+                    i = Math.min(n, i + 1);
+                    push(qs, i, 'str');
+                  } else {
+                    const vs = i;
+                    while (i < n && !/[\\s>]/.test(src[i])) i++;
+                    push(vs, i, 'str');
+                  }
+                }
+              }
+              if (i < n && src[i] === '>') { push(i, i + 1, 'punc'); i++; }
+              continue;
+            }
+            const ts = i;
+            while (i < n && src[i] !== '<') i++;
+            if (i === ts) i++;
+            push(ts, i, 'text');
+          }
+          return out;
+        }
+        onmessage = (e) => {
+          const d = e.data;
+          try { postMessage({ id: d.id, tokens: tok(d.text) }); }
+          catch (err) { postMessage({ id: d.id, tokens: [], err: String(err && err.message || err) }); }
+        };`;
+      const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+      const w = new Worker(url);
+      w.onmessage = (e) => {
+        const m = e.data || {};
+        const cb = this.waiting.get(m.id);
+        if (cb) { this.waiting.delete(m.id); cb(m.tokens || []); }
+      };
+      w.onerror = () => { this.failed = true; this.w = null; };
+      this.w = w;
+      return w;
+    } catch (e) {
+      this.failed = true;
+      return null;
+    }
+  },
+
+  tokenize(text, cb) {
+    const w = this.ensure();
+    if (!w) { cb(null); return; }
+    const id = ++this.seq;
+    this.waiting.set(id, cb);
+    try { w.postMessage({ id, text }); }
+    catch (e) { this.waiting.delete(id); cb(null); }
+    /* 3 秒没回就别等了，主线程用纯文本兜底 —— 高亮没了不能连编辑都不能用 */
+    setTimeout(() => {
+      if (this.waiting.has(id)) { this.waiting.delete(id); cb(null); }
+    }, 3000);
+  }
+};
+
+/* ---------------------------------------------------------------- 应用 */
+const HX_SAMPLE = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>你好</title>
+  <style>
+    body { font: 16px/1.6 system-ui, sans-serif; padding: 24px; }
+    button { padding: 8px 16px; border-radius: 8px; border: 0;
+             background: #0f1617; color: #8de312; cursor: pointer; }
+    #out { margin-top: 12px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>这是个真的页面</h1>
+  <p>左边改，右边立刻变。脚本照跑，没有过滤。</p>
+  <button id="b">点我</button>
+  <div id="out"></div>
+
+  <script>
+    let n = 0;
+    document.getElementById('b').onclick = () => {
+      n++;
+      document.getElementById('out').textContent = '点了 ' + n + ' 次';
+    };
+  <\/script>
+</body>
+</html>
+`;
+
+class HtmlApp {
+  constructor(container, opts) {
+    this.el = container;
+    this.opts = opts || {};
+    this.text = this.opts.code || HX_SAMPLE;
+    this.caret = 0;
+    this.selA = 0; this.selB = 0;
+    this.tokens = [];
+    this.scrollLine = 0;
+    this.scrollX = 0;
+    this.split = 0.5;              // 编辑区占比
+    this.auto = true;
+    this.isolated = false;
+    this.fs = 13;
+    this.lh = Math.round(this.fs * 1.62);
+    this.undo = []; this.redo = [];
+    this._caretOn = true;
+    this._blink = 0;
+    this._raf = 0;
+    this._tok = 0;
+    this._run = 0;
+    this._live = false;
+    this._dirty = true;
+    this._meas = null;
+
+    this._build();
+    this._bind();
+    this._applyTheme();
+    this._layout();
+    this._scheduleToken();
+    this._scheduleRun(0);
+    this._startBlink();
+    /* 窗口刚建时内容区可能还没有尺寸，等两帧再排一次版 */
+    requestAnimationFrame(() => requestAnimationFrame(() => this._layout()));
+  }
+
+  /* -------------------------------------------------------------- 结构 */
+  _build() {
+    this.el.innerHTML = `
+      <div class="hx">
+        <div class="hx-bar">
+          <button class="tl-btn sm" data-a="open" title="从 .home 打开一个 .html">打开</button>
+          <button class="tl-btn sm" data-a="save" title="存到 .home（Ctrl+S）">保存</button>
+          <span class="hx-sp"></span>
+          <button class="tl-btn sm" data-a="run" title="立刻重新渲染（Ctrl+Enter）">运行</button>
+          <label class="hx-chk" title="改一个字就重新渲染"><input type="checkbox" data-a="auto" checked><span>自动</span></label>
+          <label class="hx-chk" title="给预览加 sandbox（默认不加：脚本照跑，同源可达）"><input type="checkbox" data-a="iso"><span>隔离</span></label>
+          <button class="tl-btn sm" data-a="view" title="切换 左右 / 上下 / 只看编辑 / 只看预览">分栏</button>
+          <button class="tl-btn sm" data-a="clear" title="清空重来">清空</button>
+        </div>
+        <div class="hx-body">
+          <div class="hx-edit">
+            <canvas class="hx-cv"></canvas>
+            <textarea class="hx-in" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
+          </div>
+          <div class="hx-gutter" title="拖动改分栏"></div>
+          <div class="hx-prev">
+            <iframe class="hx-frame" title="预览"></iframe>
+          </div>
+        </div>
+        <div class="hx-foot">
+          <span data-f="pos">1:1</span>
+          <span data-f="len">0 字符</span>
+          <span data-f="run">—</span>
+          <span class="hx-sp"></span>
+          <span data-f="hint">canvas 自绘 · 高亮在 Worker</span>
+        </div>
+      </div>`;
+    const q = s => this.el.querySelector(s);
+    this.cv = q('.hx-cv');
+    this.ctx = this.cv.getContext('2d');
+    this.ta = q('.hx-in');
+    this.frame = q('.hx-frame');
+    this.editBox = q('.hx-edit');
+    this.prevBox = q('.hx-prev');
+    this.gutter = q('.hx-gutter');
+    this.bodyEl = q('.hx-body');
+    this.fPos = q('[data-f="pos"]');
+    this.fLen = q('[data-f="len"]');
+    this.fRun = q('[data-f="run"]');
+    this.ta.value = this.text;
+    this.ta.selectionStart = this.ta.selectionEnd = this.caret;
+  }
+
+  _bind() {
+    const q = s => this.el.querySelector(s);
+
+    /* 工具栏：用委托，按钮会随状态变文案 */
+    this.el.querySelector('.hx-bar').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-a]');
+      if (!b || b.tagName === 'INPUT') return;
+      const a = b.dataset.a;
+      if (a === 'open') this._openFile();
+      else if (a === 'save') this._saveFile();
+      else if (a === 'run') this._scheduleRun(0);
+      else if (a === 'view') this._cycleView();
+      else if (a === 'clear') {
+        confirmDlg('清空编辑器？', '当前内容会丢掉，已经保存到文件的不受影响。', () => {
+          this._pushUndo();
+          this._setText('', 0);
+        }, { ok: '清空', danger: true });
+      }
+    });
+    q('[data-a="auto"]').addEventListener('change', e => {
+      this.auto = e.target.checked;
+      if (this.auto) this._scheduleRun(60);
+    });
+    q('[data-a="iso"]').addEventListener('change', e => {
+      this.isolated = e.target.checked;
+      this._scheduleRun(0);
+    });
+
+    /* 输入层：只负责「收」，不负责显示 */
+    this.ta.addEventListener('input', () => this._onInput());
+    this.ta.addEventListener('keydown', (e) => this._onKey(e));
+    this.ta.addEventListener('compositionstart', () => { this._composing = true; });
+    this.ta.addEventListener('compositionend', () => {
+      this._composing = false;
+      this._onInput();
+    });
+    this.ta.addEventListener('scroll', () => { this.ta.scrollTop = 0; this.ta.scrollLeft = 0; });
+
+    /* 鼠标：点哪儿光标去哪儿，拖动选字 */
+    this.cv.addEventListener('pointerdown', (e) => this._onDown(e));
+    this.cv.addEventListener('pointermove', (e) => this._onMove(e));
+    this.cv.addEventListener('pointerup', (e) => this._onUp(e));
+    this.cv.addEventListener('pointercancel', () => { this._dragging = false; });
+    this.cv.addEventListener('wheel', (e) => this._onWheel(e), { passive: false });
+
+    /* 分栏拖动 */
+    this.gutter.addEventListener('pointerdown', (e) => this._onSplit(e));
+
+    this._ro = new ResizeObserver(() => this._layout());
+    this._ro.observe(this.bodyEl);
+
+    this.el.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); this._saveFile(); }
+    });
+  }
+
+  /* -------------------------------------------------------------- 布局 */
+  _layout() {
+    /* 用 clientWidth/clientHeight 而不是 getBoundingClientRect：
+     * 窗口开场动画用的是 transform:scale()，rect 会把缩放算进去，
+     * 于是「刚打开的一瞬间」量到的是缩小后的宽度，窄到 620 以下就被判成上下分栏，
+     * 而且这个错误结论会一直留着。clientWidth 不受 transform 影响。 */
+    const bw = this.bodyEl.clientWidth, bh = this.bodyEl.clientHeight;
+    if (!bw || !bh) return;
+    const box = { width: bw, height: bh };
+    const vertical = bw < 620;
+    const g = 6;
+    const avail = vertical ? bh : bw;
+    const editW = Math.max(120, Math.round((avail - g) * this.split));
+    if (vertical) {
+      this.bodyEl.style.gridTemplateColumns = '1fr';
+      this.bodyEl.style.gridTemplateRows = editW + 'px ' + g + 'px 1fr';
+      this.gutter.style.cursor = 'row-resize';
+    } else {
+      this.bodyEl.style.gridTemplateColumns = editW + 'px ' + g + 'px 1fr';
+      this.bodyEl.style.gridTemplateRows = '1fr';
+      this.gutter.style.cursor = 'col-resize';
+    }
+    this._vertical = vertical;
+    this._resizeCanvas();
+    this._draw();
+  }
+
+  _resizeCanvas() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    /* 同 _layout：用 client*，别让开场动画的 transform 骗了尺寸 */
+    const w = Math.max(80, this.editBox.clientWidth || 0);
+    const h = Math.max(60, this.editBox.clientHeight || 0);
+    if (this._cw === w && this._ch === h && this._dpr === dpr) return;
+    this._cw = w; this._ch = h; this._dpr = dpr;
+    this.cv.width = Math.floor(w * dpr);
+    this.cv.height = Math.floor(h * dpr);
+    this.cv.style.width = w + 'px';
+    this.cv.style.height = h + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._meas = null;
+    this._dirty = true;
+  }
+
+  /* 等宽字体的字符宽度：量一次 'M'，中文按 2 倍。
+   * 不逐字 measureText —— 一屏 3000 个字符，每帧量 3000 次会把帧率打死。 */
+  _metrics() {
+    if (this._meas) return this._meas;
+    const c = this.ctx;
+    c.font = this._font();
+    const w = c.measureText('M').width || this.fs * 0.6;
+    const base = c.measureText('中').width;
+    this._meas = { w, cjk: base > w * 1.5 ? w * 2 : w * 2, ascent: this.fs };
+    return this._meas;
+  }
+
+  _font() { return this.fs + 'px ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans Mono CJK SC", monospace'; }
+
+  /* -------------------------------------------------------------- 文本模型 */
+  _lines() {
+    if (this._linesCache && this._linesSrc === this.text) return this._linesCache;
+    const out = [];
+    let start = 0;
+    const s = this.text;
+    for (let i = 0; i <= s.length; i++) {
+      if (i === s.length || s[i] === '\n') {
+        out.push({ start, text: s.slice(start, i) });
+        start = i + 1;
+      }
+    }
+    this._linesSrc = this.text;
+    this._linesCache = out;
+    return out;
+  }
+
+  _pos(offset) {
+    const s = this.text;
+    const o = Math.max(0, Math.min(s.length, offset));
+    let row = 0, start = 0;
+    for (let i = 0; i < o; i++) {
+      if (s[i] === '\n') { row++; start = i + 1; }
+    }
+    return { row, col: o - start, offset: o };
+  }
+
+  _colX(str, upto) {
+    const m = this._metrics();
+    let x = 0;
+    for (let i = 0; i < upto && i < str.length; i++) x += hxCharW(str.codePointAt(i)) === 2 ? m.cjk : m.w;
+    return x;
+  }
+
+  /* 屏幕坐标 -> 文本偏移（鼠标点击 / 拖动） */
+  _hitTest(px, py) {
+    const m = this._metrics();
+    const lines = this._lines();
+    const row = Math.max(0, Math.min(lines.length - 1, Math.floor((py + this.scrollLine * this.lh) / this.lh)));
+    const L = lines[row] || { start: 0, text: '' };
+    const targetX = px + this.scrollX;
+    let x = 0;
+    let i = 0;
+    while (i < L.text.length) {
+      const cp = L.text.codePointAt(i);
+      const w = hxCharW(cp) === 2 ? m.cjk : m.w;
+      if (x + w / 2 > targetX) break;
+      x += w;
+      i += String.fromCodePoint(cp).length;
+    }
+    return L.start + i;
+  }
+
+  /* -------------------------------------------------------------- 绘制 */
+  _draw() {
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => { this._raf = 0; this._paint(); });
+  }
+
+  _paint() {
+    const c = this.ctx;
+    /* 自己校一次尺寸：ResizeObserver 只在「变」的时候叫，
+     * 而窗口刚打开那一帧量到的 0 不算「变」，于是画面永远停在 3 行。 */
+    const ew = this.editBox.clientWidth, eh = this.editBox.clientHeight;
+    if (ew && eh && (ew !== this._cw || eh !== this._ch)) this._resizeCanvas();
+    if (!c || !this._cw) return;
+    this._applyTheme();
+    const m = this._metrics();
+    const lines = this._lines();
+    const W = this._cw, H = this._ch;
+    const gutterW = Math.max(34, String(lines.length).length * m.w + 16);
+    const top = 6;
+    const visRows = Math.floor((H - top * 2) / this.lh);
+    this.scrollLine = Math.max(0, Math.min(this.scrollLine, Math.max(0, lines.length - Math.floor(visRows / 2))));
+
+    c.save();
+    c.clearRect(0, 0, W, H);
+    c.fillStyle = this._bg || '#0f1617';
+    c.fillRect(0, 0, W, H);
+
+    /* 行号槽 */
+    c.fillStyle = this._gutterBg || 'rgba(255,255,255,.035)';
+    c.fillRect(0, 0, gutterW, H);
+    c.font = this._font();
+    c.textBaseline = 'top';
+
+    const first = this.scrollLine;
+    const last = Math.min(lines.length - 1, first + visRows + 1);
+
+    /* 选区（先画，压在文字下面） */
+    const sa = Math.min(this.selA, this.selB), sb = Math.max(this.selA, this.selB);
+    if (sa !== sb) {
+      c.fillStyle = (this._pal && this._pal.sel) || 'rgba(64,160,255,.22)';
+      const p1 = this._pos(sa), p2 = this._pos(sb);
+      for (let r = p1.row; r <= p2.row && r <= last; r++) {
+        if (r < first) continue;
+        const L = lines[r];
+        const from = r === p1.row ? this._colX(L.text, p1.col) : 0;
+        const to = r === p2.row ? this._colX(L.text, p2.col) : this._colX(L.text, L.text.length);
+        const y = top + (r - first) * this.lh;
+        c.fillRect(gutterW + from - this.scrollX, y, Math.max(2, to - from), this.lh);
+      }
+    }
+
+    /* 逐行：行号 + 分段上色 */
+    const maxX = W - gutterW;
+    for (let r = first; r <= last; r++) {
+      const L = lines[r];
+      if (!L) continue;
+      const y = top + (r - first) * this.lh;
+
+      c.fillStyle = document.body.classList.contains('light') ? 'rgba(0,0,0,.34)' : 'rgba(255,255,255,.28)';
+      c.textAlign = 'right';
+      c.fillText(String(r + 1), gutterW - 8, y + 2);
+      c.textAlign = 'left';
+
+      c.save();
+      c.beginPath();
+      c.rect(gutterW, 0, maxX, H);
+      c.clip();
+      let x = gutterW - this.scrollX;
+      /* 该行涉及的 token，按它们在全文里的偏移切片 */
+      for (const seg of this._segments(L)) {
+        c.fillStyle = this._colorOf(seg.k);
+        for (const ch of seg.t) {
+          const w = hxCharW(ch.codePointAt(0)) === 2 ? m.cjk : m.w;
+          if (x + w > gutterW && x < W) c.fillText(ch, x, y + 2);
+          x += w;
+        }
+      }
+      c.restore();
+    }
+
+    /* 光标 */
+    if (this._caretOn && !this._dragging) {
+      const p = this._pos(this.caret);
+      if (p.row >= first && p.row <= last) {
+        const L = lines[p.row];
+        const x = gutterW + this._colX(L ? L.text : '', p.col) - this.scrollX;
+        const y = top + (p.row - first) * this.lh;
+        const h = this.lh - 2;
+        c.fillStyle = (this._pal && this._pal.caret) || '#8de312';
+        c.fillRect(Math.round(x), Math.round(y + 1), 2, h);
+        /* 输入法位置：textarea 贴到光标上，候选框才会出现在该出现的地方 */
+        this.ta.style.left = Math.round(x) + 'px';
+        this.ta.style.top = Math.round(y) + 'px';
+      }
+    }
+    c.restore();
+
+    /* 状态栏 */
+    const p = this._pos(this.caret);
+    if (this.fPos) this.fPos.textContent = (p.row + 1) + ':' + (p.col + 1);
+    if (this.fLen) this.fLen.textContent = this.text.length.toLocaleString() + ' 字符 · ' + lines.length + ' 行';
+    this._dirty = false;
+  }
+
+  _segments(L) {
+    /* 把这一行的文本切成 [类型, 文本] 段。没有 token 时整行当普通代码。 */
+    const out = [];
+    if (!this.tokens || !this.tokens.length) {
+      if (L.text) out.push({ k: 'text', t: L.text });
+      return out;
+    }
+    let pos = L.start;
+    const end = L.start + L.text.length;
+    for (const tk of this.tokens) {
+      if (tk.e <= L.start) continue;
+      if (tk.s >= end) break;
+      const s = Math.max(tk.s, L.start), e = Math.min(tk.e, end);
+      if (s > pos) out.push({ k: 'text', t: this.text.slice(pos, s) });
+      out.push({ k: tk.k, t: this.text.slice(s, e) });
+      pos = e;
+    }
+    if (pos < end) out.push({ k: 'text', t: this.text.slice(pos, end) });
+    return out;
+  }
+
+  _colorOf(k) {
+    const p = this._pal || {};
+    return p[k] || p.text || '#e8efec';
+  }
+
+  _applyTheme() {
+    const light = document.body.classList.contains('light');
+    this._bg = light ? '#ffffff' : '#0f1617';
+    this._gutterBg = light ? 'rgba(0,0,0,.045)' : 'rgba(255,255,255,.035)';
+    /* 两套配色都写全：浅色主题下沿用深色的浅字会变成「白底白字」——
+     * 截图里代码几乎看不见，就是漏了这一条。 */
+    this._pal = light
+      ? { text:'#1a2422', tag:'#1f7a3a', tagx:'#1f7a3a', attr:'#0b6e7a', str:'#9a6b00',
+          cmt:'#8a9a95', meta:'#6a3fbf', punc:'#5a6b66', caret:'#0f7a3f', sel:'rgba(30,120,220,.18)' }
+      : { text:'#e8efec', tag:'#8de312', tagx:'#8de312', attr:'#19e6f0', str:'#f5b900',
+          cmt:'#6b7a76', meta:'#b07cff', punc:'#9aa5a1', caret:'#8de312', sel:'rgba(64,160,255,.22)' };
+  }
+
+  /* -------------------------------------------------------------- 令牌 */
+  _scheduleToken() {
+    clearTimeout(this._tok);
+    this._tok = setTimeout(() => {
+      const src = this.text;
+      HxWorker.tokenize(src, (tokens) => {
+        if (!tokens) { this.tokens = []; this._draw(); return; }
+        if (this.text !== src) return;      // 期间又改了，等下一次
+        this.tokens = tokens.map(s => {
+          const a = s.split(',');
+          return { s: +a[0], e: +a[1], k: a[2] };
+        });
+        this._draw();
+      });
+    }, 120);
+  }
+
+  /* -------------------------------------------------------------- 编辑 */
+  _pushUndo() {
+    this.undo.push({ text: this.text, caret: this.caret });
+    if (this.undo.length > 120) this.undo.shift();
+    this.redo.length = 0;
+  }
+
+  _setText(t, caret) {
+    this.text = t;
+    this.caret = Math.max(0, Math.min(t.length, caret == null ? this.caret : caret));
+    this.selA = this.selB = this.caret;
+    this._syncTa();
+    this._dirty = true;
+    this._draw();
+    this._scheduleToken();
+    if (this.auto) this._scheduleRun(420);
+  }
+
+  _syncTa() {
+    /* textarea 只跟光标做朋友：值保持全文，选区跟 caret 对齐。
+     * 这样输入法、粘贴、撤销都能沿用浏览器原生那一套。 */
+    if (this.ta.value !== this.text) this.ta.value = this.text;
+    try {
+      this.ta.selectionStart = this.ta.selectionEnd = this.caret;
+    } catch (e) {}
+  }
+
+  _onInput() {
+    if (this._composing) return;
+    const v = this.ta.value;
+    if (v === this.text) return;
+    this._pushUndo();
+    const caret = this.ta.selectionStart;
+    this.text = v;
+    this.caret = caret;
+    this.selA = this.selB = caret;
+    this._dirty = true;
+    this._draw();
+    this._scheduleToken();
+    if (this.auto) this._scheduleRun(420);
+    this._updateRunLabel('改过，等渲染');
+  }
+
+  _onKey(e) {
+    const k = e.key;
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (mod && k.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        const s = this.redo.pop();
+        if (s) { this.undo.push({ text: this.text, caret: this.caret }); this._setText(s.text, s.caret); }
+      } else {
+        const s = this.undo.pop();
+        if (s) { this.redo.push({ text: this.text, caret: this.caret }); this._setText(s.text, s.caret); }
+      }
+      return;
+    }
+    if (mod && k === 'Enter') { e.preventDefault(); this._scheduleRun(0); return; }
+    if (mod && k.toLowerCase() === 's') { e.preventDefault(); this._saveFile(); return; }
+
+    if (k === 'Tab') {
+      e.preventDefault();
+      const s = this.selA !== this.selB;
+      if (s) { this._indentBlock(); return; }
+      this._insert('  ');
+      return;
+    }
+    if (k === 'Enter') {
+      e.preventDefault();
+      /* 自动缩进：延续上一行的前导空白，遇到 <tag> 再加两格 */
+      const p = this._pos(this.caret);
+      const lines = this._lines();
+      const cur = lines[p.row] ? lines[p.row].text : '';
+      const lead = (cur.match(/^[ \t]*/) || [''])[0];
+      const before = cur.slice(0, p.col).trimEnd();
+      const extra = /<[a-zA-Z][^>]*>$/.test(before) ? '  ' : '';
+      this._insert('\n' + lead + extra);
+      return;
+    }
+    if (k === 'Backspace') {
+      if (this.selA !== this.selB) { e.preventDefault(); this._deleteSel(); return; }
+      if (this.caret === 0) { e.preventDefault(); return; }
+      e.preventDefault();
+      this._pushUndo();
+      this.text = this.text.slice(0, this.caret - 1) + this.text.slice(this.caret);
+      this.caret--;
+      this.selA = this.selB = this.caret;
+      this._syncTa(); this._draw(); this._scheduleToken();
+      if (this.auto) this._scheduleRun(420);
+      return;
+    }
+    if (k === 'Delete') {
+      if (this.selA !== this.selB) { e.preventDefault(); this._deleteSel(); return; }
+      if (this.caret >= this.text.length) { e.preventDefault(); return; }
+      e.preventDefault();
+      this._pushUndo();
+      this.text = this.text.slice(0, this.caret) + this.text.slice(this.caret + 1);
+      this._syncTa(); this._draw(); this._scheduleToken();
+      if (this.auto) this._scheduleRun(420);
+      return;
+    }
+    if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown' ||
+        k === 'Home' || k === 'End') {
+      e.preventDefault();
+      this._move(k, e.shiftKey);
+      return;
+    }
+  }
+
+  _insert(s) {
+    this._pushUndo();
+    const a = Math.min(this.selA, this.selB), b = Math.max(this.selA, this.selB);
+    if (a !== b) {
+      this.text = this.text.slice(0, a) + s + this.text.slice(b);
+      this.caret = a + s.length;
+    } else {
+      this.text = this.text.slice(0, this.caret) + s + this.text.slice(this.caret);
+      this.caret += s.length;
+    }
+    this.selA = this.selB = this.caret;
+    this._syncTa(); this._dirty = true; this._draw(); this._scheduleToken();
+    this._ensureCaretVisible();
+    if (this.auto) this._scheduleRun(420);
+  }
+
+  _deleteSel() {
+    const a = Math.min(this.selA, this.selB), b = Math.max(this.selA, this.selB);
+    if (a === b) return;
+    this._pushUndo();
+    this.text = this.text.slice(0, a) + this.text.slice(b);
+    this.caret = a;
+    this.selA = this.selB = a;
+    this._syncTa(); this._draw(); this._scheduleToken();
+    if (this.auto) this._scheduleRun(420);
+  }
+
+  _move(k, shift) {
+    const lines = this._lines();
+    const p = this._pos(this.caret);
+    let next = this.caret;
+    if (k === 'ArrowLeft') next = Math.max(0, this.caret - 1);
+    else if (k === 'ArrowRight') next = Math.min(this.text.length, this.caret + 1);
+    else if (k === 'Home') next = lines[p.row] ? lines[p.row].start : 0;
+    else if (k === 'End') {
+      const L = lines[p.row];
+      next = L ? L.start + L.text.length : this.text.length;
+    } else {
+      const dr = k === 'ArrowUp' ? -1 : 1;
+      const target = lines[p.row + dr];
+      if (target) next = target.start + Math.min(p.col, target.text.length);
+    }
+    this.caret = next;
+    if (shift) this.selB = next;
+    else this.selA = this.selB = next;
+    this._syncTa(); this._draw();
+    this._ensureCaretVisible();
+  }
+
+  _indentBlock() {
+    const lines = this._lines();
+    const p1 = this._pos(Math.min(this.selA, this.selB));
+    const p2 = this._pos(Math.max(this.selA, this.selB));
+    this._pushUndo();
+    const out = lines.map((L, i) => (i >= p1.row && i <= p2.row) ? '  ' + L.text : L.text);
+    this.text = out.join('\n');
+    this.selA = lines[p1.row].start + 2;
+    this.selB = (lines[p2.row].start + (p2.row > p1.row ? 2 * (p2.row - p1.row) : 0)) + lines[p2.row].text.length + 2;
+    this.caret = this.selB;
+    this._syncTa(); this._draw(); this._scheduleToken();
+  }
+
+  _ensureCaretVisible() {
+    const p = this._pos(this.caret);
+    const visRows = Math.floor((this._ch - 12) / this.lh);
+    if (p.row < this.scrollLine) this.scrollLine = p.row;
+    if (p.row > this.scrollLine + visRows - 1) this.scrollLine = p.row - visRows + 1;
+    this._draw();
+  }
+
+  /* -------------------------------------------------------------- 鼠标 */
+  _onDown(e) {
+    this.cv.setPointerCapture(e.pointerId);
+    this._dragging = true;
+    this.ta.focus();
+    const r = this.cv.getBoundingClientRect();
+    const m = this._metrics();
+    const lines = this._lines();
+    const gutterW = Math.max(34, String(lines.length).length * m.w + 16);
+    const off = this._hitTest(e.clientX - r.left - gutterW + this.scrollX, e.clientY - r.top - 6);
+    this.caret = off;
+    if (e.shiftKey) { this.selB = off; }
+    else { this.selA = this.selB = off; }
+    this._syncTa(); this._draw();
+    e.preventDefault();
+  }
+
+  _onMove(e) {
+    if (!this._dragging) return;
+    const r = this.cv.getBoundingClientRect();
+    const m = this._metrics();
+    const lines = this._lines();
+    const gutterW = Math.max(34, String(lines.length).length * m.w + 16);
+    const off = this._hitTest(e.clientX - r.left - gutterW + this.scrollX, e.clientY - r.top - 6);
+    this.selB = off;
+    this.caret = off;
+    this._draw();
+  }
+
+  _onUp(e) {
+    if (!this._dragging) return;
+    this._dragging = false;
+    try { this.cv.releasePointerCapture(e.pointerId); } catch (err) {}
+    this._syncTa();
+    this._draw();
+  }
+
+  _onWheel(e) {
+    e.preventDefault();
+    const lines = this._lines();
+    if (e.shiftKey) {
+      this.scrollX = Math.max(0, this.scrollX + (e.deltaY || e.deltaX));
+    } else {
+      const step = Math.max(1, Math.round(Math.abs(e.deltaY) / this.lh));
+      this.scrollLine = Math.max(0, Math.min(lines.length - 1, this.scrollLine + (e.deltaY > 0 ? step : -step)));
+    }
+    this._draw();
+  }
+
+  _onSplit(e) {
+    e.preventDefault();
+    this.gutter.setPointerCapture(e.pointerId);
+    const box = this.bodyEl.getBoundingClientRect();
+    const move = (ev) => {
+      const vertical = this._vertical;
+      const total = vertical ? box.height : box.width;
+      const p = vertical ? (ev.clientY - box.top) : (ev.clientX - box.left);
+      this.split = Math.max(0.15, Math.min(0.85, p / total));
+      this._layout();
+    };
+    const up = () => {
+      this.gutter.removeEventListener('pointermove', move);
+      this.gutter.removeEventListener('pointerup', up);
+      try { this.gutter.releasePointerCapture(e.pointerId); } catch (err) {}
+    };
+    this.gutter.addEventListener('pointermove', move);
+    this.gutter.addEventListener('pointerup', up);
+  }
+
+  /* -------------------------------------------------------------- 闪烁 */
+  _startBlink() {
+    const tick = () => {
+      if (this._disposed) return;
+      this._caretOn = !this._caretOn;
+      /* 光标只在编辑区可见且聚焦时闪，别为了一个光标每 530ms 重画整块 */
+      if (document.activeElement === this.ta) this._draw();
+      this._blink = setTimeout(tick, 530);
+    };
+    this._blink = setTimeout(tick, 530);
+  }
+
+  /* -------------------------------------------------------------- 视图 */
+  _cycleView() {
+    const seq = [0.5, 0.68, 0.32, 1, 0];
+    const cur = this.split;
+    let i = seq.findIndex(v => Math.abs(v - cur) < 0.02);
+    this.split = seq[(i + 1) % seq.length];
+    this._layout();
+    this._layoutFrame();
+  }
+
+  _layoutFrame() {
+    const onlyEdit = this.split >= 0.999;
+    const onlyPrev = this.split <= 0.001;
+    this.prevBox.style.display = onlyEdit ? 'none' : '';
+    this.editBox.style.display = onlyPrev ? 'none' : '';
+    this.gutter.style.display = (onlyEdit || onlyPrev) ? 'none' : '';
+    if (!onlyPrev) this._resizeCanvas();
+  }
+
+  /* -------------------------------------------------------------- 预览 */
+  _updateRunLabel(s) { if (this.fRun) this.fRun.textContent = s; }
+
+  _scheduleRun(delay) {
+    clearTimeout(this._run);
+    this._run = setTimeout(() => this._render(), delay);
+  }
+
+  _render() {
+    /* 先记住 iframe 里的滚动位置：每次重写 srcdoc 都会跳回顶部，
+     * 一边改字一边被弹回开头是最烦人的。 */
+    let sy = 0, sx = 0;
+    try {
+      const w = this.frame.contentWindow;
+      if (w) { sy = w.scrollY; sx = w.scrollX; }
+    } catch (e) {}
+
+    const t0 = performance.now();
+    const html = this.text;
+    if (this.isolated) {
+      this.frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
+    } else {
+      this.frame.removeAttribute('sandbox');
+    }
+    this.frame.srcdoc = html;
+    this._live = true;
+    const hasPrev = this.split > 0.001;
+    if (!hasPrev) this._layoutFrame();
+
+    this.frame.onload = () => {
+      const ms = Math.max(1, Math.round(performance.now() - t0));
+      this._updateRunLabel('渲染 ' + ms + ' ms · ' + Math.round(html.length / 1024 * 10) / 10 + ' KB');
+      try {
+        const w = this.frame.contentWindow;
+        if (w) {
+          w.scrollTo(sx, sy);
+          w.onerror = (m, src, ln) => {
+            this._updateRunLabel('脚本报错：' + m + ' (行 ' + ln + ')');
+          };
+        }
+      } catch (e) {}
+    };
+  }
+
+  /* -------------------------------------------------------------- 文件 */
+  async _openFile() {
+    const p = await pickFileInFs({ dir: '.home', title: '打开 HTML', filter: (n) => /\.html?$/i.test(n) || true });
+    if (!p) return;
+    const r = await FS.read(p);
+    if (!r || typeof r.content !== 'string') { toast('这个文件读不出来', 'warn'); return; }
+    this._pushUndo();
+    this._setText(r.content, 0);
+    this.scrollLine = 0; this.scrollX = 0;
+    this._path = p;
+    toast('已打开 ' + spotExportName(p));
+  }
+
+  async _saveFile() {
+    const base = this._path ? spotExportName(this._path) : 'page.html';
+    const name = await modalPrompt('保存为（写进 .home）', base, '文件名，例如 demo.html');
+    if (!name) return;
+    /* spotfs 的路径是点分的，文件名里的点会被当成目录分隔符：
+     * 直接拼 '.home.a.html' 等于往不存在的 '.home.a' 目录里写东西。
+     * 所以先按 spotfs 的规则转义成 -2e，再用 uniquePathIn 避开重名。 */
+    const nice = /\.html?$/i.test(name) ? name : name + '.html';
+    const p = uniquePathIn('.home', spotEscape(nice));
+    try {
+      await FS.write(p, this.text, { mime: 'text/html;charset=utf-8', hint: baseName(p) });
+      this._path = p;
+      toast('已保存 ' + spotExportName(p));
+    } catch (e) {
+      toast('保存失败：' + (e && e.message || e), true);
+    }
+  }
+
+  onResize() { this._meas = null; this._layout(); }
+
+  dispose() {
+    this._disposed = true;
+    clearTimeout(this._blink);
+    clearTimeout(this._tok);
+    clearTimeout(this._run);
+    if (this._raf) cancelAnimationFrame(this._raf);
+    try { this._ro && this._ro.disconnect(); } catch (e) {}
+    try { this.frame && (this.frame.srcdoc = ''); } catch (e) {}
   }
 }
 
