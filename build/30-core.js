@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.29';
+const HT_VERSION = '0.0.1.30';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -145,24 +145,83 @@ function toast(msg, bad) {
   toastTimer = setTimeout(() => el.classList.remove('on'), 2600);
 }
 
-/* ---------------------------------------------------------------- Modal */
+/* ---------------------------------------------------------------- Dialog
+ * 全应用统一的一套对话框（见 CSS 里的设计说明）：
+ *   title 居中、body 自由、底部左取消右确认；卡片下挂一个「?」把手，
+ *   两端圆钮 = 取消 / 确认。文字与圆钮是同一动作的两个热区。
+ *
+ * 为什么要重写而不是加个新函数：项目里 11 处弹框全走 modal()，
+ * 只有一套实现才能真正统一；换皮不换接口，调用点不用改。
+ * 浏览器自己的 alert/confirm/prompt 不受影响，也绝不替换 —— 那不属于「应用内」。
+ */
+const DLG_ICON = {
+  slash:'<circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1L18.1 5.9"/>',
+  trash:'<path d="M4 7h16"/><path d="M9.5 6.8V4.6h5v2.2"/><path d="M6.6 7l.85 12.1h9.1L17.4 7"/><path d="M10.1 10.4v6M13.9 10.4v6"/>',
+  arrow:'<path d="M3.8 12h15.4"/><path d="M13.4 6.2L19.2 12l-5.8 5.8"/>',
+  check:'<path d="M4.6 12.6l4.7 4.7L19.4 7.1"/>'
+};
+function dlgIcon(name) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+    stroke-linecap="round" stroke-linejoin="round">${DLG_ICON[name] || DLG_ICON.check}</svg>`;
+}
 function modal(opts) {
   return new Promise(resolve => {
     const root = $('#modal-root');
+    if (!root) { resolve(null); return; }
+    const buttons = opts.buttons || [{ label:'确定', primary:true, value:true }];
+    const two = buttons.length > 1;
+    const okB = two ? buttons[buttons.length - 1] : buttons[0];
+    const cancelB = two ? buttons[0] : null;
+    /* 类型决定标题颜色、圆钮图标与颜色：
+     *   danger 危险操作（删除/清空）→ 红标题 + 垃圾桶
+     *   ask    输入确认              → 绿色右箭头
+     *   ok     普通确认              → 绿色对勾
+     *   info   单按钮提醒            → 不画把手（没有「要不要」的问题） */
+    const kind = opts.kind || (!two ? 'info'
+      : (okB && okB.danger) ? 'danger'
+      : /<(input|textarea|select)\b/i.test(opts.body || '') ? 'ask' : 'ok');
+    const okIcon = kind === 'danger' ? 'trash' : kind === 'ask' ? 'arrow' : 'check';
+
     const wrap = document.createElement('div');
     wrap.className = 'modal-wrap';
-    const body = opts.body || '';
-    wrap.innerHTML = `<div class="modal ${opts.className || ''}" role="dialog" aria-modal="true">
-      <h3>${esc(opts.title || '')}</h3>
-      <div class="mbody">${body}</div>
-      <div class="mfoot"></div>
+    wrap.innerHTML = `<div class="dlg-stage">
+      <div class="modal dlg-card ${kind}" role="dialog" aria-modal="true" aria-label="${esc(opts.title || '对话框')}">
+        <h3 class="dlg-title">${esc(opts.title || '')}</h3>
+        <div class="mbody dlg-body">${opts.body || ''}</div>
+        <div class="mfoot"></div>
+      </div>
+      ${two ? `<div class="dlg-handle">
+        <button type="button" class="dlg-orb cancel" title="取消（Esc）" aria-label="取消">${dlgIcon('slash')}</button>
+        <div class="dlg-trap" aria-hidden="true"><span>?</span></div>
+        <button type="button" class="dlg-orb ${kind === 'danger' ? 'danger' : 'ok'}"
+          title="${esc(okB.label)}" aria-label="${esc(okB.label)}">${dlgIcon(okIcon)}</button>
+      </div>` : ''}
     </div>`;
+
     const foot = $('.mfoot', wrap);
-    const buttons = opts.buttons || [{ label:'确定', primary:true, value:true }];
-    const close = (v) => { wrap.remove(); resolve(v); };
-    buttons.forEach(b => {
+    let done = false;
+    const close = (v) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      resolve(v);
+    };
+    /* 蒙层 = 取消。点卡片或把手不关（把手上的「?」是装饰，也不关）。 */
+    wrap.addEventListener('mousedown', (e) => {
+      if (e.target === wrap) close(cancelB ? cancelB.value : null);
+    });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(cancelB ? cancelB.value : null); }
+    };
+    window.addEventListener('keydown', onKey, true);
+
+    const mkBtn = (b, isOk) => {
       const el = document.createElement('button');
-      el.className = 'btn ' + (b.primary ? 'primary' : '') + (b.danger ? ' danger' : '');
+      el.type = 'button';
+      /* 保留 btn / primary / danger 这三个老类名：别处的 Enter 快捷键靠
+       * querySelector('.mfoot .btn.primary') 找确认键。 */
+      el.className = 'btn' + (isOk ? ' dlg-ok primary' : ' dlg-cancel') + (b.danger ? ' danger' : '') + (two ? '' : ' solo');
       el.textContent = b.label;
       el.onclick = async () => {
         if (b.onClick) {
@@ -171,12 +230,19 @@ function modal(opts) {
           close(r === undefined ? b.value : r);
         } else close(b.value);
       };
-      foot.appendChild(el);
-    });
+      return el;
+    };
+    buttons.forEach((b, i) => foot.appendChild(mkBtn(b, i === buttons.length - 1)));
+    const okEl = $('.dlg-ok', foot);
+    const cancelEl = $('.dlg-cancel', foot);
+    /* 两个圆钮直接点对应文字按钮：这样 onClick 里的校验（比如「名字不能为空」）
+     * 只有一份实现，圆钮不会绕过它。 */
+    const orbCancel = $('.dlg-orb.cancel', wrap);
+    const orbOk = $('.dlg-orb.ok, .dlg-orb.danger', wrap);
+    if (orbCancel && cancelEl) orbCancel.onclick = () => cancelEl.click();
+    if (orbOk && okEl) orbOk.onclick = () => okEl.click();
+
     if (opts.onMount) opts.onMount(wrap, close);
-    if (opts.dismiss !== false) {
-      wrap.addEventListener('mousedown', e => { if (e.target === wrap) close(null); });
-    }
     root.appendChild(wrap);
     const inp = $('input,textarea', wrap);
     if (inp) setTimeout(() => inp.focus(), 30);
@@ -1468,10 +1534,20 @@ async function importFiles(files, dir) {
 const DRAG_MIME = 'application/x-ht-spot';
 const DragBus = {
   items: null,
+  /* 内部拖拽的起始时刻：给「这次 DragEvent 到底是不是页面内拖动」留一个时间窗，
+   * 万一某个浏览器把自定义 MIME 从 types 里吞了，也还能靠它判断。 */
+  startedAt: 0,
   get() { return this.items; },
-  set(items) { this.items = (items && items.length) ? items.slice() : null; return this.items; },
+  set(items) {
+    this.items = (items && items.length) ? items.slice() : null;
+    this.startedAt = this.items ? Date.now() : 0;
+    return this.items;
+  },
+  /* 页面内拖拽是否仍在进行（10 秒内开始过） */
+  fresh() { return !!this.items && Date.now() - this.startedAt < 10000; },
   clear() {
     this.items = null;
+    this.startedAt = 0;
     try { document.body.classList.remove('drag-internal'); } catch (e) {}
   },
   /* dragstart 里同步调用：Chrome 只认同步阶段 setData */

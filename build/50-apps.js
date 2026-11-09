@@ -567,6 +567,8 @@ class FilesApp {
         <button class="btn" data-a="newfile" title="新建文件">＋</button>
         <button class="btn" data-a="newdir" title="新建目录">+dir</button>
         <button class="btn" data-a="newwin" title="再开一个文件管理器（同一个目录，方便拖来拖去）">⧉</button>
+        <button class="btn" data-a="open" title="打开选中的文件：文本进编辑器，图片进看图，目录就进去">打开</button>
+        <button class="btn" data-a="run" title="执行选中的文件：HTML 开浏览器，JS 开 shell 跑">执行</button>
         <button class="btn" data-a="upload" title="上传">⇧</button>
         <button class="btn danger" data-a="del" title="删除">✕</button>
         <button class="btn" data-a="download" title="下载">↓</button>
@@ -579,8 +581,43 @@ class FilesApp {
     this.prevEl = $('.fm-prev', this.el);
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
     this._off = EventBus.on('fs', () => { if (document.contains(this.el)) this.load(); });
+    this._bindList();
     this._bindDrop();
     this.load();
+  }
+
+  /* 行事件用委托，不绑在行上。
+   *
+   * 双击以前绑的是 row.ondblclick —— 但列表每次 fs 事件都会整体重建，
+   * 第一下点击之后只要来一次刷新，第二下就落在新节点上，dblclick 永远不会触发，
+   * 于是「双击打不开」。这里改成自己数点击：同一行 420ms 内点两下就打开，
+   * 时间戳存在应用实例上，重建多少遍都不影响。
+   * dblclick 仍然保留（原生事件能来就用），但 open() 自带 500ms 去重，
+   * 两条路都走到也只会开一个窗口。 */
+  _bindList() {
+    this._lastClick = { p: '', t: 0 };
+    this.listEl.addEventListener('click', (e) => {
+      const row = e.target.closest && e.target.closest('.fm-row');
+      if (!row || !this.listEl.contains(row)) return;
+      const p = row.dataset.p;
+      this.select(p);
+      const now = Date.now();
+      if (this._lastClick.p === p && now - this._lastClick.t < 420) {
+        this._lastClick = { p: '', t: 0 };
+        this.open(p);
+      } else {
+        this._lastClick = { p, t: now };
+      }
+    });
+    this.listEl.addEventListener('dblclick', (e) => {
+      const row = e.target.closest && e.target.closest('.fm-row');
+      if (row) this.open(row.dataset.p);
+    });
+    this.listEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !this.sel) return;
+      e.preventDefault();
+      e.ctrlKey || e.metaKey ? this.run(this.sel) : this.open(this.sel);
+    });
   }
 
   /* 把东西拖进文件管理器 = 落进它当前目录。
@@ -664,6 +701,8 @@ class FilesApp {
         const w = WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
         return w;
       }
+      else if (a === 'open') await this.openSel();
+      else if (a === 'run') await this.run(this.sel);
       else if (a === 'upload') await this.upload();
       else if (a === 'del') await this.del();
       else if (a === 'download') await this.download();
@@ -672,6 +711,9 @@ class FilesApp {
   async load() {
     this.pathEl.textContent = this.path;
     this.pathEl.title = this.path;
+    /* 换目录后旧选中项不属于这里；同一目录内刷新则保留高亮（行会被重建，
+     * 所以高亮必须重新画，不能只在 select 时写一次 style）。 */
+    if (this.sel && parentPath(this.sel) !== this.path) this.sel = '';
     const rows = await FS.list(this.path);
     if (!rows.length) { this.listEl.innerHTML = '<div class="fm-empty">空目录</div>'; return; }
     this.listEl.innerHTML = rows.map(r => `<div class="fm-row" data-p="${esc(r.path)}">
@@ -681,14 +723,17 @@ class FilesApp {
       <span class="sz">${r.kind === 'dir' ? '' : fmtBytes(r.size)}</span>
     </div>`).join('');
     $$('.fm-row', this.listEl).forEach(row => {
-      row.onclick = () => this.select(row.dataset.p);
-      row.ondblclick = () => this.open(row.dataset.p);
+      /* click / dblclick 不在这里绑：_bindList 用委托统一处理，
+       * 列表重建不会把「双击」这个动作弄丢。 */
       const p = row.dataset.p;
+      row.tabIndex = -1;
       row.draggable = true;
       /* pointerdown 是 dragstart 之前唯一能安全预读的时机 */
       row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
       row.addEventListener('dragstart', (e) => {
         row.classList.add('dragging');
+        /* 拖拽一开始就把可能的「双击」意图作废：拖动结束不该顺带打开文件 */
+        this._lastClick = { p:'', t:0 };
         const c = this._blobs.get(p);
         /* 同文档窗口之间靠这个 item 传递：路径 + 存储名。
          * 外部应用靠 DownloadURL（下面那行），两者互不影响。 */
@@ -703,10 +748,17 @@ class FilesApp {
       });
       row.addEventListener('dragend', () => { row.classList.remove('dragging'); DragBus.clear(); });
     });
+    this.paintSel();
+  }
+  /* 选中高亮：列表重建后要能重新画回来 */
+  paintSel() {
+    $$('.fm-row', this.listEl).forEach(r => {
+      r.style.background = r.dataset.p && r.dataset.p === this.sel ? 'rgba(94,234,212,.08)' : '';
+    });
   }
   async select(p) {
     this.sel = p;
-    $$('.fm-row', this.listEl).forEach(r => r.style.background = r.dataset.p === p ? 'rgba(94,234,212,.08)' : '');
+    this.paintSel();
     try {
       const st = await FS.stat(p);
       if (!st) return;
@@ -740,6 +792,11 @@ class FilesApp {
     } catch (e) { this.prevEl.textContent = '读取失败：' + e.message; }
   }
   async open(p) {
+    /* 去重：双击的两条判定路径（自己数的点击 + 原生 dblclick）可能都走到这里，
+     * 500ms 内同一个文件只开一次，免得并排弹出两个一样的窗口。 */
+    const now = Date.now();
+    if (this._opened && this._opened.p === p && now - this._opened.t < 500) return;
+    this._opened = { p, t: now };
     const st = await FS.stat(p);
     if (!st) return;
     if (st.kind === 'dir') { this.path = p; await this.load(); return; }
@@ -752,6 +809,50 @@ class FilesApp {
       return;
     }
     WindowManager.open({ type:'editor', path:p, title:st.name });
+  }
+  async openSel() {
+    if (!this.sel) { toast('先在列表里选一个文件'); return; }
+    await this.open(this.sel);
+  }
+  /* 执行：只处理「这个文件本身是个程序」的几种。
+   *   HTML → 浏览器窗口（沙箱 iframe）
+   *   JS   → shell 窗口，代码在 worker 里跑，输出直接落在终端
+   *   app / func → 各自的入口
+   * 其余（图片、纯文本、二进制）明确说不能执行，不假装能跑。 */
+  async run(p) {
+    p = p || this.sel;
+    if (!p) { toast('先在列表里选一个文件'); return; }
+    let st;
+    try { st = await FS.stat(p); } catch (e) { st = null; }
+    if (!st) { toast('文件不存在或已被删除', true); return; }
+    if (st.kind === 'dir') { this.path = p; await this.load(); return; }
+    if (st.kind === 'app') { WindowManager.open({ app:st.meta && st.meta.app || st.name }); return; }
+    const nm = spotExportName(baseName(p));
+    if (st.kind === 'func') {
+      const r = await FS.read(p);
+      const src = (r.meta && r.meta.source) || String(r.content || '');
+      WindowManager.open({ type:'shell', code:src, title:'执行 · ' + nm });
+      return;
+    }
+    if (st.kind !== 'object') { toast('「' + nm + '」不是可执行的东西', true); return; }
+    const mime = String((st.meta && st.meta.mime) || '');
+    if (/html/i.test(mime) || /\.html?$/i.test(nm)) {
+      const r = await FS.read(p);
+      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('读不出页面内容', true); return; }
+      WindowManager.open({ type:'browser', html:String(r.content || ''), title:'执行 · ' + nm });
+      return;
+    }
+    if (/javascript|ecmascript/i.test(mime) || /\.(js|mjs|cjs)$/i.test(nm)) {
+      const r = await FS.read(p);
+      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('这个文件是二进制，不是脚本', true); return; }
+      WindowManager.open({ type:'shell', code:String(r.content || ''), title:'执行 · ' + nm });
+      return;
+    }
+    if (/python/i.test(mime) || /\.py$/i.test(nm)) {
+      toast('Python 请在 python 窗口里运行（工具栏没有这条入口）', true);
+      return;
+    }
+    toast('「' + nm + '」没有可执行的入口', true);
   }
   async newEntry(dir) {
     const name = await modal({

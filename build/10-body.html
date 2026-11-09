@@ -279,11 +279,12 @@
 
 <!-- 全局拖拽导入遮罩：把外部文件拖进窗口时出现，松手即导入 spotfs -->
 <div id="dropVeil" aria-hidden="true">
+  <button class="dv-close" id="dropVeilClose" type="button" title="关闭（不导入）" aria-label="关闭导入提示">✕</button>
   <div class="dv-inner">
     <div class="dv-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3v11"/><path d="M7.5 9.5L12 14l4.5-4.5"/><path d="M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2"/></svg></div>
     <div class="dv-title">松手导入到 <b id="dropTargetLabel">.home</b></div>
-    <div class="dv-sub">文件会作为 spotfs 节点存进浏览器本地；文件名按转义规则自动处理（-XX / -HH）</div>
+    <div class="dv-sub">文件会作为 spotfs 节点存进浏览器本地；文件名按转义规则自动处理（-XX / -HH）<br>松手即导入，或点右上角 ✕ 关闭</div>
   </div>
 </div>
 

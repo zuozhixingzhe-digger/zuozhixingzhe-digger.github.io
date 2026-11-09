@@ -1266,18 +1266,81 @@ body.light .bl-k.load{background:rgba(20,60,55,.07)}
 }
 
 /* =====================================================================
- * 模态 / Toast
+ * 对话框 / Toast
+ *
+ * 对话框只有一套设计（2026-11-09 按用户手绘统一）：
+ *   卡片：标题居中（危险操作整条标红）、正文、底部左「取消」右「确认」；
+ *   把手：卡片底边垂下一个梯形，里写「?」，两端各一枚圆钮——
+ *         灰禁止符 = 取消，红垃圾桶 = 删除，绿右箭头 = 确认输入。
+ *   热区：底部两段整条都可点，圆钮也可点，文字与图标是同一个动作；
+ *         点蒙层 = 取消；Esc = 取消。蒙层保留背景模糊。
+ * 只用 token，浅色主题不用补第二遍。info 型（单按钮提醒）不画把手。
  * ===================================================================== */
 #modal-root{position:fixed;inset:0;z-index:200;pointer-events:none;display:grid;place-items:center}
-.modal-wrap{position:absolute;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(3px);
-  display:grid;place-items:center;pointer-events:auto;animation:fade .15s}
+.modal-wrap{position:absolute;inset:0;background:rgba(0,0,0,.5);
+  -webkit-backdrop-filter:blur(7px) saturate(.92);backdrop-filter:blur(7px) saturate(.92);
+  display:grid;place-items:center;pointer-events:auto;animation:fade .16s;padding:16px}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.modal{width:min(520px,92vw);max-height:86vh;display:flex;flex-direction:column;background:var(--panel-solid);
-  border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden;
-  animation:winIn .18s}
-.modal h3{margin:0;padding:16px 18px 12px;font-size:13px;letter-spacing:.05em;color:var(--fg);font-weight:600}
-.modal .mbody{padding:0 18px 6px;overflow:auto;font-size:12px;line-height:1.65;color:var(--fg-dim)}
-.modal .mfoot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px 16px}
+
+.dlg-stage{display:flex;flex-direction:column;align-items:center;max-height:94vh;animation:winIn .18s}
+.dlg-card{width:min(520px,92vw);max-height:78vh;display:flex;flex-direction:column;
+  background:var(--panel-solid);border:1.5px solid var(--border-strong);border-radius:14px;
+  box-shadow:var(--shadow-lg);overflow:hidden;position:relative;z-index:2}
+.dlg-card .dlg-title{margin:0;padding:19px 22px 0;font-size:14.5px;font-weight:600;letter-spacing:.02em;
+  line-height:1.5;text-align:center;color:var(--fg)}
+.dlg-card.danger .dlg-title{color:var(--red)}
+.dlg-card .dlg-body{padding:11px 22px 4px;overflow:auto;font-size:12.5px;line-height:1.75;
+  color:var(--fg-dim);min-height:48px;flex:1 1 auto}
+.dlg-card .mfoot{display:flex;align-items:stretch;gap:0;padding:10px 8px 8px;margin-top:auto;flex:0 0 auto}
+/* 底部按钮：各占一半，文字分别贴左 / 贴右，整块都是热区 */
+.dlg-card .mfoot .btn{flex:1 1 0;min-height:42px;padding:0 14px;border:0;border-radius:9px;
+  background:none;font-size:13px;letter-spacing:.05em;color:var(--fg-dim);
+  transition:background .14s var(--ease),color .14s var(--ease)}
+.dlg-card .mfoot .btn:hover{background:rgba(255,255,255,.05);color:var(--fg)}
+.dlg-card .mfoot .btn:active{transform:translateY(1px)}
+.dlg-card .mfoot .btn.dlg-cancel{text-align:left}
+.dlg-card .mfoot .btn.dlg-ok{text-align:right;color:var(--accent)}
+.dlg-card .mfoot .btn.dlg-ok:hover{background:rgba(94,234,212,.09)}
+.dlg-card .mfoot .btn.danger{color:var(--red)}
+.dlg-card .mfoot .btn.danger:hover{background:rgba(248,113,113,.09)}
+.dlg-card .mfoot .btn.solo{text-align:center;color:var(--accent);flex:1 1 auto}
+
+/* 把手：梯形 + 两枚圆钮 */
+.dlg-handle{display:grid;grid-template-columns:44px minmax(104px,224px) 44px;
+  align-items:end;gap:10px;justify-content:center;margin-top:-1.6px;
+  animation:dlgTail .2s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes dlgTail{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.dlg-trap{position:relative;height:42px;display:grid;place-items:center}
+.dlg-trap::before,.dlg-trap::after{content:'';position:absolute;inset:0;
+  clip-path:polygon(0 0,100% 0,79.5% 100%,20.5% 100%)}
+.dlg-trap::before{background:var(--border-strong)}
+.dlg-trap::after{inset:1.5px;background:var(--panel-solid)}
+.dlg-trap span{position:relative;z-index:1;transform:translateY(1px);
+  font-family:var(--mono);font-size:12.5px;color:var(--fg-mute)}
+
+.dlg-orb{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;
+  border:1.5px solid var(--border-strong);background:var(--panel-solid);color:var(--fg-mute);
+  transition:.16s var(--ease);position:relative;z-index:2}
+.dlg-orb svg{width:21px;height:21px}
+.dlg-orb:hover{transform:translateY(-2px);color:var(--fg);box-shadow:0 7px 18px rgba(0,0,0,.38)}
+.dlg-orb:active{transform:translateY(0)}
+.dlg-orb.cancel:hover{border-color:var(--fg-dim);color:var(--fg-dim)}
+.dlg-orb.ok{color:var(--accent);border-color:rgba(94,234,212,.5)}
+.dlg-orb.ok:hover{background:rgba(94,234,212,.1);border-color:var(--accent);
+  box-shadow:0 7px 20px rgba(94,234,212,.2)}
+.dlg-orb.danger{color:var(--red);border-color:rgba(248,113,113,.5)}
+.dlg-orb.danger:hover{background:rgba(248,113,113,.1);border-color:var(--red);
+  box-shadow:0 7px 20px rgba(248,113,113,.18)}
+@media (max-width:560px){
+  .dlg-handle{grid-template-columns:38px minmax(88px,160px) 38px;gap:8px}
+  .dlg-orb{width:38px;height:38px}.dlg-orb svg{width:18px;height:18px}
+  .dlg-trap{height:36px}
+  .dlg-card .dlg-title{font-size:13.5px;padding-top:16px}
+  .dlg-card .dlg-body{padding:9px 16px 2px;font-size:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  .modal-wrap,.dlg-stage,.dlg-handle{animation:none!important}
+}
 .modal pre{margin:0;font-family:var(--mono);font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
   background:var(--bg-0);border:1px solid var(--line-soft);border-radius:8px;padding:10px;color:var(--fg-dim)}
 .modal .code{font-family:var(--mono);font-size:11px;color:var(--amber)}
@@ -1338,7 +1401,19 @@ body.light .bl-k.load{background:rgba(20,60,55,.07)}
 
 /* 文件管理器 */
 .fm{display:flex;flex-direction:column;height:100%;font-family:var(--mono);font-size:11.5px;position:relative}
-.fm-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto}
+.fm-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto;
+  overflow-x:auto;scrollbar-width:none}
+.fm-bar::-webkit-scrollbar{display:none}
+/* 工具栏按钮原来是裸文字；「打开 / 执行」进来以后必须能看出是可点的 */
+.fm-bar .btn{flex:0 0 auto;padding:2px 6px;border-radius:6px;font-size:11px;line-height:1.55;
+  color:var(--fg-dim);border:1px solid transparent;transition:.14s var(--ease)}
+.fm-bar .btn:hover{color:var(--fg);border-color:var(--line);background:rgba(255,255,255,.045)}
+.fm-bar .btn.danger:hover{color:var(--red);border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.08)}
+.fm-bar .btn.primary{color:var(--accent);border-color:var(--accent-dim)}
+/* 「打开 / 执行」是主操作，给一圈边框让人一眼看到 */
+.fm-bar .btn[data-a="open"],.fm-bar .btn[data-a="run"]{border-color:var(--border);padding:2px 8px}
+.fm-bar .btn[data-a="run"]{color:var(--accent);border-color:var(--accent-dim)}
+.fm-bar .btn[data-a="run"]:hover{background:rgba(94,234,212,.1);color:var(--accent)}
 .fm-path{flex:1;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-list{flex:1;overflow:auto;padding:6px}
 .fm-row{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;color:var(--fg-dim);cursor:default}
@@ -1465,6 +1540,15 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   background:radial-gradient(620px 420px at 50% 44%, rgba(94,234,212,.12), rgba(4,10,12,.74) 70%);
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 #dropVeil.on{display:grid;animation:dvFade .16s ease}
+/* 明确的关闭入口：拖拽逻辑如果没按预期收尾（drop 被 iframe 吃掉、拖拽被系统打断），
+ * 用户永远有办法自己关掉这一层，而不是只能刷新页面。 */
+.dv-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;
+  pointer-events:auto;display:grid;place-items:center;color:var(--fg-dim);
+  border:1.5px solid var(--border-strong);background:rgba(8,16,18,.72);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font-size:15px;line-height:1;
+  transition:.15s var(--ease)}
+.dv-close:hover{color:var(--fg);border-color:var(--fg-dim);transform:rotate(90deg)}
+.dv-close:active{transform:scale(.94)}
 .dv-inner{display:flex;flex-direction:column;align-items:center;gap:13px;padding:34px 48px;border-radius:18px;
   border:1.5px dashed rgba(94,234,212,.62);background:rgba(8,16,18,.58);box-shadow:0 24px 70px rgba(0,0,0,.45);
   animation:dvPop .22s cubic-bezier(.2,.9,.3,1.25)}
@@ -2030,11 +2114,12 @@ body.drag-internal .br-shield{display:block}
 
 <!-- 全局拖拽导入遮罩：把外部文件拖进窗口时出现，松手即导入 spotfs -->
 <div id="dropVeil" aria-hidden="true">
+  <button class="dv-close" id="dropVeilClose" type="button" title="关闭（不导入）" aria-label="关闭导入提示">✕</button>
   <div class="dv-inner">
     <div class="dv-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3v11"/><path d="M7.5 9.5L12 14l4.5-4.5"/><path d="M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2"/></svg></div>
     <div class="dv-title">松手导入到 <b id="dropTargetLabel">.home</b></div>
-    <div class="dv-sub">文件会作为 spotfs 节点存进浏览器本地；文件名按转义规则自动处理（-XX / -HH）</div>
+    <div class="dv-sub">文件会作为 spotfs 节点存进浏览器本地；文件名按转义规则自动处理（-XX / -HH）<br>松手即导入，或点右上角 ✕ 关闭</div>
   </div>
 </div>
 
@@ -7509,7 +7594,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.29';
+const HT_VERSION = '0.0.1.30';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -7649,24 +7734,83 @@ function toast(msg, bad) {
   toastTimer = setTimeout(() => el.classList.remove('on'), 2600);
 }
 
-/* ---------------------------------------------------------------- Modal */
+/* ---------------------------------------------------------------- Dialog
+ * 全应用统一的一套对话框（见 CSS 里的设计说明）：
+ *   title 居中、body 自由、底部左取消右确认；卡片下挂一个「?」把手，
+ *   两端圆钮 = 取消 / 确认。文字与圆钮是同一动作的两个热区。
+ *
+ * 为什么要重写而不是加个新函数：项目里 11 处弹框全走 modal()，
+ * 只有一套实现才能真正统一；换皮不换接口，调用点不用改。
+ * 浏览器自己的 alert/confirm/prompt 不受影响，也绝不替换 —— 那不属于「应用内」。
+ */
+const DLG_ICON = {
+  slash:'<circle cx="12" cy="12" r="8.6"/><path d="M5.9 18.1L18.1 5.9"/>',
+  trash:'<path d="M4 7h16"/><path d="M9.5 6.8V4.6h5v2.2"/><path d="M6.6 7l.85 12.1h9.1L17.4 7"/><path d="M10.1 10.4v6M13.9 10.4v6"/>',
+  arrow:'<path d="M3.8 12h15.4"/><path d="M13.4 6.2L19.2 12l-5.8 5.8"/>',
+  check:'<path d="M4.6 12.6l4.7 4.7L19.4 7.1"/>'
+};
+function dlgIcon(name) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+    stroke-linecap="round" stroke-linejoin="round">${DLG_ICON[name] || DLG_ICON.check}</svg>`;
+}
 function modal(opts) {
   return new Promise(resolve => {
     const root = $('#modal-root');
+    if (!root) { resolve(null); return; }
+    const buttons = opts.buttons || [{ label:'确定', primary:true, value:true }];
+    const two = buttons.length > 1;
+    const okB = two ? buttons[buttons.length - 1] : buttons[0];
+    const cancelB = two ? buttons[0] : null;
+    /* 类型决定标题颜色、圆钮图标与颜色：
+     *   danger 危险操作（删除/清空）→ 红标题 + 垃圾桶
+     *   ask    输入确认              → 绿色右箭头
+     *   ok     普通确认              → 绿色对勾
+     *   info   单按钮提醒            → 不画把手（没有「要不要」的问题） */
+    const kind = opts.kind || (!two ? 'info'
+      : (okB && okB.danger) ? 'danger'
+      : /<(input|textarea|select)\b/i.test(opts.body || '') ? 'ask' : 'ok');
+    const okIcon = kind === 'danger' ? 'trash' : kind === 'ask' ? 'arrow' : 'check';
+
     const wrap = document.createElement('div');
     wrap.className = 'modal-wrap';
-    const body = opts.body || '';
-    wrap.innerHTML = `<div class="modal ${opts.className || ''}" role="dialog" aria-modal="true">
-      <h3>${esc(opts.title || '')}</h3>
-      <div class="mbody">${body}</div>
-      <div class="mfoot"></div>
+    wrap.innerHTML = `<div class="dlg-stage">
+      <div class="modal dlg-card ${kind}" role="dialog" aria-modal="true" aria-label="${esc(opts.title || '对话框')}">
+        <h3 class="dlg-title">${esc(opts.title || '')}</h3>
+        <div class="mbody dlg-body">${opts.body || ''}</div>
+        <div class="mfoot"></div>
+      </div>
+      ${two ? `<div class="dlg-handle">
+        <button type="button" class="dlg-orb cancel" title="取消（Esc）" aria-label="取消">${dlgIcon('slash')}</button>
+        <div class="dlg-trap" aria-hidden="true"><span>?</span></div>
+        <button type="button" class="dlg-orb ${kind === 'danger' ? 'danger' : 'ok'}"
+          title="${esc(okB.label)}" aria-label="${esc(okB.label)}">${dlgIcon(okIcon)}</button>
+      </div>` : ''}
     </div>`;
+
     const foot = $('.mfoot', wrap);
-    const buttons = opts.buttons || [{ label:'确定', primary:true, value:true }];
-    const close = (v) => { wrap.remove(); resolve(v); };
-    buttons.forEach(b => {
+    let done = false;
+    const close = (v) => {
+      if (done) return;
+      done = true;
+      window.removeEventListener('keydown', onKey, true);
+      wrap.remove();
+      resolve(v);
+    };
+    /* 蒙层 = 取消。点卡片或把手不关（把手上的「?」是装饰，也不关）。 */
+    wrap.addEventListener('mousedown', (e) => {
+      if (e.target === wrap) close(cancelB ? cancelB.value : null);
+    });
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(cancelB ? cancelB.value : null); }
+    };
+    window.addEventListener('keydown', onKey, true);
+
+    const mkBtn = (b, isOk) => {
       const el = document.createElement('button');
-      el.className = 'btn ' + (b.primary ? 'primary' : '') + (b.danger ? ' danger' : '');
+      el.type = 'button';
+      /* 保留 btn / primary / danger 这三个老类名：别处的 Enter 快捷键靠
+       * querySelector('.mfoot .btn.primary') 找确认键。 */
+      el.className = 'btn' + (isOk ? ' dlg-ok primary' : ' dlg-cancel') + (b.danger ? ' danger' : '') + (two ? '' : ' solo');
       el.textContent = b.label;
       el.onclick = async () => {
         if (b.onClick) {
@@ -7675,12 +7819,19 @@ function modal(opts) {
           close(r === undefined ? b.value : r);
         } else close(b.value);
       };
-      foot.appendChild(el);
-    });
+      return el;
+    };
+    buttons.forEach((b, i) => foot.appendChild(mkBtn(b, i === buttons.length - 1)));
+    const okEl = $('.dlg-ok', foot);
+    const cancelEl = $('.dlg-cancel', foot);
+    /* 两个圆钮直接点对应文字按钮：这样 onClick 里的校验（比如「名字不能为空」）
+     * 只有一份实现，圆钮不会绕过它。 */
+    const orbCancel = $('.dlg-orb.cancel', wrap);
+    const orbOk = $('.dlg-orb.ok, .dlg-orb.danger', wrap);
+    if (orbCancel && cancelEl) orbCancel.onclick = () => cancelEl.click();
+    if (orbOk && okEl) orbOk.onclick = () => okEl.click();
+
     if (opts.onMount) opts.onMount(wrap, close);
-    if (opts.dismiss !== false) {
-      wrap.addEventListener('mousedown', e => { if (e.target === wrap) close(null); });
-    }
     root.appendChild(wrap);
     const inp = $('input,textarea', wrap);
     if (inp) setTimeout(() => inp.focus(), 30);
@@ -8972,10 +9123,20 @@ async function importFiles(files, dir) {
 const DRAG_MIME = 'application/x-ht-spot';
 const DragBus = {
   items: null,
+  /* 内部拖拽的起始时刻：给「这次 DragEvent 到底是不是页面内拖动」留一个时间窗，
+   * 万一某个浏览器把自定义 MIME 从 types 里吞了，也还能靠它判断。 */
+  startedAt: 0,
   get() { return this.items; },
-  set(items) { this.items = (items && items.length) ? items.slice() : null; return this.items; },
+  set(items) {
+    this.items = (items && items.length) ? items.slice() : null;
+    this.startedAt = this.items ? Date.now() : 0;
+    return this.items;
+  },
+  /* 页面内拖拽是否仍在进行（10 秒内开始过） */
+  fresh() { return !!this.items && Date.now() - this.startedAt < 10000; },
   clear() {
     this.items = null;
+    this.startedAt = 0;
     try { document.body.classList.remove('drag-internal'); } catch (e) {}
   },
   /* dragstart 里同步调用：Chrome 只认同步阶段 setData */
@@ -11852,6 +12013,8 @@ class FilesApp {
         <button class="btn" data-a="newfile" title="新建文件">＋</button>
         <button class="btn" data-a="newdir" title="新建目录">+dir</button>
         <button class="btn" data-a="newwin" title="再开一个文件管理器（同一个目录，方便拖来拖去）">⧉</button>
+        <button class="btn" data-a="open" title="打开选中的文件：文本进编辑器，图片进看图，目录就进去">打开</button>
+        <button class="btn" data-a="run" title="执行选中的文件：HTML 开浏览器，JS 开 shell 跑">执行</button>
         <button class="btn" data-a="upload" title="上传">⇧</button>
         <button class="btn danger" data-a="del" title="删除">✕</button>
         <button class="btn" data-a="download" title="下载">↓</button>
@@ -11864,8 +12027,43 @@ class FilesApp {
     this.prevEl = $('.fm-prev', this.el);
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
     this._off = EventBus.on('fs', () => { if (document.contains(this.el)) this.load(); });
+    this._bindList();
     this._bindDrop();
     this.load();
+  }
+
+  /* 行事件用委托，不绑在行上。
+   *
+   * 双击以前绑的是 row.ondblclick —— 但列表每次 fs 事件都会整体重建，
+   * 第一下点击之后只要来一次刷新，第二下就落在新节点上，dblclick 永远不会触发，
+   * 于是「双击打不开」。这里改成自己数点击：同一行 420ms 内点两下就打开，
+   * 时间戳存在应用实例上，重建多少遍都不影响。
+   * dblclick 仍然保留（原生事件能来就用），但 open() 自带 500ms 去重，
+   * 两条路都走到也只会开一个窗口。 */
+  _bindList() {
+    this._lastClick = { p: '', t: 0 };
+    this.listEl.addEventListener('click', (e) => {
+      const row = e.target.closest && e.target.closest('.fm-row');
+      if (!row || !this.listEl.contains(row)) return;
+      const p = row.dataset.p;
+      this.select(p);
+      const now = Date.now();
+      if (this._lastClick.p === p && now - this._lastClick.t < 420) {
+        this._lastClick = { p: '', t: 0 };
+        this.open(p);
+      } else {
+        this._lastClick = { p, t: now };
+      }
+    });
+    this.listEl.addEventListener('dblclick', (e) => {
+      const row = e.target.closest && e.target.closest('.fm-row');
+      if (row) this.open(row.dataset.p);
+    });
+    this.listEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !this.sel) return;
+      e.preventDefault();
+      e.ctrlKey || e.metaKey ? this.run(this.sel) : this.open(this.sel);
+    });
   }
 
   /* 把东西拖进文件管理器 = 落进它当前目录。
@@ -11949,6 +12147,8 @@ class FilesApp {
         const w = WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
         return w;
       }
+      else if (a === 'open') await this.openSel();
+      else if (a === 'run') await this.run(this.sel);
       else if (a === 'upload') await this.upload();
       else if (a === 'del') await this.del();
       else if (a === 'download') await this.download();
@@ -11957,6 +12157,9 @@ class FilesApp {
   async load() {
     this.pathEl.textContent = this.path;
     this.pathEl.title = this.path;
+    /* 换目录后旧选中项不属于这里；同一目录内刷新则保留高亮（行会被重建，
+     * 所以高亮必须重新画，不能只在 select 时写一次 style）。 */
+    if (this.sel && parentPath(this.sel) !== this.path) this.sel = '';
     const rows = await FS.list(this.path);
     if (!rows.length) { this.listEl.innerHTML = '<div class="fm-empty">空目录</div>'; return; }
     this.listEl.innerHTML = rows.map(r => `<div class="fm-row" data-p="${esc(r.path)}">
@@ -11966,14 +12169,17 @@ class FilesApp {
       <span class="sz">${r.kind === 'dir' ? '' : fmtBytes(r.size)}</span>
     </div>`).join('');
     $$('.fm-row', this.listEl).forEach(row => {
-      row.onclick = () => this.select(row.dataset.p);
-      row.ondblclick = () => this.open(row.dataset.p);
+      /* click / dblclick 不在这里绑：_bindList 用委托统一处理，
+       * 列表重建不会把「双击」这个动作弄丢。 */
       const p = row.dataset.p;
+      row.tabIndex = -1;
       row.draggable = true;
       /* pointerdown 是 dragstart 之前唯一能安全预读的时机 */
       row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
       row.addEventListener('dragstart', (e) => {
         row.classList.add('dragging');
+        /* 拖拽一开始就把可能的「双击」意图作废：拖动结束不该顺带打开文件 */
+        this._lastClick = { p:'', t:0 };
         const c = this._blobs.get(p);
         /* 同文档窗口之间靠这个 item 传递：路径 + 存储名。
          * 外部应用靠 DownloadURL（下面那行），两者互不影响。 */
@@ -11988,10 +12194,17 @@ class FilesApp {
       });
       row.addEventListener('dragend', () => { row.classList.remove('dragging'); DragBus.clear(); });
     });
+    this.paintSel();
+  }
+  /* 选中高亮：列表重建后要能重新画回来 */
+  paintSel() {
+    $$('.fm-row', this.listEl).forEach(r => {
+      r.style.background = r.dataset.p && r.dataset.p === this.sel ? 'rgba(94,234,212,.08)' : '';
+    });
   }
   async select(p) {
     this.sel = p;
-    $$('.fm-row', this.listEl).forEach(r => r.style.background = r.dataset.p === p ? 'rgba(94,234,212,.08)' : '');
+    this.paintSel();
     try {
       const st = await FS.stat(p);
       if (!st) return;
@@ -12025,6 +12238,11 @@ class FilesApp {
     } catch (e) { this.prevEl.textContent = '读取失败：' + e.message; }
   }
   async open(p) {
+    /* 去重：双击的两条判定路径（自己数的点击 + 原生 dblclick）可能都走到这里，
+     * 500ms 内同一个文件只开一次，免得并排弹出两个一样的窗口。 */
+    const now = Date.now();
+    if (this._opened && this._opened.p === p && now - this._opened.t < 500) return;
+    this._opened = { p, t: now };
     const st = await FS.stat(p);
     if (!st) return;
     if (st.kind === 'dir') { this.path = p; await this.load(); return; }
@@ -12037,6 +12255,50 @@ class FilesApp {
       return;
     }
     WindowManager.open({ type:'editor', path:p, title:st.name });
+  }
+  async openSel() {
+    if (!this.sel) { toast('先在列表里选一个文件'); return; }
+    await this.open(this.sel);
+  }
+  /* 执行：只处理「这个文件本身是个程序」的几种。
+   *   HTML → 浏览器窗口（沙箱 iframe）
+   *   JS   → shell 窗口，代码在 worker 里跑，输出直接落在终端
+   *   app / func → 各自的入口
+   * 其余（图片、纯文本、二进制）明确说不能执行，不假装能跑。 */
+  async run(p) {
+    p = p || this.sel;
+    if (!p) { toast('先在列表里选一个文件'); return; }
+    let st;
+    try { st = await FS.stat(p); } catch (e) { st = null; }
+    if (!st) { toast('文件不存在或已被删除', true); return; }
+    if (st.kind === 'dir') { this.path = p; await this.load(); return; }
+    if (st.kind === 'app') { WindowManager.open({ app:st.meta && st.meta.app || st.name }); return; }
+    const nm = spotExportName(baseName(p));
+    if (st.kind === 'func') {
+      const r = await FS.read(p);
+      const src = (r.meta && r.meta.source) || String(r.content || '');
+      WindowManager.open({ type:'shell', code:src, title:'执行 · ' + nm });
+      return;
+    }
+    if (st.kind !== 'object') { toast('「' + nm + '」不是可执行的东西', true); return; }
+    const mime = String((st.meta && st.meta.mime) || '');
+    if (/html/i.test(mime) || /\.html?$/i.test(nm)) {
+      const r = await FS.read(p);
+      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('读不出页面内容', true); return; }
+      WindowManager.open({ type:'browser', html:String(r.content || ''), title:'执行 · ' + nm });
+      return;
+    }
+    if (/javascript|ecmascript/i.test(mime) || /\.(js|mjs|cjs)$/i.test(nm)) {
+      const r = await FS.read(p);
+      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('这个文件是二进制，不是脚本', true); return; }
+      WindowManager.open({ type:'shell', code:String(r.content || ''), title:'执行 · ' + nm });
+      return;
+    }
+    if (/python/i.test(mime) || /\.py$/i.test(nm)) {
+      toast('Python 请在 python 窗口里运行（工具栏没有这条入口）', true);
+      return;
+    }
+    toast('「' + nm + '」没有可执行的入口', true);
   }
   async newEntry(dir) {
     const name = await modal({
@@ -20981,8 +21243,40 @@ function _termAt(el) {
 function initDropImport() {
   const veil = document.getElementById('dropVeil');
   const label = document.getElementById('dropTargetLabel');
-  let depth = 0;
-  const hide = () => { depth = 0; if (veil) veil.classList.remove('on'); };
+  const closeBtn = document.getElementById('dropVeilClose');
+  let visible = false, lastSeen = 0, watchdog = 0;
+
+  /* 先判「页面内拖拽」，再判「外部文件」。
+   *
+   * 以前只看 dataTransfer.types 里有没有 Files：文件管理器的行在 dragstart 里
+   * 写了 DownloadURL（拖到桌面上落盘要用），Chrome 会因此把 Files 塞进 types，
+   * 于是页面内部拖一个文件也会弹「松手导入到 .home」这层遮罩，还会把 drop
+   * 当成外部导入处理 —— 拖拽逻辑整个错位。内部拖拽的标记（DRAG_MIME /
+   * DragBus）优先级必须更高。 */
+  const isExternalFile = (e) =>
+    _hasFiles(e) && !hasInternalDrag(e) && !DragBus.fresh();
+
+  const hide = () => {
+    visible = false; lastSeen = 0;
+    if (watchdog) { clearInterval(watchdog); watchdog = 0; }
+    if (veil) veil.classList.remove('on');
+  };
+  const show = (el) => {
+    if (label) label.textContent = _dropTarget(el).label;
+    if (!veil) return;
+    if (!visible) { visible = true; veil.classList.add('on'); }
+    lastSeen = Date.now();
+    /* 兜底收尾：drop 可能落在 iframe 自己的文档里（浏览器窗口），也可能被
+       系统直接吞掉 —— 父文档收不到任何事件。只要 1.5 秒没有新的 dragover，
+       就认为这次拖拽已经结束，把遮罩收掉，绝不让它挂在屏幕上。 */
+    if (!watchdog) watchdog = setInterval(() => {
+      if (Date.now() - lastSeen > 1500) hide();
+    }, 400);
+  };
+  if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); hide(); };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && visible) { e.preventDefault(); e.stopPropagation(); hide(); }
+  }, true);
 
   /* 窗口间拖拽的悬停高亮。文件管理器与智能体输入框自己也会画，
    * 这里只管它们之外的两个落点：终端（粘路径）、浏览器（打开文件）。 */
@@ -21010,20 +21304,18 @@ function initDropImport() {
   };
 
   window.addEventListener('dragenter', (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
-      depth++;
-      if (label) label.textContent = _dropTarget(e.target).label;
-      if (veil) veil.classList.add('on');
+      show(e.target);
       return;
     }
     if (hasInternalDrag(e)) paintZone(e.target);
   }, true);
   window.addEventListener('dragover', (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
       try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
-      if (label) label.textContent = _dropTarget(e.target).label;
+      show(e.target);
       return;
     }
     if (hasInternalDrag(e)) {
@@ -21034,18 +21326,25 @@ function initDropImport() {
     }
   }, true);
   window.addEventListener('dragleave', (e) => {
-    if (_hasFiles(e)) {
-      depth = Math.max(0, depth - 1);
-      if (depth === 0 && veil) veil.classList.remove('on');
-      return;
-    }
     if (hasInternalDrag(e)) {
       const z = zoneOf(e.target);
       if (z && !z.contains(e.relatedTarget)) clearZone();
+      return;
     }
+    /* relatedTarget 为 null = 指针真的离开了窗口；在子元素之间移动不算。
+       不用计数（dragenter/dragleave 在 DOM 里本来就不保证配平）。 */
+    if (!e.relatedTarget) hide();
   }, true);
+  /* 松手就收：capture 阶段先收，任何应用 stopPropagation 都拦不住。
+     这就是「松手了但遮罩还挂着」的直接修法。 */
+  window.addEventListener('drop', () => { if (visible) hide(); }, true);
+  window.addEventListener('dragend', () => hide(), true);
+  /* 拖拽被 Esc / 系统打断时，dragend 不一定来；pointerup 也兜一道。 */
+  window.addEventListener('pointerup', () => { if (visible) setTimeout(hide, 50); }, true);
+  window.addEventListener('blur', () => hide());
+
   window.addEventListener('drop', async (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
       hide();
       if (e.__htDropHandled) return;   // 某个应用已经自己收下了

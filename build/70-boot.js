@@ -971,8 +971,40 @@ function _termAt(el) {
 function initDropImport() {
   const veil = document.getElementById('dropVeil');
   const label = document.getElementById('dropTargetLabel');
-  let depth = 0;
-  const hide = () => { depth = 0; if (veil) veil.classList.remove('on'); };
+  const closeBtn = document.getElementById('dropVeilClose');
+  let visible = false, lastSeen = 0, watchdog = 0;
+
+  /* 先判「页面内拖拽」，再判「外部文件」。
+   *
+   * 以前只看 dataTransfer.types 里有没有 Files：文件管理器的行在 dragstart 里
+   * 写了 DownloadURL（拖到桌面上落盘要用），Chrome 会因此把 Files 塞进 types，
+   * 于是页面内部拖一个文件也会弹「松手导入到 .home」这层遮罩，还会把 drop
+   * 当成外部导入处理 —— 拖拽逻辑整个错位。内部拖拽的标记（DRAG_MIME /
+   * DragBus）优先级必须更高。 */
+  const isExternalFile = (e) =>
+    _hasFiles(e) && !hasInternalDrag(e) && !DragBus.fresh();
+
+  const hide = () => {
+    visible = false; lastSeen = 0;
+    if (watchdog) { clearInterval(watchdog); watchdog = 0; }
+    if (veil) veil.classList.remove('on');
+  };
+  const show = (el) => {
+    if (label) label.textContent = _dropTarget(el).label;
+    if (!veil) return;
+    if (!visible) { visible = true; veil.classList.add('on'); }
+    lastSeen = Date.now();
+    /* 兜底收尾：drop 可能落在 iframe 自己的文档里（浏览器窗口），也可能被
+       系统直接吞掉 —— 父文档收不到任何事件。只要 1.5 秒没有新的 dragover，
+       就认为这次拖拽已经结束，把遮罩收掉，绝不让它挂在屏幕上。 */
+    if (!watchdog) watchdog = setInterval(() => {
+      if (Date.now() - lastSeen > 1500) hide();
+    }, 400);
+  };
+  if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); hide(); };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && visible) { e.preventDefault(); e.stopPropagation(); hide(); }
+  }, true);
 
   /* 窗口间拖拽的悬停高亮。文件管理器与智能体输入框自己也会画，
    * 这里只管它们之外的两个落点：终端（粘路径）、浏览器（打开文件）。 */
@@ -1000,20 +1032,18 @@ function initDropImport() {
   };
 
   window.addEventListener('dragenter', (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
-      depth++;
-      if (label) label.textContent = _dropTarget(e.target).label;
-      if (veil) veil.classList.add('on');
+      show(e.target);
       return;
     }
     if (hasInternalDrag(e)) paintZone(e.target);
   }, true);
   window.addEventListener('dragover', (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
       try { e.dataTransfer.dropEffect = 'copy'; } catch (err) {}
-      if (label) label.textContent = _dropTarget(e.target).label;
+      show(e.target);
       return;
     }
     if (hasInternalDrag(e)) {
@@ -1024,18 +1054,25 @@ function initDropImport() {
     }
   }, true);
   window.addEventListener('dragleave', (e) => {
-    if (_hasFiles(e)) {
-      depth = Math.max(0, depth - 1);
-      if (depth === 0 && veil) veil.classList.remove('on');
-      return;
-    }
     if (hasInternalDrag(e)) {
       const z = zoneOf(e.target);
       if (z && !z.contains(e.relatedTarget)) clearZone();
+      return;
     }
+    /* relatedTarget 为 null = 指针真的离开了窗口；在子元素之间移动不算。
+       不用计数（dragenter/dragleave 在 DOM 里本来就不保证配平）。 */
+    if (!e.relatedTarget) hide();
   }, true);
+  /* 松手就收：capture 阶段先收，任何应用 stopPropagation 都拦不住。
+     这就是「松手了但遮罩还挂着」的直接修法。 */
+  window.addEventListener('drop', () => { if (visible) hide(); }, true);
+  window.addEventListener('dragend', () => hide(), true);
+  /* 拖拽被 Esc / 系统打断时，dragend 不一定来；pointerup 也兜一道。 */
+  window.addEventListener('pointerup', () => { if (visible) setTimeout(hide, 50); }, true);
+  window.addEventListener('blur', () => hide());
+
   window.addEventListener('drop', async (e) => {
-    if (_hasFiles(e)) {
+    if (isExternalFile(e)) {
       e.preventDefault();
       hide();
       if (e.__htDropHandled) return;   // 某个应用已经自己收下了

@@ -1266,18 +1266,81 @@ body.light .bl-k.load{background:rgba(20,60,55,.07)}
 }
 
 /* =====================================================================
- * 模态 / Toast
+ * 对话框 / Toast
+ *
+ * 对话框只有一套设计（2026-11-09 按用户手绘统一）：
+ *   卡片：标题居中（危险操作整条标红）、正文、底部左「取消」右「确认」；
+ *   把手：卡片底边垂下一个梯形，里写「?」，两端各一枚圆钮——
+ *         灰禁止符 = 取消，红垃圾桶 = 删除，绿右箭头 = 确认输入。
+ *   热区：底部两段整条都可点，圆钮也可点，文字与图标是同一个动作；
+ *         点蒙层 = 取消；Esc = 取消。蒙层保留背景模糊。
+ * 只用 token，浅色主题不用补第二遍。info 型（单按钮提醒）不画把手。
  * ===================================================================== */
 #modal-root{position:fixed;inset:0;z-index:200;pointer-events:none;display:grid;place-items:center}
-.modal-wrap{position:absolute;inset:0;background:rgba(0,0,0,.45);backdrop-filter:blur(3px);
-  display:grid;place-items:center;pointer-events:auto;animation:fade .15s}
+.modal-wrap{position:absolute;inset:0;background:rgba(0,0,0,.5);
+  -webkit-backdrop-filter:blur(7px) saturate(.92);backdrop-filter:blur(7px) saturate(.92);
+  display:grid;place-items:center;pointer-events:auto;animation:fade .16s;padding:16px}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.modal{width:min(520px,92vw);max-height:86vh;display:flex;flex-direction:column;background:var(--panel-solid);
-  border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);overflow:hidden;
-  animation:winIn .18s}
-.modal h3{margin:0;padding:16px 18px 12px;font-size:13px;letter-spacing:.05em;color:var(--fg);font-weight:600}
-.modal .mbody{padding:0 18px 6px;overflow:auto;font-size:12px;line-height:1.65;color:var(--fg-dim)}
-.modal .mfoot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px 16px}
+
+.dlg-stage{display:flex;flex-direction:column;align-items:center;max-height:94vh;animation:winIn .18s}
+.dlg-card{width:min(520px,92vw);max-height:78vh;display:flex;flex-direction:column;
+  background:var(--panel-solid);border:1.5px solid var(--border-strong);border-radius:14px;
+  box-shadow:var(--shadow-lg);overflow:hidden;position:relative;z-index:2}
+.dlg-card .dlg-title{margin:0;padding:19px 22px 0;font-size:14.5px;font-weight:600;letter-spacing:.02em;
+  line-height:1.5;text-align:center;color:var(--fg)}
+.dlg-card.danger .dlg-title{color:var(--red)}
+.dlg-card .dlg-body{padding:11px 22px 4px;overflow:auto;font-size:12.5px;line-height:1.75;
+  color:var(--fg-dim);min-height:48px;flex:1 1 auto}
+.dlg-card .mfoot{display:flex;align-items:stretch;gap:0;padding:10px 8px 8px;margin-top:auto;flex:0 0 auto}
+/* 底部按钮：各占一半，文字分别贴左 / 贴右，整块都是热区 */
+.dlg-card .mfoot .btn{flex:1 1 0;min-height:42px;padding:0 14px;border:0;border-radius:9px;
+  background:none;font-size:13px;letter-spacing:.05em;color:var(--fg-dim);
+  transition:background .14s var(--ease),color .14s var(--ease)}
+.dlg-card .mfoot .btn:hover{background:rgba(255,255,255,.05);color:var(--fg)}
+.dlg-card .mfoot .btn:active{transform:translateY(1px)}
+.dlg-card .mfoot .btn.dlg-cancel{text-align:left}
+.dlg-card .mfoot .btn.dlg-ok{text-align:right;color:var(--accent)}
+.dlg-card .mfoot .btn.dlg-ok:hover{background:rgba(94,234,212,.09)}
+.dlg-card .mfoot .btn.danger{color:var(--red)}
+.dlg-card .mfoot .btn.danger:hover{background:rgba(248,113,113,.09)}
+.dlg-card .mfoot .btn.solo{text-align:center;color:var(--accent);flex:1 1 auto}
+
+/* 把手：梯形 + 两枚圆钮 */
+.dlg-handle{display:grid;grid-template-columns:44px minmax(104px,224px) 44px;
+  align-items:end;gap:10px;justify-content:center;margin-top:-1.6px;
+  animation:dlgTail .2s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes dlgTail{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+.dlg-trap{position:relative;height:42px;display:grid;place-items:center}
+.dlg-trap::before,.dlg-trap::after{content:'';position:absolute;inset:0;
+  clip-path:polygon(0 0,100% 0,79.5% 100%,20.5% 100%)}
+.dlg-trap::before{background:var(--border-strong)}
+.dlg-trap::after{inset:1.5px;background:var(--panel-solid)}
+.dlg-trap span{position:relative;z-index:1;transform:translateY(1px);
+  font-family:var(--mono);font-size:12.5px;color:var(--fg-mute)}
+
+.dlg-orb{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;
+  border:1.5px solid var(--border-strong);background:var(--panel-solid);color:var(--fg-mute);
+  transition:.16s var(--ease);position:relative;z-index:2}
+.dlg-orb svg{width:21px;height:21px}
+.dlg-orb:hover{transform:translateY(-2px);color:var(--fg);box-shadow:0 7px 18px rgba(0,0,0,.38)}
+.dlg-orb:active{transform:translateY(0)}
+.dlg-orb.cancel:hover{border-color:var(--fg-dim);color:var(--fg-dim)}
+.dlg-orb.ok{color:var(--accent);border-color:rgba(94,234,212,.5)}
+.dlg-orb.ok:hover{background:rgba(94,234,212,.1);border-color:var(--accent);
+  box-shadow:0 7px 20px rgba(94,234,212,.2)}
+.dlg-orb.danger{color:var(--red);border-color:rgba(248,113,113,.5)}
+.dlg-orb.danger:hover{background:rgba(248,113,113,.1);border-color:var(--red);
+  box-shadow:0 7px 20px rgba(248,113,113,.18)}
+@media (max-width:560px){
+  .dlg-handle{grid-template-columns:38px minmax(88px,160px) 38px;gap:8px}
+  .dlg-orb{width:38px;height:38px}.dlg-orb svg{width:18px;height:18px}
+  .dlg-trap{height:36px}
+  .dlg-card .dlg-title{font-size:13.5px;padding-top:16px}
+  .dlg-card .dlg-body{padding:9px 16px 2px;font-size:12px}
+}
+@media (prefers-reduced-motion:reduce){
+  .modal-wrap,.dlg-stage,.dlg-handle{animation:none!important}
+}
 .modal pre{margin:0;font-family:var(--mono);font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
   background:var(--bg-0);border:1px solid var(--line-soft);border-radius:8px;padding:10px;color:var(--fg-dim)}
 .modal .code{font-family:var(--mono);font-size:11px;color:var(--amber)}
@@ -1338,7 +1401,19 @@ body.light .bl-k.load{background:rgba(20,60,55,.07)}
 
 /* 文件管理器 */
 .fm{display:flex;flex-direction:column;height:100%;font-family:var(--mono);font-size:11.5px;position:relative}
-.fm-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto}
+.fm-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-bottom:1px solid var(--line-soft);flex:0 0 auto;
+  overflow-x:auto;scrollbar-width:none}
+.fm-bar::-webkit-scrollbar{display:none}
+/* 工具栏按钮原来是裸文字；「打开 / 执行」进来以后必须能看出是可点的 */
+.fm-bar .btn{flex:0 0 auto;padding:2px 6px;border-radius:6px;font-size:11px;line-height:1.55;
+  color:var(--fg-dim);border:1px solid transparent;transition:.14s var(--ease)}
+.fm-bar .btn:hover{color:var(--fg);border-color:var(--line);background:rgba(255,255,255,.045)}
+.fm-bar .btn.danger:hover{color:var(--red);border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.08)}
+.fm-bar .btn.primary{color:var(--accent);border-color:var(--accent-dim)}
+/* 「打开 / 执行」是主操作，给一圈边框让人一眼看到 */
+.fm-bar .btn[data-a="open"],.fm-bar .btn[data-a="run"]{border-color:var(--border);padding:2px 8px}
+.fm-bar .btn[data-a="run"]{color:var(--accent);border-color:var(--accent-dim)}
+.fm-bar .btn[data-a="run"]:hover{background:rgba(94,234,212,.1);color:var(--accent)}
 .fm-path{flex:1;color:var(--accent);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-list{flex:1;overflow:auto;padding:6px}
 .fm-row{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;color:var(--fg-dim);cursor:default}
@@ -1465,6 +1540,15 @@ body.light *::-webkit-scrollbar-thumb{background:#c3d1ce;background-clip:padding
   background:radial-gradient(620px 420px at 50% 44%, rgba(94,234,212,.12), rgba(4,10,12,.74) 70%);
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 #dropVeil.on{display:grid;animation:dvFade .16s ease}
+/* 明确的关闭入口：拖拽逻辑如果没按预期收尾（drop 被 iframe 吃掉、拖拽被系统打断），
+ * 用户永远有办法自己关掉这一层，而不是只能刷新页面。 */
+.dv-close{position:fixed;top:16px;right:16px;width:38px;height:38px;border-radius:50%;
+  pointer-events:auto;display:grid;place-items:center;color:var(--fg-dim);
+  border:1.5px solid var(--border-strong);background:rgba(8,16,18,.72);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);font-size:15px;line-height:1;
+  transition:.15s var(--ease)}
+.dv-close:hover{color:var(--fg);border-color:var(--fg-dim);transform:rotate(90deg)}
+.dv-close:active{transform:scale(.94)}
 .dv-inner{display:flex;flex-direction:column;align-items:center;gap:13px;padding:34px 48px;border-radius:18px;
   border:1.5px dashed rgba(94,234,212,.62);background:rgba(8,16,18,.58);box-shadow:0 24px 70px rgba(0,0,0,.45);
   animation:dvPop .22s cubic-bezier(.2,.9,.3,1.25)}
