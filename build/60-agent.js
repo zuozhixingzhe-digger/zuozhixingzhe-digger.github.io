@@ -1028,7 +1028,10 @@ class AgentApp {
       if (files && files.length) await this.addFiles(files);
     } else if (a === 'send') {
       const text = this.ta.value.trim();
-      if (!text || this.running) return;
+      if (this.running) return;
+      /* 只贴了图片、一个字没写，也是一条合法消息：多模态模型完全能处理。
+       * 以前这里 `!text` 就直接 return，图片被静默吞掉。 */
+      if (!text && !this.attachments.length) return;
       this.ta.value = '';
       await this.send(text);
     } else if (a === 'stop') {
@@ -1264,7 +1267,19 @@ class AgentApp {
     const REPEAT_LIMIT = 3;
     let lastSig = null, repeatCount = 0;
 
-    while (this.running && steps < maxSteps) {
+    /* —— 收敛护栏（0.0.1.31）——
+     * 参考 SWE-agent / seekHarness 的做法：光有「最大步数」不够，模型会在预算内
+     * 一直 edit → run → edit。这里补三条更早的刹车：
+     *   1. 观察停滞：连续两步拿到完全一样的工具结果 → 要么任务已完成，要么卡死；
+     *   2. JS 连续失败 4 次 → 它在和解释器较劲，强行收手交给用户；
+     *   3. 单轮时间预算 8 分钟。 */
+    const startedAt = performance.now();
+    const TIME_BUDGET = 8 * 60 * 1000;
+    let obsKey = '', sameObs = 1, jsFails = 0, nudges = 0;
+    let stopReason = '';
+
+    while (this.running && steps < maxSteps && !stopReason) {
+      if (performance.now() - startedAt > TIME_BUDGET) { stopReason = 'time'; break; }
       steps++;
       this.renderStatus('thinking', 'thinking · step ' + steps);
       const msg = await this.callModel();
@@ -1275,11 +1290,14 @@ class AgentApp {
       /* —— 重复生成防护 ——
        * 算这一轮“输出签名”：连续三次签名相同，判定智能体陷入重复循环。
        * 这时不再执行这一轮的动作，而是自动向它追问一句“是否卡住、请检查”，
-       * 然后让它继续（带追问再跑一轮，而不是硬停）。reset 后从 0 重数，避免每轮都追问。 */
+       * 然后让它继续。但追问最多两次：第三次还重复，就说明追问也没用，
+       * 继续跑只是烧 token —— 直接停，把现场交给用户。 */
       const sig = this._turnSig(msg);
       if (sig && sig === lastSig) repeatCount++;
       else { lastSig = sig; repeatCount = 1; }
       if (repeatCount >= REPEAT_LIMIT) {
+        if (nudges >= 2) { stopReason = 'repeat'; break; }
+        nudges++;
         this._injectRepeatNudge(sig);
         lastSig = null; repeatCount = 0;
         this.render(); await this.saveSession();
@@ -1329,12 +1347,38 @@ class AgentApp {
           const tmsg = { role:'tool', tool_call_id:tc.id, name, content:body };
           this.messages.push(tmsg);
           this.render(); await this.saveSession();
+
+          /* --- 刹车 1：观察停滞 --- */
+          const key = name + '|' + (typeof body === 'string' ? body.slice(0, 600) : stableKey(body));
+          if (key === obsKey) sameObs++;
+          else { obsKey = key; sameObs = 1; }
+          if (sameObs >= 2) { stopReason = 'stalled'; break; }
+
+          /* --- 刹车 2：一直和 JS 解释器较劲 --- */
+          if (name === 'js') {
+            if (/^(工具错误：|错误)/.test(String(body))) jsFails++;
+            else jsFails = 0;
+            if (jsFails >= 4) { stopReason = 'jsfail'; break; }
+          } else {
+            jsFails = 0;
+          }
         }
+        if (stopReason) break;
         continue;
       }
       break;
     }
-    if (steps >= maxSteps) {
+
+    const REASON = {
+      time: '单轮执行超过 8 分钟，已自动停止。任务没做完可以继续发一条消息接着做。',
+      stalled: '连续两步得到完全相同的工具结果，判断任务已完成或已卡住，已自动停止。',
+      repeat: '连续多次输出相同内容，自动追问两次仍未改变，已停止本轮。',
+      jsfail: '连续 4 次 JS 执行失败，已停止本轮——它在和解释器较劲，继续重试只会浪费 token。'
+    };
+    if (stopReason) {
+      this.messages.push({ role:'error', content:'⏹ ' + REASON[stopReason] });
+      this.render();
+    } else if (steps >= maxSteps) {
       this.messages.push({ role:'error', content:'已达到最大步数 (' + maxSteps + ')，循环停止。可在「更多 → 智能体 → 最大步数」里调高。' });
       this.render();
     }

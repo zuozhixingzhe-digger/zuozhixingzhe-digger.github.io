@@ -142,7 +142,7 @@ const COMPAT = (function () {
    *
    * shell 里 `ls` 列的是**当前目录**，`cat notes` 读的是**当前目录下**的 notes。
    * 但 JSHeL 的路径方言是「点分绝对路径」（.home.readme 就是根下的 home.readme），
-   * 两者直接混用会出现 `cd .home.bin` 之后 `ls` 还在列根目录这种事。
+   * 两者直接混用会出现 `cd .home.app` 之后 `ls` 还在列根目录这种事。
    *
    * 所以这里显式分流：
    *   /  ~  @  开头        → 绝对（交给主线程 normPath）
@@ -1590,11 +1590,13 @@ const COMPAT = (function () {
     return last;
   }
 
-  /* 不认识的名字：只找 `.bin.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
+  /* 不认识的名字：只找 `.app.<name>` 里的函数，**不**回落到 JSHeL 的 JS 函数。
    * 以前这里会去 IO.api[name] 找同名函数，于是 hsb1 里敲 `write` 就真去写文件了，
-   * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。 */
+   * 两套环境又粘回一起。现在 shell 只认命令和可执行文件，像一个真的 shell。
+   * 旧的 `.bin.*` 仍然认，给升级前的文件留一条路（启动时已尽量迁到 .app）。 */
   async function tryExternal(name, args) {
-    for (const cand of ['.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
+    for (const cand of ['.app.' + name, '.app.' + String(name).toLowerCase(),
+                        '.bin.' + name, '.bin.' + String(name).toLowerCase()]) {
       const st = await IO.call('fs.stat', cand).catch(() => null);
       if (st && st.kind === 'func') {
         try {

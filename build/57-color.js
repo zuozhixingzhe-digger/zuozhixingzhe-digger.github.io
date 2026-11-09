@@ -312,8 +312,13 @@ class ColorApp {
       const r = this.svCanvas.getBoundingClientRect();
       const x = ColorMath.clamp((e.clientX - r.left) / r.width, 0, 1);
       const y = ColorMath.clamp((e.clientY - r.top) / r.height, 0, 1);
-      this.s = x * 100;
-      this.l = this._v2l(y * 100);
+      /* 方块上这一点就是 HSV(h, x, 1-y)。先算成 RGB，再反解成 HSL 存进状态——
+       * 直接把 HSV 的 S 塞进 HSL 的 S 会得到另一个颜色，
+       * 表现就是「点上面、选中的却是下面」（上下像镜像）。 */
+      const [rr, gg, bb] = ColorMath.hsvToRgb(this.h, x * 100, (1 - y) * 100);
+      const t = ColorMath.rgbToHsl(rr, gg, bb);
+      this.s = t.s;
+      this.l = t.l;
       this.drawWheel();
       this.sync();
     };
@@ -533,9 +538,10 @@ class ColorApp {
     /* 另外三种视图全部跟着主色走：不是四套取色器，是同一个颜色的四种看法 */
     const dot = this.el.querySelector('[data-f="svdot"]');
     if (dot) {
-      const v = this._l2v();
-      dot.style.left = this.s.toFixed(2) + '%';
-      dot.style.top = (100 - v).toFixed(2) + '%';
+      /* 标记的位置必须用 HSV 的 S/V，不能拿 HSL 的 S 顶替 */
+      const cur = ColorMath.rgbToHsv(r, g, b);
+      dot.style.left = cur.s.toFixed(2) + '%';
+      dot.style.top = (100 - cur.v).toFixed(2) + '%';
       dot.style.background = `rgb(${r},${g},${b})`;
     }
     this.drawSV();

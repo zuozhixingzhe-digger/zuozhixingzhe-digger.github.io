@@ -1139,7 +1139,7 @@ function makeShell(ctx) {
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
       ['hsb1', 'hsb1() 进交互式 Linux 风格 shell；hsb1("ls -la") 跑一行；hsb1 里 help 看命令表'],
       ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
-      ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.bin 放函数，.app 是应用，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
+      ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.app 放应用（脚本也是应用，不是二进制），.bin 已并入 .app，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
     ];
     for (const [k, v] of lines) {

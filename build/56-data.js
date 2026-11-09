@@ -214,7 +214,7 @@ class DataApp {
   show(t) {
     this.el.querySelectorAll('.tl-tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
     for (const [k, s] of Object.entries(this.panes)) s.hidden = k !== t;
-    if (t === 'time') this.refreshNow();
+    if (t === 'time') this._syncTime(null);
   }
 
   /* ------------------------------------------------ 编码转换 */
@@ -303,71 +303,93 @@ class DataApp {
     stat.textContent = bytes.length + ' 字节 · ' + [...text].length + ' 字符';
   }
 
-  /* ------------------------------------------------ 时间戳 */
+  /* ------------------------------------------------ 时间戳
+   * 四格联动：秒 / 毫秒 / 日期时间 / 时区。改哪一格，其余立刻跟着变。
+   * 没有「换算」按钮——按钮意味着「我输入完了，你算吧」，而这里应当边写边变。 */
   buildTime() {
     const p = this.panes.time;
     const zones = ['Asia/Shanghai', 'UTC', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London',
       'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Australia/Sydney'];
-    p.innerHTML = `<div class="tl-card"><h4>现在</h4><div data-f="now"></div></div>
-      <div class="tl-card"><h4>换算</h4>
-        <div class="tl-row"><label>输入</label>
-          <input class="tl-in" data-f="ts" style="flex:1 1 auto" spellcheck="false"
-            placeholder="1700000000 / 1700000000000 / 2024-01-01 12:00 / now">
-          <button class="tl-btn primary" data-a="conv">换算</button></div>
-        <div class="tl-row"><label>时区</label>
-          <input class="tl-in" data-f="tz" list="tzList" value="Asia/Shanghai" style="flex:1 1 auto">
-          <datalist id="tzList"></datalist>
-          <span class="tl-note">IANA 名称，如 Europe/Berlin</span></div>
-        <div data-f="res"></div>
+    p.innerHTML = `<div class="tl-card">
+        <h4>时间点<button class="tl-btn sm" data-a="now">现在</button></h4>
+        <div class="tl-grid">
+          <label class="tl-f"><span>Unix 秒</span>
+            <input class="tl-in" data-f="sec" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
+          <label class="tl-f"><span>Unix 毫秒</span>
+            <input class="tl-in" data-f="ms" inputmode="numeric" spellcheck="false" autocomplete="off"></label>
+          <label class="tl-f wide"><span>日期时间</span>
+            <input class="tl-in" data-f="dt" spellcheck="false" autocomplete="off" placeholder="2024-01-01 12:00:00"></label>
+          <label class="tl-f"><span>时区</span>
+            <input class="tl-in" data-f="tz" list="tzList" value="Asia/Shanghai" spellcheck="false" autocomplete="off"></label>
+        </div>
+        <datalist id="tzList"></datalist>
+        <div class="tl-note">任何一格改动，其余格与下方结果立即跟着变。纯数字按位数识别秒/毫秒；日期写 <code>2024-01-01 12:00</code> 或 ISO。</div>
       </div>
-      <div class="tl-note">
-        <b>自动识别</b>：纯数字 10 位当秒、13 位当毫秒；带 <code>-</code> 或 <code>/</code> 当日期字符串；
-        写 <code>now</code> 取当前时间。<br>
-        时区换算用 <code>Intl</code>，不是自己算偏移 —— 夏令时这种东西自己算一定会错。
-      </div>`;
-    const dl = p.querySelector('#tzList');
+      <div class="tl-card"><h4>换算结果</h4><div data-f="res"></div></div>`;
     let list = zones;
-    try {
-      if (Intl.supportedValuesOf) list = Intl.supportedValuesOf('timeZone');
-    } catch (e) {}
-    dl.innerHTML = list.map(z => `<option value="${esc(z)}">`).join('');
-    p.querySelector('[data-a="conv"]').onclick = () => this.timeConv();
-    p.querySelector('[data-f="ts"]').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.timeConv();
-    });
-    this.timeConv();
+    try { if (Intl.supportedValuesOf) list = Intl.supportedValuesOf('timeZone'); } catch (e) {}
+    p.querySelector('#tzList').innerHTML = list.map(z => `<option value="${esc(z)}">`).join('');
+
+    const get = k => p.querySelector('[data-f="' + k + '"]');
+    ['sec', 'ms', 'dt'].forEach(k => get(k).addEventListener('input', () => this._timeFrom(k)));
+    get('tz').addEventListener('input', () => this._syncTime(null));
+    p.querySelector('[data-a="now"]').onclick = () => { this._d = new Date(); this._syncTime('all'); };
+    this._d = new Date();
+    this._syncTime('all');
   }
-  refreshNow() {
-    const el = this.panes.time && this.panes.time.querySelector('[data-f="now"]');
-    if (!el) return;
-    const d = new Date();
-    el.innerHTML = `<div class="tl-kv"><b>秒</b><code>${Math.floor(d.getTime() / 1000)}</code>
-        <button class="tl-btn sm" data-cp>复制</button></div>
-      <div class="tl-kv"><b>毫秒</b><code>${d.getTime()}</code><button class="tl-btn sm" data-cp>复制</button></div>
-      <div class="tl-kv"><b>ISO</b><code>${d.toISOString()}</code><button class="tl-btn sm" data-cp>复制</button></div>
-      <div class="tl-kv"><b>本地</b><code>${esc(d.toString())}</code><button class="tl-btn sm" data-cp>复制</button></div>`;
-    el.querySelectorAll('[data-cp]').forEach(b => {
-      b.onclick = () => ToolKit.copy(b.parentElement.querySelector('code').textContent);
-    });
+
+  /* 本地时间串：YYYY-MM-DD HH:mm:ss（用本地时区，和用户看到的钟一致） */
+  _localStamp(d) {
+    const z = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + ' ' +
+      z(d.getHours()) + ':' + z(d.getMinutes()) + ':' + z(d.getSeconds());
   }
-  timeConv() {
+
+  _timeFrom(key) {
     const p = this.panes.time;
-    const raw = p.querySelector('[data-f="ts"]').value.trim();
-    const tz = p.querySelector('[data-f="tz"]').value.trim() || 'Asia/Shanghai';
-    const res = p.querySelector('[data-f="res"]');
+    const v = p.querySelector('[data-f="' + key + '"]').value.trim();
     let d = null;
-    if (!raw || /^now$/i.test(raw)) d = new Date();
-    else if (/^\d{1,11}$/.test(raw)) d = new Date(Number(raw) * 1000);
-    else if (/^\d{12,16}$/.test(raw)) d = new Date(Number(raw));
-    else {
-      const s = raw.replace(/\//g, '-').replace(' ', 'T');
-      d = new Date(s);
-      if (isNaN(d.getTime())) d = new Date(raw);
+    if (key === 'sec') {
+      if (/^-?\d+$/.test(v)) d = new Date(Number(v) * 1000);
+    } else if (key === 'ms') {
+      if (/^-?\d+$/.test(v)) d = new Date(Number(v));
+    } else {
+      if (!v) d = null;
+      else if (/^\d{10}$/.test(v)) d = new Date(Number(v) * 1000);
+      else if (/^\d{13}$/.test(v)) d = new Date(Number(v));
+      else {
+        d = new Date(v.replace(/\//g, '-').replace(' ', 'T'));
+        if (isNaN(d.getTime())) d = new Date(v);
+      }
     }
     if (!d || isNaN(d.getTime())) {
-      res.innerHTML = '<div class="tl-note" style="color:var(--red)">看不懂这个时间：' + esc(raw) + '</div>';
+      if (!v) { this._d = null; this._syncTime(null, true); }
+      else p.querySelector('[data-f="res"]').innerHTML =
+        '<div class="tl-note" style="color:var(--red)">看不懂这一格：' + esc(v) + '</div>';
       return;
     }
+    this._d = d;
+    this._syncTime(key);
+  }
+
+  /* 只回写「不是用户正在编辑的那一格」，否则光标会跳、输入会被吃掉 */
+  _syncTime(source, empty) {
+    const p = this.panes.time;
+    const d = this._d;
+    const set = (k, v) => { if (k !== source) p.querySelector('[data-f="' + k + '"]').value = v; };
+    const res = p.querySelector('[data-f="res"]');
+    if (!d || empty) {
+      if (source !== 'sec') set('sec', '');
+      if (source !== 'ms') set('ms', '');
+      if (source !== 'dt') set('dt', '');
+      res.innerHTML = '<div class="tl-note">输入一个时间，或点「现在」。</div>';
+      return;
+    }
+    set('sec', String(Math.floor(d.getTime() / 1000)));
+    set('ms', String(d.getTime()));
+    set('dt', this._localStamp(d));
+
+    const tz = p.querySelector('[data-f="tz"]').value.trim() || 'Asia/Shanghai';
     const fmt = (zone) => {
       try {
         return new Intl.DateTimeFormat('zh-CN', {

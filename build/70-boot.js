@@ -273,7 +273,10 @@ const AppMenu = {
  * 软件级全屏：给 body 加 .fs，隐藏顶栏、桌面铺满——功能上仍然是「切全屏了」，
  * 按钮状态也照常翻转，不会出现「按了没反应」。 */
 function fullscreenOn() {
-  return !!(document.fullscreenElement || document.webkitFullscreenElement || document.body.classList.contains('fs'));
+  /* 窗口的「彻底全屏」也点亮这个按钮：它确实占满了整块屏幕，
+   * 只不过发起者不是顶栏这个按钮，而是某扇窗的绿色菜单。 */
+  return !!(document.fullscreenElement || document.webkitFullscreenElement ||
+    document.body.classList.contains('fs') || document.body.classList.contains('immersive'));
 }
 function syncFullscreenBtn() {
   const on = fullscreenOn();
@@ -285,6 +288,12 @@ function syncFullscreenBtn() {
   setTimeout(() => { try { TerminalManager.applyAll(); } catch (e) {} }, 260);
 }
 function toggleFullscreen() {
+  /* 窗口已经处在「彻底全屏」时，这个按钮的语义是「退出那个模式」，
+   * 否则按下去只会再发一次 requestFullscreen，窗口还在原地。 */
+  if (document.body.classList.contains('immersive')) {
+    if (typeof WindowManager !== 'undefined') WindowManager.exitImmersive();
+    return;
+  }
   const el = document.documentElement;
   const isFs = document.fullscreenElement || document.webkitFullscreenElement;
   const soft = () => { document.body.classList.toggle('fs'); syncFullscreenBtn(); };
@@ -726,7 +735,10 @@ const Drawer = {
   },
   async agentClear() {
     const w = [...WindowManager.windows.values()].find(x => x.type === 'agent' && x.content);
-    if (w) return w.content.act('clear');
+    if (w) return w.content.act('clear');   // 窗口里那套自己有弹窗
+    /* 智能体窗口没开的时候，这里是唯一的清空入口——同样必须先问一句。
+     * 直接清掉是一瞬间的事，而会话可能是几十轮的记录。 */
+    if (!(await confirmDlg('清空会话', '会删除 <span class="code">.agent.session</span> 里的全部消息，不可撤销。', true))) return;
     await FS.write('.agent.session', '');
     toast('会话已清空');
   }
@@ -1208,6 +1220,10 @@ async function boot() {
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
 
+    /* 渲染守护：Worker 心跳每 10 秒巡检一次，画布尺寸变化立刻再查一次。
+     * 放在 boot 结束之后，这时内置窗口已经按最终尺寸排好，不会被误判。 */
+    try { Guard.init(); } catch (e) { console.warn('Guard 未启动', e); }
+
     /* 双击 index.html 打开时需要令牌，但**不再一打开就弹模态框**：
        改成一条 toast 微打扰，用户到「更多 / 设置 → 访问令牌」里填即可。
        发消息 / 抓网页时若确实还没令牌，ensureFileToken 才会按需再问一次。 */
@@ -1296,3 +1312,16 @@ function installGestureLock() {
 }
 installGestureLock();
 
+
+/* 浏览器级全屏被用户用 Esc / F11 关掉时，窗口的「彻底全屏」也要跟着退——
+ * 否则会留下一个 fixed 满屏、但浏览器 chrome 又回来的怪状态。 */
+['fullscreenchange', 'webkitfullscreenchange'].forEach(t => {
+  document.addEventListener(t, () => {
+    try { syncFullscreenBtn(); } catch (e) {}
+    if (!document.fullscreenElement && !document.webkitFullscreenElement &&
+        document.body.classList.contains('immersive') &&
+        typeof WindowManager !== 'undefined') {
+      WindowManager.exitImmersive();
+    }
+  });
+});

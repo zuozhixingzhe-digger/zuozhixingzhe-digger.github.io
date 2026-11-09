@@ -243,9 +243,6 @@ class HanziApp {
     this._lock = false;
     this._build();
     this._bind();
-    const st = HanziCodec.selfTest();
-    this._self = st;
-    this._paintSelf();
     this._len();
   }
 
@@ -282,11 +279,6 @@ class HanziApp {
             placeholder="也可以直接粘汉字；末尾标记字决定用哪套方案"></textarea>
           <div class="hz-stats" id="hzSt2"></div>
         </section>
-      </div>
-      <div class="hz-foot">
-        <span id="hzSelf"></span>
-        <span class="hz-sp"></span>
-        <span class="hz-tip" id="hzTip"></span>
       </div>`;
   }
 
@@ -358,6 +350,12 @@ class HanziApp {
     const badge = q('#hzDetect');
     badge.textContent = d ? ('识别为 ' + HanziCodec.names[d]) : '双向实时同步';
     badge.classList.toggle('on', !!d);
+    /* 汉字侧识别出方案后，顶部那三个选项卡必须跟着切过去——
+     * 否则「识别为 2048 字」和亮着的「4096 字」自相矛盾。 */
+    if (d && d !== this.scheme) {
+      this.scheme = d;
+      this.body.querySelectorAll('.hz-seg [data-s]').forEach(x => x.classList.toggle('on', x.dataset.s === d));
+    }
   }
 
   _tip(msg) {
@@ -461,11 +459,5 @@ class HanziApp {
     this._len();
   }
 
-  _paintSelf() {
-    const el = this.body.querySelector('#hzSelf');
-    if (!el) return;
-    const s = this._self;
-    if (!s.fail.length) el.innerHTML = `<b class="ok">自检通过</b> · ${s.total} 组往返（A/B/C × 随机 + 边界）`;
-    else el.innerHTML = `<b class="bad">自检 ${s.fail.length} 处失败</b> · ${esc(s.fail[0])}`;
-  }
+
 }

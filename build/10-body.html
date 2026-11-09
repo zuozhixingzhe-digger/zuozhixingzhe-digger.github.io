@@ -32,10 +32,10 @@
       <button class="k" type="button" tabindex="-1" data-key="Tab" title="Tab 补全"><span>⇥</span></button>
     </div>
 
-    <!-- 隐藏式最大化的还原胶囊：窗口把自己标题条收起来之后，这里是唯一入口 -->
-    <button class="chip" id="hidChip" type="button" title="隐藏式最大化">
+    <!-- 隐藏式最大化的还原胶囊：窗口把自己标题条收起来之后，这里是唯一入口。
+         只画一个图标，不带文字（独占：同一时刻只有一扇窗能占住它）。 -->
+    <button class="chip" id="hidChip" type="button" aria-label="隐藏式最大化">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></svg>
-      <b>窗口</b>
     </button>
 
     <div class="tb-right">
@@ -107,6 +107,7 @@
   <button type="button" data-app="markdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M6.5 15V9l3 3 3-3v6M16 9v6M16 15l2.2-2.4M16 15l-2.2-2.4"/></svg>Markdown<i>渲染</i></button>
   <button type="button" data-app="shot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M20 8.5V6a2 2 0 0 0-2-2h-2.5M4 15.5V18a2 2 0 0 0 2 2h2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5"/><circle cx="12" cy="12" r="3"/></svg>截图<i>页面内</i></button>
   <button type="button" data-app="image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="8.6" cy="10" r="1.5"/><path d="M4.2 17.2l4.6-4.4 3 2.8 3.2-2.6 4.8 4.4"/></svg>看图修图<i>截图搭档</i></button>
+  <button type="button" data-app="timer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13.5" r="7.2"/><path d="M12 9.8v4l2.6 1.6M9.2 3.2h5.6M12 3.2v3"/></svg>计时器<i>秒表</i></button>
   <button type="button" data-app="urlhash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M7.5 17.5l-1 1a3.5 3.5 0 0 1-5-5l3-3a3.5 3.5 0 0 1 5 0"/><path d="M16.5 6.5l1-1a3.5 3.5 0 0 1 5 5l-3 3a3.5 3.5 0 0 1-5 0"/></svg>链接即状态<i>URL</i></button>
   <hr>
   <button type="button" class="soon" data-app="recorder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></svg>录音机<i>维护中</i></button>

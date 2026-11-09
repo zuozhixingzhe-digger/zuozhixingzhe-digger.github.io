@@ -565,6 +565,10 @@ class ShotApp {
           <div class="tl-row"><label>延迟</label>
             <input class="tl-in" type="number" data-f="delay" value="0" min="0" max="10000" step="100" style="width:88px">
             <span class="tl-note">毫秒，给动画/懒加载留时间</span></div>
+          <div class="tl-row"><label>选项</label>
+            <label class="tl-chk"><input type="checkbox" data-f="hide">
+              <span>截图时隐藏本窗口</span></label>
+            <span class="tl-note">拍桌面时不会把截图工具自己拍进去</span></div>
         </div>
         <div class="shot-stage" data-f="stage"><span class="tl-note">还没有截图。点右上角「截取」。</span></div>
         <div class="tl-row" style="margin-top:8px">
@@ -604,9 +608,19 @@ class ShotApp {
     btn.disabled = true;
     btn.textContent = '截取中…';
     const delay = Math.max(0, Math.min(10000, Number($('[data-f="delay"]', this.el).value) || 0));
+    const selfWin = this.el.closest('.win');
+    let hidden = false;
     try {
       if (delay) await new Promise(r => setTimeout(r, delay));
       const t = $('[data-f="target"]', this.el).value;
+      const wantHide = $('[data-f="hide"]', this.el).checked;
+      /* 目标是本窗口时不隐藏：那会拍出一张空图 */
+      const targetIsSelf = selfWin && t === 'win:' + selfWin.dataset.id;
+      if (wantHide && selfWin && !targetIsSelf) {
+        selfWin.style.visibility = 'hidden';
+        hidden = true;
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }
       let el = null;
       if (t === 'desk') el = document.getElementById('desk') || document.body;
       else if (t === 'doc') el = document.body;
@@ -632,6 +646,7 @@ class ShotApp {
     } catch (e) {
       toast('截图失败：' + (e && e.message || e), true);
     } finally {
+      if (hidden && selfWin) selfWin.style.visibility = '';
       btn.disabled = false;
       btn.textContent = '截取';
     }
@@ -925,15 +940,20 @@ const APP_DESC = {
   geo:'定位（维护中）', view3d:'3D 视图（维护中）', audio:'音频播放（维护中）',
   hsb2:'WASM 里的 FreeBSD 12.0（可选）', applist:'所有应用，就是这一页',
   hanzi:'十六进制 ↔ 汉字，三种方案自动识别',
+  timer:'秒表：计次、暂停、厘秒显示；倒计时：到点响三声。最小化后仍在计时。',
 };
 
 class AppListApp {
   constructor(body, opts) {
     this.body = body;
     this.q = '';
+    this.view = Settings.get('applistView') === 'list' ? 'list' : 'grid';
+    this.installed = [];
     this._build();
+    this._loadInstalled();
   }
 
+  /* 「系统预装」直接读启动器：那里是唯一一份应用清单，不另建第二份。 */
   _catalog() {
     const box = document.getElementById('launcher');
     if (!box) return [];
@@ -958,12 +978,38 @@ class AppListApp {
       <div class="al-head">
         <input id="alQ" type="search" placeholder="搜索应用 / 关键字" autocomplete="off" spellcheck="false" aria-label="搜索应用">
         <span id="alCount"></span>
+        <div class="al-views" role="group" aria-label="视图">
+          <button data-v="grid" title="方块视图" aria-label="方块视图">▦</button>
+          <button data-v="list" title="列表视图" aria-label="列表视图">☰</button>
+        </div>
       </div>
       <div class="al-body" id="alBody"></div>`;
     this.body.querySelector('#alQ').addEventListener('input', e => {
       this.q = e.target.value.trim().toLowerCase();
       this._render();
     });
+    this.body.querySelectorAll('[data-v]').forEach(b => b.onclick = () => {
+      this.view = b.dataset.v;
+      Settings.set('applistView', this.view);
+      this._syncView();
+      this._render();
+    });
+    this._syncView();
+    this._render();
+  }
+
+  _syncView() {
+    this.body.querySelectorAll('[data-v]').forEach(b =>
+      b.classList.toggle('on', b.dataset.v === this.view));
+  }
+
+  async _loadInstalled() {
+    try {
+      const rows = await FS.list('.app');
+      /* kind=app 是内置应用的节点；剩下的才是「装进来的东西」：脚本、页面、数据。 */
+      this.installed = rows.filter(r => r.kind !== 'dir' && r.kind !== 'app')
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+    } catch (e) { this.installed = []; }
     this._render();
   }
 
@@ -976,6 +1022,25 @@ class AppListApp {
     }
     const r = ev && ev.currentTarget ? ev.currentTarget.getBoundingClientRect() : null;
     WindowManager.open({ type, from: r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined });
+  }
+
+  async _runInstalled(it, ev) {
+    const st = await FS.stat(it.path).catch(() => null);
+    if (!st) { toast('这个应用已经不在了', true); return; }
+    if (st.kind === 'func') {
+      const r = await FS.read(it.path);
+      const src = (r.meta && r.meta.source) || String(r.content || '');
+      WindowManager.open({ type:'shell', code:src, title:'执行 · ' + spotExportName(it.name) });
+      return;
+    }
+    const mime = String((st.meta && st.meta.mime) || '');
+    if (/^image\//i.test(mime)) { WindowManager.open({ type:'image', path:it.path, title:'看图 · ' + it.name }); return; }
+    if (/html/i.test(mime) || /\.html?$/i.test(it.name)) {
+      const r = await FS.read(it.path);
+      WindowManager.open({ type:'browser', html:String(r.content || ''), title:'执行 · ' + it.name });
+      return;
+    }
+    WindowManager.open({ type:'editor', path:it.path, title:it.name });
   }
 
   /* 只改「打开 / 切换」两个字，绝不重建列表：
@@ -995,28 +1060,273 @@ class AppListApp {
     const box = this.body.querySelector('#alBody');
     if (!box) return;
     const all = this._catalog();
-    const list = all.filter(a => !this.q ||
-      (a.name + ' ' + a.type + ' ' + a.desc + ' ' + a.hint).toLowerCase().includes(this.q));
+    const q = this.q;
+    const hit = (name, desc, extra) => !q || (name + ' ' + desc + ' ' + (extra || '')).toLowerCase().includes(q);
+    const pre = all.filter(a => hit(a.name, a.desc, a.type + ' ' + a.hint));
+    const inst = this.installed.filter(a => hit(a.name, a.kind, a.path));
     const count = this.body.querySelector('#alCount');
-    if (count) count.textContent = list.length + ' / ' + all.length;
-    if (!list.length) { box.innerHTML = '<div class="al-empty">没有匹配的应用</div>'; return; }
+    if (count) count.textContent = (pre.length + inst.length) + ' 项';
 
-    const group = (title, arr) => arr.length ? `<div class="al-sec">${title}</div>
-      <div class="al-grid">${arr.map(a => {
-        const open = [...WindowManager.windows.values()].some(w => w.type === a.type);
-        return `<button class="al-card ${a.soon ? 'soon' : ''}" data-t="${esc(a.type)}">
-          <span class="al-ico">${a.icon || '▣'}</span>
-          <span class="al-name">${esc(a.name)}</span>
-          <span class="al-desc">${esc(a.desc)}</span>
-          <span class="al-act">${a.soon ? '维护中' : (open ? '切换' : '打开')}</span>
-        </button>`;
-      }).join('')}</div>` : '';
-    box.innerHTML = group('可用', list.filter(a => !a.soon)) + group('维护中', list.filter(a => a.soon));
+    if (!pre.length && !inst.length) { box.innerHTML = '<div class="al-empty">没有匹配的应用</div>'; return; }
+
+    const grid = this.view === 'grid';
+    const card = (a) => {
+      const open = [...WindowManager.windows.values()].some(w => w.type === a.type);
+      return `<button class="al-card ${a.soon ? 'soon' : ''}" data-t="${esc(a.type)}">
+        <span class="al-ico">${a.icon || '▣'}</span>
+        <span class="al-name">${esc(a.name)}</span>
+        <span class="al-desc">${esc(a.desc)}</span>
+        <span class="al-act">${a.soon ? '维护中' : (open ? '切换' : '打开')}</span>
+      </button>`;
+    };
+    const row = (a) => {
+      const open = [...WindowManager.windows.values()].some(w => w.type === a.type);
+      return `<button class="al-row ${a.soon ? 'soon' : ''}" data-t="${esc(a.type)}">
+        <span class="al-ico">${a.icon || '▣'}</span>
+        <span class="al-name">${esc(a.name)}</span>
+        <span class="al-desc">${esc(a.desc)}</span>
+        <span class="al-act">${a.soon ? '维护中' : (open ? '切换' : '打开')}</span>
+      </button>`;
+    };
+    const pack = (arr) => grid
+      ? `<div class="al-grid">${arr.map(card).join('')}</div>`
+      : `<div class="al-list">${arr.map(row).join('')}</div>`;
+
+    const instCard = (a) => `<button class="al-card" data-run="${esc(a.path)}" title="${esc(a.path)}">
+        <span class="al-ico">${a.kind === 'func' ? '⚙' : '▤'}</span>
+        <span class="al-name">${esc(spotExportName(a.name))}</span>
+        <span class="al-desc">${esc(a.path)} · ${a.size ? ToolKit.bytes(a.size) : '脚本'}</span>
+        <span class="al-act">${a.kind === 'func' ? '执行' : '打开'}</span>
+      </button>`;
+    const instRow = (a) => `<button class="al-row" data-run="${esc(a.path)}" title="${esc(a.path)}">
+        <span class="al-ico">${a.kind === 'func' ? '⚙' : '▤'}</span>
+        <span class="al-name">${esc(spotExportName(a.name))}</span>
+        <span class="al-desc">${esc(a.path)}</span>
+        <span class="al-act">${a.kind === 'func' ? '执行' : '打开'}</span>
+      </button>`;
+    const packInst = (arr) => grid
+      ? `<div class="al-grid">${arr.map(instCard).join('')}</div>`
+      : `<div class="al-list">${arr.map(instRow).join('')}</div>`;
+
+    box.innerHTML =
+      (pre.length ? `<div class="al-sec">系统预装 · ${pre.length}</div>${pack(pre)}` : '') +
+      (inst.length ? `<div class="al-sec">已安装 · ${inst.length}（来自 .app）</div>${packInst(inst)}` : '');
+
     box.querySelectorAll('[data-t]').forEach(b => b.onclick = e => {
       const type = b.dataset.t;
       const a = all.find(x => x.type === type);
       if (a && a.soon) { toast('「' + a.name + '」还在维护中', 'warn'); return; }
       this._open(type, e);
     });
+    box.querySelectorAll('[data-run]').forEach(b => b.onclick = e => {
+      const it = this.installed.find(x => x.path === b.dataset.run);
+      if (it) this._runInstalled(it, e);
+    });
+  }
+}
+
+/* ---------------------------------------------------------------- 计时器 / 秒表
+ * 两个 tab：秒表（正向、计次）与倒计时（到点响铃）。
+ * 时间基准一律用 performance.now()，不用 setInterval 的累计次数——
+ * 标签页被节流时，累计次数会越走越慢，而 performance.now 不会。 */
+class TimerApp {
+  constructor(container) {
+    this.el = container;
+    this.tab = 'stop';
+    this.sw = { on:false, t0:0, acc:0, laps:[] };
+    this.cd = { on:false, total:300000, left:300000, endAt:0, done:false };
+    this._timer = 0;
+    this.el.innerHTML = `
+      <div class="tl">
+        <div class="tl-hd">
+          <div class="tl-tabs" role="tablist">
+            <button class="tl-tab on" data-t="stop" role="tab">秒表</button>
+            <button class="tl-tab" data-t="down" role="tab">倒计时</button>
+          </div>
+        </div>
+        <div class="tl-body">
+          <section data-p="stop">
+            <div class="tm-face"><b data-f="swTime">00:00.00</b><span data-f="swState">未开始</span></div>
+            <div class="tm-row">
+              <button class="tl-btn primary" data-a="swGo">开始</button>
+              <button class="tl-btn" data-a="swLap" disabled>计次</button>
+              <button class="tl-btn" data-a="swReset">复位</button>
+            </div>
+            <div class="tm-laps" data-f="laps"><div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div></div>
+          </section>
+          <section data-p="down" hidden>
+            <div class="tm-face"><b data-f="cdTime">05:00</b><span data-f="cdState">就绪</span></div>
+            <div class="tm-row tm-set">
+              <label>时<input type="number" data-f="h" min="0" max="99" value="0"></label>
+              <label>分<input type="number" data-f="m" min="0" max="59" value="5"></label>
+              <label>秒<input type="number" data-f="s" min="0" max="59" value="0"></label>
+            </div>
+            <div class="tm-row">
+              <button class="tl-btn primary" data-a="cdGo">开始</button>
+              <button class="tl-btn" data-a="cdReset">复位</button>
+              <span class="tl-note">快捷</span>
+              <button class="tl-btn sm" data-min="60">1 分</button>
+              <button class="tl-btn sm" data-min="180">3 分</button>
+              <button class="tl-btn sm" data-min="300">5 分</button>
+              <button class="tl-btn sm" data-min="600">10 分</button>
+            </div>
+            <div class="tl-note">到 0 会响三声并弹一条提示；最小化后仍然计时，关窗口才彻底停。</div>
+          </section>
+        </div>
+      </div>`;
+    this._bind();
+    this._paint();
+    /* 50ms 足够让厘秒看起来是连续的，又不会把主线程压死 */
+    this._timer = setInterval(() => this._paint(), 50);
+  }
+
+  _bind() {
+    const q = s => this.el.querySelector(s);
+    this.el.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+      this.tab = b.dataset.t;
+      this.el.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x === b));
+      this.el.querySelectorAll('[data-p]').forEach(s => s.hidden = s.dataset.p !== this.tab);
+      this._paint();
+    });
+    this.el.addEventListener('click', e => {
+      const b = e.target.closest('[data-a],[data-min]');
+      if (!b) return;
+      if (b.dataset.min) { this._setCd(Number(b.dataset.min) * 1000); return; }
+      const a = b.dataset.a;
+      if (a === 'swGo') this._swToggle();
+      else if (a === 'swLap') this._lap();
+      else if (a === 'swReset') this._swReset();
+      else if (a === 'cdGo') this._cdToggle();
+      else if (a === 'cdReset') this._cdReset();
+    });
+    ['h', 'm', 's'].forEach(k => q('[data-f="' + k + '"]').addEventListener('input', () => {
+      if (this.cd.on) return;      // 跑着的时候不让改，避免和 endAt 打架
+      const h = Math.max(0, Math.min(99, Number(q('[data-f="h"]').value) || 0));
+      const m = Math.max(0, Math.min(59, Number(q('[data-f="m"]').value) || 0));
+      const s = Math.max(0, Math.min(59, Number(q('[data-f="s"]').value) || 0));
+      this.cd.total = (h * 3600 + m * 60 + s) * 1000;
+      this.cd.left = this.cd.total;
+      this.cd.done = false;
+      this._paint();
+    }));
+  }
+
+  _swElapsed() {
+    return this.sw.acc + (this.sw.on ? performance.now() - this.sw.t0 : 0);
+  }
+  _swToggle() {
+    if (this.sw.on) { this.sw.acc = this._swElapsed(); this.sw.on = false; }
+    else { this.sw.t0 = performance.now(); this.sw.on = true; }
+    this._paint();
+  }
+  _swReset() {
+    this.sw = { on:false, t0:0, acc:0, laps:[] };
+    this._paint();
+  }
+  _lap() {
+    const t = this._swElapsed();
+    this.sw.laps.push(t);
+    this._paint();
+  }
+
+  _cdLeft() {
+    if (!this.cd.on) return Math.max(0, this.cd.left);
+    return Math.max(0, this.cd.endAt - performance.now());
+  }
+  _cdToggle() {
+    if (this.cd.left <= 0 && !this.cd.on) this.cd.left = this.cd.total;
+    if (this.cd.on) { this.cd.left = this._cdLeft(); this.cd.on = false; }
+    else {
+      if (this.cd.left <= 0) this.cd.left = this.cd.total;
+      this.cd.endAt = performance.now() + this.cd.left;
+      this.cd.on = true;
+      this.cd.done = false;
+    }
+    this._paint();
+  }
+  _cdReset() {
+    this.cd.on = false;
+    this.cd.left = this.cd.total;
+    this.cd.done = false;
+    this._paint();
+  }
+  _setCd(ms) {
+    this.cd.on = false;
+    this.cd.total = ms;
+    this.cd.left = ms;
+    this.cd.done = false;
+    const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60;
+    const q = k => this.el.querySelector('[data-f="' + k + '"]');
+    q('h').value = h; q('m').value = m; q('s').value = s;
+    this._paint();
+  }
+
+  _fmtSw(ms) {
+    const cs = Math.floor(ms % 1000 / 10);
+    const s = Math.floor(ms / 1000) % 60;
+    const m = Math.floor(ms / 60000) % 60;
+    const h = Math.floor(ms / 3600000);
+    const p = n => String(n).padStart(2, '0');
+    return (h ? p(h) + ':' : '') + p(m) + ':' + p(s) + '.' + p(cs);
+  }
+  _fmtCd(ms) {
+    const total = Math.ceil(ms / 1000);
+    const h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
+    const p = n => String(n).padStart(2, '0');
+    return (h ? p(h) + ':' : '') + p(m) + ':' + p(s);
+  }
+
+  _paint() {
+    const q = s => this.el.querySelector(s);
+    if (!q('[data-f="swTime"]')) return;
+    q('[data-f="swTime"]').textContent = this._fmtSw(this._swElapsed());
+    q('[data-f="swState"]').textContent = this.sw.on ? '计时中' : (this.sw.acc ? '已暂停' : '未开始');
+    q('[data-a="swGo"]').textContent = this.sw.on ? '暂停' : (this.sw.acc ? '继续' : '开始');
+    q('[data-a="swLap"]').disabled = !this.sw.on;
+    const laps = this.sw.laps;
+    q('[data-f="laps"]').innerHTML = laps.length
+      ? laps.map((t, i) => {
+          const prev = i ? laps[i - 1] : 0;
+          return `<div class="tm-lap"><b>#${i + 1}</b><code>${this._fmtSw(t)}</code><em>+${this._fmtSw(t - prev)}</em></div>`;
+        }).reverse().join('')
+      : '<div class="tl-note">还没有计次。计时中点「计次」记录一圈。</div>';
+
+    const left = this._cdLeft();
+    q('[data-f="cdTime"]').textContent = this._fmtCd(left);
+    q('[data-f="cdState"]').textContent = this.cd.on ? '倒计时中' : (left <= 0 ? '已结束' : (left < this.cd.total ? '已暂停' : '就绪'));
+    q('[data-a="cdGo"]').textContent = this.cd.on ? '暂停' : (left < this.cd.total && left > 0 ? '继续' : '开始');
+    this.el.querySelectorAll('[data-f="h"],[data-f="m"],[data-f="s"]').forEach(x => { x.disabled = this.cd.on; });
+
+    if (this.cd.on && left <= 0) {
+      this.cd.on = false;
+      this.cd.left = 0;
+      if (!this.cd.done) { this.cd.done = true; this._ring(); }
+    }
+  }
+
+  _ring() {
+    try {
+      const C = window.AudioContext || window.webkitAudioContext;
+      if (!C) throw new Error('no audio');
+      const ac = new C();
+      const t0 = ac.currentTime;
+      [0, 0.24, 0.48].forEach((d) => {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine'; o.frequency.value = 880;
+        g.gain.setValueAtTime(0.0001, t0 + d);
+        g.gain.exponentialRampToValueAtTime(0.18, t0 + d + 0.012);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.18);
+        o.connect(g).connect(ac.destination);
+        o.start(t0 + d); o.stop(t0 + d + 0.2);
+      });
+      setTimeout(() => { try { ac.close(); } catch (e) {} }, 1400);
+    } catch (e) {}
+    if (window.toast) toast('倒计时结束', 'warn');
+    try { document.title = '⏰ 时间到 · ' + HT_VERSION; } catch (e) {}
+  }
+
+  dispose() {
+    clearInterval(this._timer);
+    this._timer = 0;
   }
 }

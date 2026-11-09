@@ -1,9 +1,83 @@
-# 待办 · 2026-11-09 第四批次（v0.0.1.30）
+# 待办 · 2026-11-09 第五批次（v0.0.1.31）
 
-> 用户要求：①应用内弹窗按手绘统一；②拖拽遮罩加关闭、松手必须收；③页面内拖动不能触发外部导入提示；④文件管理器修双击、加「打开 / 执行」。
+> 用户要求：18 条，涵盖窗口交互（双击最大化 / 隐藏式胶囊 / 红点强制关闭 / 底部黄框最小化 / 左边缘吸附 / 四色值 / Dock 下限 / 全屏联动 / Dock 长按）、智能体（纯图片发送 / 收敛护栏 / 清空确认）、应用（HSV 镜像 / `.bin`→`.app` / 所有应用分组与双视图 / 数据转换联动 / 汉字码联动 / 截图隐藏窗口 / 计时器）、性能（渲染守护 / 卡顿）。
 > 状态：`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成并实测
 >
-> 第三批次（v0.0.1.29：执行器补全 + `.bin` 挑战集）已完成并推送（ee2740c、be85cb7、125a257）。
+> 第四批次（v0.0.1.30：统一对话框 + 拖拽遮罩 + 文件管理器双击/打开/执行）已完成。
+
+## A. 窗口标题与色点
+
+- [x] 标题栏双击 = 常规最大化（`mode:'max'`，宽度 100%），再双击回 `normal`
+- [x] **隐藏式最大化只留一个 26px 圆形图标**：删掉 `<b>窗口</b>` 文字、删掉 `title`，改 `aria-label`
+- [x] **独占**：新的窗口进隐藏模式时，已占据的旧窗口退回 `max`
+- [x] **长按色点（550ms）不再弹文字浮框**，改为「红黄绿蓝」四圆钮横排、框内零文字
+- [x] **长按 Dock 图标**弹同一套四钮框（`_bindDockMenu`）
+- [x] **长按胶囊**同样弹四钮框；窗口形态切换 / 关闭 / 聚焦时 `DotMenu.close()` 防锚点漂移
+- [x] 四色值：红 `#e01715`、黄 `#f5b900`、绿 `#8de312`、蓝 `#19e6f0`（抽成 CSS 变量）
+
+## B. 四种窗口形态
+
+- [x] **红点 = 强制关闭**：`close()` 立即 `dispose()`——智能体 abort 在跑的一轮并落盘，hsb2 停 v86；没有「后台」概念
+- [x] **绿点彻底全屏**：真发 `requestFullscreen({navigationUI:'hide'})`，并同步点亮顶栏「全屏」按钮
+- [x] Esc / F11 退出浏览器全屏时，`fullscreenchange` 监听同步退出 `immersive`
+- [x] 全屏态下点顶栏「全屏」→ 走 `WindowManager.exitImmersive()`，不再出现「按钮亮着但没反应」
+- [x] **Dock 是窗口下底的默认下限**：`open()` 按 dock 显隐算 `dockReserve`（20 / 82），`maxH = vh - dockReserve`；只有用户拖动后才可越过
+
+## C. 拖拽吸附
+
+- [x] **靠左贴放失效修复**：`EDGE` 从 10px 放宽到 46px，判定同时看指针坐标与窗口自身边缘（`wl <= 6`）
+- [x] **拖到画布底部中间**：`py >= box.h - 140 && midX` → `snapPos = 'min'`，画**黄色**预览框（`[data-pos="min"]`）
+- [x] 黄框尺寸 `_snapRect.min = {x:29% w, y:h-150, w:42% w, h:88}`，不压住 Dock
+- [x] 松手后先归位再 `minimize(win.id)`
+
+## D. 性能与渲染守护
+
+- [x] 新增 `build/68-guard.js`：`Guard` 用 **Worker 心跳每 10 秒**巡检（避免后台标签页 `setInterval` 被节流）
+- [x] `resize` 事件立即巡检一次；`Guard.every(name, fn, ms)` 作为后续所有守护任务的统一注册口
+- [x] 修正项：NaN / 过小（<280×188）/ 过大（>画布）/ 完全出界 / 提手高过窗口 55% / 文档横向溢出
+- [x] 每次修正后 `w._guardUntil = now + 15000`「睡死时间」，期间不再动它，防闪烁
+- [x] 卡顿：`htWinIn/Out/Min/Restore` 关键帧**删掉 `filter:blur`**；`.win` 去掉常驻 `will-change`；拖动期间关闭 `backdrop-filter`
+
+## E. 智能体
+
+- [x] **只贴图片、一个字不写也能发**：`act('send')` 判 `!text && !attachments.length` 才 return
+- [x] **收敛护栏**（借鉴 seekHarness 的三条机制，非代码复用）：单轮 `TIME_BUDGET = 8min`、观察结果连续两次相同 → `stalled`、连续 4 次 JS 失败 → `jsfail`、重复输出追问上限 2 → `repeat`
+- [x] 每种停止都 push 一条 `role:'error'` 说明，用户知道为什么停
+- [x] 「更多」抽屉里的**会话清空加确认框**（`agentClear()` 走 `confirmDlg`）
+
+## F. 应用
+
+- [x] 调色盘 HSV 选区**上下镜像**：先 `hsvToRgb` 再 `rgbToHsl` 存 `s/l`，标记点改用 `rgbToHsv` 的 `s/v`
+- [x] `.bin` → `.app`：`DIRS`、种子、`write()` 只读保护、`remove()`、正则、`tryExternal` 全部改；新增 `migrateBinDir()` 旧数据搬迁
+- [x] 「所有应用」：按**系统预装**（含维护中）/ **已安装**（读 `.app` 目录）分组，新增**列表 / 方块**双视图（存 `Settings('applistView')`）
+- [x] 数据转换：删「转换」按钮改**四格实时联动**（秒 / 毫秒 / 日期 / 时区都能填），删「现在时间」栏目改**标题栏按钮**，卡片加标题栏与左侧色条、顶部改**真选项卡**
+- [x] 汉字码：输入汉字识别出方案后**顶部选项卡自动跟随**；删掉「自检通过」「已按 4096 字编码」
+- [x] 截图：「截图时隐藏本窗口」复选框，`visibility:hidden` + `finally` 恢复
+- [x] 新增**计时器 / 秒表**（`TimerApp`：秒表厘秒 + 计次 + 复位；倒计时时分秒 + 快捷 1/3/5/10 分 + WebAudio 三声；`dispose()` 清 interval）
+
+## G. 文档与实测
+
+- [x] `README.md`：版本 0.0.1.31、全部 `.bin`→`.app`、新增「`.app` 里装了什么」目录索引、新增 §8.2 致谢 seekHarness（wingchi-leung，MIT）、新增 §5.9 四色点与四钮框规范
+- [x] 双击最大化 `{mode:'max', width:'100%'}`
+- [x] 长按红点 `{n:4, txt:''}`；Dock 长按 `n:4`；胶囊 `{txt:'', w:26, title:null, svg:true}`
+- [x] 彻底全屏 `{body:true, fsBtn:true, ball:'grid'}`
+- [x] 左吸附 `{'pos':'left'}`、底部黄框松手 `minimize` 生效
+- [x] 守护：人为设 40×30 / left 5000 / top −200 → 修正为 280×188, l:1110, t:0
+- [x] 时间戳四格：`1700000000` → `ms 1700000000000`、`dt 2023-11-15 06:13:20`
+- [x] 汉字码：2048 方案编码后粘回 → 顶部切到 `['B']`，解码回 `48656c6c6f`
+- [x] HSV：top 5.1%/v95、bottom 94.9%/v5、mid 49.8%/v50 —— 镜像消除
+- [x] 计时器：秒表 `00:01.29`、计次 `#1 00:01.34`；倒计时 `01:00`→`00:59 倒计时中`
+- [x] 截图隐藏：`2200×1532 · 1.31 MB`，事后 `visibility: visible`
+- [x] 智能体纯图片 `{called:1, atts:1}`；停滞停止 `⏹ 连续多次输出相同内容…已停止本轮。`
+- [x] 所有应用：系统预装 20 + 已安装 20（14 func + 6 html）
+- [x] 回归 `tests/test_dialog.py` 全绿、`tests/test_fm.py` 全绿、0 pageerror
+- [x] `build.sh` 拼入 `68-guard.js`；三份后端版本号同步
+
+---
+
+# 附：第四批次（v0.0.1.30，已完成）
+
+> 用户要求：①应用内弹窗按手绘统一；②拖拽遮罩加关闭、松手必须收；③页面内拖动不能触发外部导入提示；④文件管理器修双击、加「打开 / 执行」。
 
 ## A. 统一对话框（`modal()` 换皮不换接口）
 
@@ -36,80 +110,3 @@
 - [x] `tests/test_fm.py`：执行 JS（打印 run-ok 42 / sum 55）、执行 HTML（srcdoc 75）、打开进编辑器、鼠标双击只开一个窗口
 - [x] 浅色 / 手机宽度截图检查；无 pageerror
 - [x] 版本 0.0.1.30 + README 开发日志
-
----
-
-# 附：第三批次（v0.0.1.29，已完成）
-
-> 用户要求：用记事本记下任务、一条一条做、不要擅自停、有问题最后集中问。
-> 状态：`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成并实测
->
-> 第二批次（v0.0.1.28：手势锁 / 抽屉滑关 / Dock 折叠 / 汉字码双向 / 调色盘）已全部完成并推送（83dcb11、df8a428）。
-
-### A. 共享求值器（REPL / 智能体 js 工具）
-
-- [x] 顶层语句扫描：按括号深度 0 的 `;` / 换行切，跳过字符串、模板串、行注释、块注释、正则
-- [x] 跨行声明不再被拆成残句（`const a = {` / `  b: 1` / `}`）
-- [x] `class` 声明持久化（`globalThis.X = class X …`）
-- [x] 解构声明持久化（`const {a, b: c} = o` / `const [x, y] = arr`）
-- [x] 多声明持久化（`const a = 1, b = 2`，按顶层逗号切）
-- [x] 整段都是声明时不回显值（与浏览器控制台一致）
-- [x] `_` = 上一次结果（undefined 不覆盖）
-- [x] `$` / `$$` = querySelector / querySelectorAll 简写
-- [x] `//# sourceURL=HTRepl.js`，报错堆栈可读
-- [x] `console.time / timeEnd / timeLog / count / countReset / group / groupEnd / assert`
-- [x] `console.table` 输出对齐表格
-
-### B. DOM 同步语义（Worker 侧代理）
-
-- [x] 本地影子节点：createElement / createTextNode / createFragment 立刻可读写
-- [x] 属性写入立刻可读：setAttribute / dataset / textContent / innerHTML / value / className / id
-- [x] appendChild / append / prepend / insertBefore / removeChild / replaceChild 维护本地父子树
-- [x] 挂载进文档才登记 id（未挂载的节点不污染 getElementById，与原生一致）
-- [x] `document.getElementById` / `querySelector('#id')` 同步命中本地索引
-- [x] `innerHTML` 里的 id 异步换回真 ref 登记（`await sleep(0)` 后可查）
-- [x] `canvas.getContext('2d'/'webgl')` 走本地 OffscreenCanvas，`getImageData` 真像素
-- [x] `canvas.toDataURL` / `toBlob`（异步）
-- [x] `document.forms / images / links / scripts / embeds / styleSheets / fonts / timeline`
-- [x] `window.getSelection` / `document.getSelection` / `createRange` / `execCommand`
-- [x] `document.appendChild / insertBefore / removeChild / replaceChild / contains`
-- [x] 事件只绑一次 document（修一次点击回放两次）
-
-### C. `.bin` 挑战脚本
-
-- [x] `audit` 能力自检 25 项（语言核心 / 浏览器 API / DOM / Canvas / 事件 / 加密）
-- [x] `bench` 9 项基准 + 混合算力
-- [x] `nqueens` 位运算回溯，1–12 皇后（合计 18092 解）
-- [x] `maze` DFS 生成 + A* 最短路
-- [x] `raytrace` 逐像素光线追踪，ASCII 出图
-- [x] `expr` 手写词法 + 递归下降解释器（变量 / 函数 / 右结合幂）
-- [x] `crypto` SHA-256/512、HMAC、PBKDF2 10 万次、AES-GCM、UUID
-- [x] `async` 并发池 / allSettled / AbortController 超时 / 异步生成器流水线
-- [x] `reactive` Proxy 依赖收集 + 真 DOM 更新（mini Vue）
-- [x] `gen` 无限流 / 惰性管道 / zip / 自定义迭代器
-- [x] `life` 生命游戏 ANSI 动画 60 代
-
-### D. `.bin` 挑战 HTML
-
-- [x] `html-particles` Canvas 粒子星云（鼠标斥力 + 连线 + FPS）
-- [x] `html-snake` 贪吃蛇（方向键 / WASD / 触屏滑动 / 最高分）
-- [x] `html-mandelbrot` 分形（滚轮缩放 / 拖动平移 / 平滑着色）
-- [x] `html-lisp` 页面内迷你 Lisp（tokenizer / reader / 闭包 / 递归）
-- [x] `html-webgl` 手写顶点片元着色器 + 旋转立方体
-- [x] `html-audio` Web Audio 合成器 + 频谱可视化
-- [x] `open()` 识别 HTML 直接进浏览器窗口
-
-### E. 顺手修掉的旧 bug
-
-- [x] `.bin` 脚本里的 `print` 在 JSHeL 里从未定义（种子示例一跑就 ReferenceError）
-- [x] `sptx` 的 html 分支引用主线程 `baseName`，Worker 里没有 → 打开任何 HTML 都崩
-- [x] `api.console` 覆盖掉 bootShell 新建的 console（time/table 全失效）
-- [x] 事件同时绑 document 与 window，一次点击回放两次
-- [x] `deskBox()` 缺 left/top（上一批已修，本批回归确认）
-
-### F. 收尾
-
-- [x] 全部脚本实测（audit 25/25、nqueens 18092、maze、raytrace、expr、crypto、async、reactive、gen、life）
-- [x] 6 个 HTML 实测截图（WebGL 在无 GPU 的 headless 里降级提示）
-- [x] 版本 0.0.1.29 + README 开发日志
-- [x] 提交推送（ee2740c）
