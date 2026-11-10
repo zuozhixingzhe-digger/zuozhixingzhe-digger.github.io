@@ -77,7 +77,7 @@ MAX_BODY = 8 * 1024 * 1024
 RPM = env_int("HT_RPM", 60)
 BURST = env_int("HT_BURST", 20)
 FETCH_RPM = env_int("HT_FETCH_RPM", 120)
-VERSION = "0.0.1.34"
+VERSION = "0.0.1.35"
 # 功能注册表。将来加接口只在这里加一行，全关判定和路由白名单会自动跟着变。
 # (argparse 里的开关名, 路由, 中文名)
 FEATURES = (

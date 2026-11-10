@@ -8167,7 +8167,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.34';
+const HT_VERSION = '0.0.1.35';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -11625,7 +11625,11 @@ const WindowManager = {
 
     const win = {
       id, el, type:opts.type || 'shell', app:opts.app || '', title:opts.title || ({ applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' }[opts.type]) || '窗口',
-      body: $('.win-body', el), minimized:false, maximized:false, restoreRect:null,
+      body: $('.win-body', el), minimized:false, maximized:false,
+      /* 还原尺寸从一开始就是已知的（就是刚算出来的布局值）。
+       * 不能留 null 等 maxMode 现取：入场动画是 scale(.06)→1，动画期间
+       * getBoundingClientRect 给的是缩小后的尺寸，见 maxMode 里那段注释。 */
+      restoreRect: { x, y, w:defW, h:defH },
       onClose:null, content:null, opts
     };
     this.windows.set(id, win);
@@ -12054,10 +12058,18 @@ const WindowManager = {
   minimize(id) {
     const w = this.windows.get(id);
     if (!w || w.minimized) return;
-    /* 只剩这一扇窗时不能最小化：收了它页面就空了，而空白页面是不允许的。
-     * 规则对所有窗口一致，不做例外。 */
-    if (this.windows.size <= 1) {
-      if (window.toast) toast('最后一个窗口不能最小化（关掉它等于退出整个页面）', 'warn');
+    /* 收起来之前必须先确认「收完之后桌面上还有看得见的东西」。
+     * 只看窗口总数不够：两扇窗可以先后都收起来，于是空白桌面 + Dock 还在；
+     * 更糟的是「收一扇 → 关掉另一扇」，剩下那扇还躺在最小化里，
+     * 而这时窗口只剩一个、Dock 按规则不显示——它就再也回不来了（用户截图那张空白页）。
+     * 所以判据是「其余未最小化的窗口数」，一扇不剩就拒绝，规则对所有窗口一致。 */
+    const hidden = [...this.windows.values()].filter(x => x.id !== id && !x.minimized).length;
+    if (this.windows.size <= 1 || hidden === 0) {
+      if (window.toast) {
+        toast(this.windows.size <= 1
+          ? '最后一个窗口不能最小化（关掉它等于退出整个页面）'
+          : '桌面上至少得留一扇看得见的窗口，这一扇不能收', 'warn');
+      }
       return;
     }
     try { DotMenu.close(); } catch (e) {}
@@ -12067,7 +12079,11 @@ const WindowManager = {
     this._syncDock();
     this._syncModeChrome();
     if (w.content && w.content.onHide) w.content.onHide();
-    this._animMin(w, () => { w.el.classList.add('min'); });
+    this._animMin(w, () => {
+      /* 动画这 380ms 里可能已经被放回来了（比如它是最后一扇、被 _syncDock 兜底恢复），
+       * 那时再加 .min 就会「状态是显示、画面却消失」。 */
+      if (w.minimized) w.el.classList.add('min');
+    });
   },
   restore(id) {
     const w = this.windows.get(id);
@@ -12127,18 +12143,42 @@ const WindowManager = {
     if (mode === from) return;
 
     /* 只在「从普通窗口离开」时记还原尺寸；模式之间互转沿用同一份，
-     * 否则 全屏 → 隐藏式 → 还原 会把全屏尺寸当成原始尺寸存下来。 */
+     * 否则 全屏 → 隐藏式 → 还原 会把全屏尺寸当成原始尺寸存下来。
+     *
+     * 这里必须用 offset*，不能用 getBoundingClientRect：
+     * 入场动画是 @keyframes htWinIn{from{transform:scale(.06)}}，动画那 260ms 里
+     * rect 拿到的是「被 transform 缩小后」的尺寸。而 bootDesktop() 恰恰是在
+     * open() 之后**同步**调 maxMode(hidden) 的——于是启动那扇终端的还原尺寸
+     * 被记成几十像素，从胶囊还原后只剩一条几乎看不见的窗缝。
+     * offsetWidth/offsetHeight/offsetLeft/offsetTop 是布局盒，不受 transform 影响。
+     * 再兜一层：万一拿到的仍是荒唐值（< 最小窗宽 / 最小窗高），退回默认尺寸。 */
     if (from === 'normal') {
-      const r = el.getBoundingClientRect();
       const db = document.getElementById('desk').getBoundingClientRect();
-      w.restoreRect = { x:Math.round(r.left - db.left), y:Math.round(r.top - db.top), w:Math.round(r.width), h:Math.round(r.height) };
+      const bw = Math.round(el.offsetWidth), bh = Math.round(el.offsetHeight);
+      if (bw >= 280 && bh >= 200) {
+        w.restoreRect = { x: Math.round(el.offsetLeft), y: Math.round(el.offsetTop), w: bw, h: bh };
+      } else {
+        w.restoreRect = {
+          x: Math.round(db.width * 0.08), y: Math.round(db.height * 0.08),
+          w: Math.min(760, db.width - 40), h: Math.min(520, db.height - 80)
+        };
+      }
     }
 
     el.classList.remove('max', 'hidemax', 'immersive');
     w.maximized = false;
 
     if (mode === 'normal') {
-      const r = w.restoreRect || { x:40, y:32, w:760, h:480 };
+      /* 还原尺寸也校验一遍：万一某条路径写进了荒唐值（旧版本遗留的几十像素），
+       * 回到默认尺寸总好过还原成一条窗缝。 */
+      const rr = w.restoreRect;
+      const good = rr && rr.w >= 280 && rr.h >= 200;
+      const db = document.getElementById('desk').getBoundingClientRect();
+      const r = good ? rr : {
+        x: Math.round(db.width * 0.08), y: Math.round(db.height * 0.08),
+        w: Math.min(760, db.width - 40), h: Math.min(520, db.height - 80)
+      };
+      if (!good) w.restoreRect = r;
       el.classList.add('tween');
       clearTimeout(w._tweenT);
       w._tweenT = setTimeout(() => el.classList.remove('tween'), 320);
@@ -12470,6 +12510,19 @@ const WindowManager = {
     document.body.classList.toggle('dock-off', off);
     document.body.classList.toggle('dock-folded', folded);
     const wins = [...this.windows.values()];
+    /* 兜底：桌面上不能一扇看得见的窗口都没有。
+     * minimize() 已经拦住了「直接收到零」，但「收一扇 → 再关掉另一扇」会漏过去：
+     * 剩下那扇还躺在最小化里，而此时窗口只剩一个、Dock 按规则不显示，
+     * 它就没有任何入口能回来了（用户看到的就是一张空白页）。
+     * 真出现就强制把最后一扇放出来——用户的原话：「把剩下这个最小化的窗口强制显示出来」。
+     * 放到 setTimeout 里：restore() 会回调本函数，同步调用会自己套自己。 */
+    if (wins.length && wins.every(w => w.minimized)) {
+      const last = wins[wins.length - 1];
+      setTimeout(() => {
+        this.restore(last.id);
+        if (window.toast) toast('桌面上得留一扇窗口，已把「' + last.title + '」放回来', 'info');
+      }, 0);
+    }
     const focused = this.focused();
     this._syncSolo(wins);
     /* 窗口总数 ≤ 1 时 Dock 直接不显示——不是「隐藏」，是按规则不存在：
