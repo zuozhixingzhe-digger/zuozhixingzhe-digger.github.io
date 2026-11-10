@@ -498,11 +498,18 @@ body.win-drag .win-handle{filter:none}
 .win.immersive .win-bar{opacity:0;pointer-events:none}
 .win.immersive .win-body{margin-top:0}
 .win.immersive .rz{display:none}
+/* 彻底全屏：顶栏、Dock（含折叠药丸）统统让位。
+ * 这里必须是 display:none——只做透明的话顶栏还占着顶部 54px，
+ * 而且它层级比窗口高，会在全屏画面上压出一条黑边。
+ * body.fs 是「浏览器拒绝 requestFullscreen」时的软件级全屏，同样不该留顶栏。 */
 body.immersive .topbar,
 body.immersive #dock,
 body.immersive #dockWrap,
 body.immersive #dockPill,
-/* 彻底全屏时没有别的东西要让位了；窗口自己铺满即可。 */
+body.fs .topbar,
+body.fs #dock,
+body.fs #dockWrap,
+body.fs #dockPill{display:none!important}
 body.immersive{background:#000}
 
 #imBall{

@@ -1,7 +1,7 @@
 # HTerMinaL
 
 > 在浏览器里运行的 JS 终端 —— 一切皆文件，窗口是线程。
-> 当前版本 **0.0.1.36**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 当前版本 **0.0.1.37**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
 `HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 1.3 MB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
@@ -2624,7 +2624,11 @@ const py = offY + vRow * cellH;                            // 行
 - 拖窗口时判定吸附的**是指针（鼠标 / 手指）的位置**，不是提手、也不是窗口边框：
   指针进到画布边缘 10px 内才吸；拖到**底部中间**（指针落进下沿 28px、横向 25%–75%）出现黄框，松手最小化。
   `0.0.1.32` 用提手位置判过一次，方向错了——手指才是用户真正在控制的东西。
-- 窗口「彻底全屏」会请求浏览器真全屏，并让顶栏全屏按钮进入激活态。
+- 窗口「彻底全屏」（`.win.immersive` 那一套）除了请求浏览器真全屏、点亮顶栏全屏按钮，
+  还必须在**页面上**把顶栏与 Dock 一起拿掉：`body.immersive` 时 `.topbar / #dock / #dockWrap / #dockPill`
+  全部 `display:none!important`。只做透明是不行的——顶栏仍占着顶部 54px，而且层级比窗口高，
+  会在全屏画面上压出一条黑边。实测值：`topbarH:0`、窗口 `[0,0,1280,800]`。
+  软件级全屏 `body.fs`（浏览器拒绝 `requestFullscreen` 时的兜底）走同一套规则。
 
 ### 5.10 焦点规则：默认不抢，只有两处例外
 
@@ -3253,6 +3257,16 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 教训：凡是「按下时做点什么」的交互，都要问一句——**用户只是点一下，会怎样？**
 （同类：长按菜单必须能靠「按住不动 550ms」区分于点击；拖拽必须能靠位移阈值区分于点按。）
 
+**79. 删 CSS 规则留下「逗号悬空」，下一条规则被它吃掉**
+0.0.1.34 删底部终端时，`body.immersive #term-view{opacity:0;pointer-events:none}` 被整行删掉，
+但同组四行 `body.immersive .topbar,` / `#dock,` / `#dockWrap,` / `#dockPill,` 还在。
+四行以逗号结尾，紧跟着的 `body.immersive{background:#000}` 就成了**它们的**声明块——
+于是「顶栏、Dock 全隐藏」变成「顶栏、Dock 刷黑底」：`display:flex` 还在、54px 还在、层级照旧压着窗口，
+「彻底全屏」顶部就多一条黑边。JS 那边 `mode === 'immersive'`、类名、几何全对，怎么查都查不到。
+**修法**：四行接回 `{display:none!important}`，顺手把 `body.fs` 也补上。
+教训：删选择器列表里的一项，要连**逗号**一起删；批量删 CSS 后跑一遍「行尾逗号 + 下一行是注释或规则」的扫描
+（`grep -n ',$' build/00-head.html`），比盯屏幕快得多。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -3332,6 +3346,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.37 | 2026-11-10 | **彻底全屏还压着一条顶栏**：0.0.1.34 删底部终端时，`body.immersive #term-view{opacity:0;pointer-events:none}` 被整行删掉，但同一组里的 `body.immersive .topbar, / #dock, / #dockWrap, / #dockPill,` 四行还留着**逗号**——它们和紧随其后的 `body.immersive{background:#000}` 拼成了一个选择器列表。于是「隐藏顶栏与 Dock」那条声明块凭空消失，只剩给它们刷黑底：`display` 仍是 `flex`、顶栏还是 54px 高、层级又比窗口高，全屏画面上就压出一条黑边，而 JS 侧 `mode === 'immersive'` 完全正确，查半天查不到。修法：把这四行接回 `{display:none!important}`；顺带补上 `body.fs`——浏览器拒绝 `requestFullscreen` 时的软件级全屏，README 一直写着「隐藏顶栏、桌面铺满」，样式从来没实现过。`tests/test_v137.py` 覆盖桌面 / 手机 / 悬浮球退出 / `body.fs` 往返。 |
 | 0.0.1.36 | 2026-11-10 | **标题栏单击就把窗口还原了**：0.0.1.34 为了修「最大化之后拖到左下角不起预设布局」，把 `_startDrag()` 里 `if (win.maximized) return` 换成「进入函数就 `maxMode(id,'normal')`，再按指针位置跟手」——于是**点一下**（pointerdown 就还原）和**按住拖**走了同一条路，`双击标题栏才还原` 的约定退化成「单击就还原」。现在把还原推迟到 `draw()` 里**第一次越过 3px 阈值**的瞬间，由 `detachFromMax()` 完成：按指针位置摆成普通窗口、清掉 `maxMode` 留下的 `.tween`（否则几何会「慢慢飘过去」）、把位移基准重置成新位置，再继续跟手。没移动的点按走不到这里——单击保持最大化，双击（鼠标 `dblclick` / 触屏 340ms 内两次 tap）才还原，拖动仍然是「一拖就退出来」。 |
 | 0.0.1.35 | 2026-11-10 | **两个截图级补丁（都在 0.0.1.34 的「最后一扇窗」规则里）**：①**启动那扇终端还原成一条窗缝**——`bootDesktop()` 是在 `open()` 之后**同步**调 `maxMode('hidden')` 的，而入场动画是 `@keyframes htWinIn{from{transform:scale(.06)}}`，那 260ms 里 `getBoundingClientRect()` 拿到的是**被 transform 缩小后**的尺寸，于是 `restoreRect` 记成了几十像素；从胶囊还原就只剩一条几乎看不见的窗缝（手机尺寸下尤其明显，里面的浏览器/终端 UI 全挤成一团）。现在 `open()` 构造窗口时就直接写入已知的布局尺寸（`{x,y,w:defW,h:defH}`），`maxMode()` 记录时改用 `offsetLeft/Top/Width/Height`（布局盒不受 transform 影响），并对 `< 280×200` 的荒唐值退回默认尺寸——两道保险。②**「收一扇 → 关掉另一扇」会留空白页**——两扇窗 A、B，收掉 A（此时 `windows.size` 还是 2，Dock 正常显示 A、B），再关掉 B，剩下的 A 还躺在最小化里；而此时窗口只剩一个、Dock 按规则不显示，**A 就再也没有任何入口回来了**。修法两层：`minimize()` 的判据从「窗口总数 ≤ 1」改成「**收完之后至少还有一扇看得见**」，`_syncDock()` 再兜一层——万一真出现「全在最小化」，`restore()` 最后一扇并 toast「桌面上得留一扇窗口，已把「X」放回来」（用户原话：「把剩下这个最小化的窗口强制显示出来」）。顺带给 `_animMin` 的收尾回调加了 `if (w.minimized)` 守卫：动画那 380ms 里若已被放回来，不能再补 `.min` 类，否则「状态是显示、画面却消失」。 |
 | 0.0.1.34 | 2026-11-10 | **第八批次（20 条）：底部不再是终端 + 最后一个窗口规则 + spotfs 调用规范化 + 文件管理器重写 + 贝塞尔设计器**：①**桌面底下没有常驻终端了**：页面启动时打开的是**一扇普通终端窗口**，只是处于「隐藏式最大化」——它和 `Alt+T` 开出来的完全一样，Dock、最小化、层叠对谁都一样；`#term-view` / `#term` 那一套 DOM 与样式全删，终端只活在 `.win-term` 里。②**单窗口规则**：总窗口数 ≤1 时 Dock **整条不显示**（按规则不显示，不是自动隐藏）；最后一扇窗不能最小化、不能改层级（黄/蓝钮变灰，点了只说明原因），红钮换成**朝左的三角形**；拖到底部仍然出框，但是**灰的**，松手弹回**拖动前**的位置。③**关掉最后一扇 = 退出整页**：不限类型，`windows.size === 0` 就走 `exitDesktop()`（有真实来源页回退，否则刷新自毁），不允许空白桌面。④**窗口交互三修**：双击最大化/还原改挂**窗口根**并用 `clientY - rect.top <= _hh` 判顶部条带（最大化时 `.win-screen` 盖住了标题条，挂在标题上的事件永远收不到）；`_startDrag` 去掉 `win.maximized` 早退，常规最大化也能直接拖下来（「拖到左下角不起预设布局」的真因；隐藏式最大化整窗是终端画面，还原走顶栏胶囊）；四钮框与二级菜单**两级共存**——二级长按不再关一级框，两边的 `_outside` 互不算外面，真选中时才 `closeAll()`。⑤**抽屉两个真 bug**：`_bindSwipe` 拿同一个 `dr.__swipe` 既当「已绑定」又当「吞 click」哨兵，于是从绑定那一刻起抽屉里**所有按钮都点不动**、滑动也永不生效；拆成 `__swipeBound` + `__swipeAt` 时间戳，方向判定放宽（`abs(my) > abs(mx)` 才放弃）。⑥**手机键盘不再乱弹**：`focus()` 切窗时 `blur()` 上一个窗口里的 `input` / `textarea`。⑦**spotfs 规范化**：`sptn()` 只新建、绝不写入（带 `opts.data` 直接抛错，必须「新建 + `sptc`」两步）；不给名字就 `auto-YYYY-MM-DDTHH-MM-SS-NN` 自动起名，>99 递归续写；`.queryfile` 里新建 = 自动向用户要文件、只读、**读一次即永久消失**（`peek` 不算读）；`.savefile` 里写完 = 立刻落盘、**无论成败节点都消失**；新增 `sptmetaread/sptmetawrite`（`type/mime/readonly/executable/ctime/mtime/hint/extra`，`extra` 增量合并），判断类型**先看元数据再看魔数**（PNG/JPEG/GIF/RIFF/wasm/ZIP/PDF + doctype/asm），不看后缀；`sptm(p)` 改成把 JS **挂成函数**；新增 `Spot` 门面，应用层只走它，裸操作只剩系统自己。⑧**统一能力表** `FS.caps(p) → {r,w,x,d,mk,why}`：预设、对人一致、不给设置——根目录只能穿越（不能新建/删除/挂载）、`.doc` 只读、`.perm` 只 x（执行＝申请）、`.proc` 删除＝杀进程、两个一次性目录各按上条；`assert` 把原因直接抛成 toast 文案。⑨**`.sys` → `.doc`**（里面本来全是文档），带启动迁移，新增 `.doc.mount` 写清 FreeBSD `/spotfs` 挂载的打算。⑩**文件管理器整类重写**：`pointerdown` 起 520ms 长按 → 上下文菜单，移动 >8px 取消（＝拖拽）；空目录给提示不再「打不开」；每行标 `r/w/x/d`；预览栏可折；「打开」→「编辑」（**对齐 `w`**，只读区只能用预览看）、「执行」对齐 `x`（文件夹＝进入），不适宜项变灰；双击走 `openSmart()`：可执行先执行，不行退编辑器，再退属性。⑪**新应用贝塞尔动效设计器**：拖两个控制点即时看小球动效，10 条预设、时长滑杆、循环、复制 CSS、存 `.home`，求解用牛顿迭代 + 二分兜底。⑫**Markdown 快捷键**：顶栏 11 个格式按钮 + `Ctrl/⌘ B/I/U/K/反引号`、`Ctrl+Shift+X`、`Ctrl+Shift+.`、`Ctrl+S`，再点一次可撤销。⑬顺手把 `tools` 命令的清单补齐（新增 htmlapp / bezier / timer / applist，去掉四个「维护中」），`mount` 的占位文案改成「FreeBSD `/spotfs`」那句真话。 |
@@ -3384,6 +3399,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-10 21:10 | 0.0.1.37：彻底全屏残留顶栏 | `build/00-head.html`（`body.immersive .topbar / #dock / #dockWrap / #dockPill` 补回 `{display:none!important}`——原来被 0.0.1.34 删 `#term-view` 时留下的悬空逗号吞进了 `body.immersive{background:#000}`；新增 `body.fs` 同款隐藏）、`build/30-core.js` + `modelserver.{py,js,go}`（版本 0.0.1.37）、`tests/test_v137.py`（新增）、`README.md`、`TASKS.md` | Playwright 1280×800：`maxMode('immersive')` 后 `topbarH:0 / topbar:none / dock:none / wrap:none / pill:none`、窗口 `[0,0,1280,800]`、`ball:grid`；点悬浮球 → `normal [24,66,780,558]`、顶栏恢复 54px、Dock 回来；`exitImmersive()` 同；`body.fs` → 顶栏与 Dock 全 `none`，移除类后恢复。手机 390×844：`[0,0,390,844]`、`overflowX:0`，退出后 `[16,58,366,518]`。`test_v134`–`test_v136`、`test_fm`、`test_menu`、`test_snap_paste`、`test_focus_drag`、`test_htmlapp`、`test_dialog`、`test_v133`、`test_complete` 全绿，0 pageerror | 本轮 |
 | 2026-11-10 20:40 | 0.0.1.36：标题栏单击误还原 | `build/40-term.js`（`_startDrag`：去掉 pointerdown 时的立即 `maxMode('normal')`，改为 `attached` 标志 + `detachFromMax()`，在 `draw()` 首次越过 3px 时才摘掉最大化；`detachFromMax` 里清 `.tween`/`_tweenT` 并重置 `startX/startY/ox/oy/box0/w0/h0`；相关变量由 `const` 改 `let`）、`build/30-core.js` + `modelserver.{py,js,go}`（版本 0.0.1.36）、`tests/test_v136.py`（新增）、`README.md`、`TASKS.md` | Playwright 鼠标（1280×800）：`max` 下单击 → `mode:"max"`；双击 → `normal` `rect:[24,66,780,558]`；再双击 → `max`；按住拖 60px → 中途 `{mode:"normal", dragging:true}`、松手落在 `[310,114,780,558]`。触屏（390×844）：单击（间隔 >340ms）→ `max`；两次 tap 间隔 120ms → `normal` `[16,58,366,518]`；再双击 → `max`。`test_v134`/`test_v135`/`test_fm`/`test_menu`/`test_complete`/`test_focus_drag`/`test_snap_paste`/`test_htmlapp`/`test_dialog`/`test_v133` 全绿，0 pageerror | 本轮 |
 | 2026-11-10 18:20 | 0.0.1.35：还原尺寸 + 「最后一扇还在最小化里」 | `build/40-term.js`（`open()` 构造 `win` 时直接给 `restoreRect` 一个已知布局值；`maxMode()` 用 `offset*` 记还原尺寸 + `< 280×200` 兜底默认值；`maxMode('normal')` 还原前也校验一遍；`minimize()` 判据改成「收完后至少一扇可见」；`_syncDock()` 全最小化兜底 `restore()` + toast；`_animMin` 收尾回调加 `w.minimized` 守卫）、`build/30-core.js` + `modelserver.{py,js,go}`（版本 0.0.1.35）、`tests/test_v135.py`（新增）、`README.md`、`TASKS.md` | Playwright：**手机 390×844** 启动 `restore:{x:16,y:12,w:366,h:518}`（修前是几十像素），胶囊还原后 `rect:[16,58,366,518]`、`.xterm` 364×479、无横向溢出；**两扇窗** `min1` 后 timer `minimized:true`、Dock 仍 2 项；再收终端被拒（`anyVisible:true`）；关掉终端后 timer 被强制放出（`minimized:[false] live:[true] dockHidden:true solo:[true]`、红钮仍是朝左三角）、`#window-layer .win` 计数 1；`test_v134`/`test_fm`/`test_menu`/`test_complete`/`test_focus_drag`/`test_snap_paste`/`test_htmlapp`/`test_dialog`/`test_v133` 全绿，0 pageerror | 本轮 |
 | 2026-11-10 17:20 | 0.0.1.34：底部不再是终端 + 最后一个窗口 + spotfs 规范化 + 文件管理器重写 + 贝塞尔 | `build/30-core.js`（`HT_VERSION`；`.sys`→`.doc` + `migrateDocDir()` + `.doc.mount`；新增 `caps/can/assert` 能力表、`sniff/typeOf` 类型判定、`autoName()`；`sptn` 拆成**只建不写** + `.queryfile`/`.savefile` 两个一次性分支；`sptr` 加 `peek` 与读后消费；`sptx` 按 `type` 分流；新增 `sptmetaread/sptmetawrite`（`extra` 增量合并）、`sptm` 改挂函数、`Spot` 门面、`spotfsTable()`）、`build/20-worker.js`（`sptm` 新签名；新增 `sptmetaread/sptmetawrite/sptcaps` 三处挂载 + `help()` 行）、`build/70-boot.js`（RPC `fs.meta.read`/`fs.meta.write`/`fs.caps`；`_bindSwipe` 整个重写：`__swipeBound`/`__swipeAt` 分离 + 方向判定放宽 + 阈值 22%/0.3&5%；`Drawer.open()` 清 `transition/transform`；`btnRestartTerm` 关旧窗口再 `bootDesktop()`；启动文案「打开终端窗口」）、`build/40-term.js`（`WIN_DOT_SVG.exit` 朝左三角；`bootDesktop()` 改成开一扇普通 `shell` 窗 + `maxMode(hidden)`；双击挂窗口根 + `_hh` 判条带；`_startDrag` 去 `maximized` 早退；底部 `solo?'minsolo':'min'` + 灰框 + 回原位 + toast；`minimize/sendDown/sendToBack` 单窗拒绝；`close()` 末窗 `exitDesktop()`；`_syncDock` 单窗清空 + `_syncSolo()`；`DotMenu` 两级共存 + `.solo`；`WinMenu` 修 `return m` 位置 + `closeAll()` + `disabled`；`focus()` 切窗 blur；`create()` dispose 清 `desktop`）、`build/50-apps.js`（`FilesApp` 整类重写：长按/右键菜单、双击自数、空目录提示、权限小标记、预览折叠、`_syncBar` 对齐 `w/x/d`、`open`→`Spot.openSmart`、`run`→`sptx`+`Spot.act`、新增 `showMeta/rename/paste/copy/cut`；`EditorApp` 走 `Spot.read/write`）、`build/55-tools.js`（`MdApp` 格式栏 + `applyFmt` + 快捷键）、`build/58-image.js`/`59-media.js`/`61-html.js`（保存走 `Spot.write` + `type`）、`build/62-bezier.js`（**新增** ~330 行：`solveBezier`、`PRESETS`、`BezierApp`）、`build/00-head.html`（删 `#term-view`；`.win.solo`/`.dotmenu.solo`/`.win-snap[minsolo]`；`.md-tb`；`.bz*` 全套；`.fm-row .perm`/`.fm.pv-off`/`.fmctx`）、`build/10-body.html`（删终端 DOM；启动器加 bezier）、`build/25-compat.js`（`mount` 文案改 FreeBSD `/spotfs`；`tools` 清单补 6 项 + 去掉「维护中」）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.34）、`build.sh`（拼 62）、`tests/test_v134.py`（新增）、`README.md`、`TASKS.md` | Playwright（1280×800）：**启动态** `wins:1 mode:hidden cls:"win solo focus hidemax"`、`dockHidden:true`、`dockLen:0`、`chip.on:true`、焦点在 `.xterm` 内；**单窗** 红点 `d:"M 30 6 L 8 20 L 30 34 Z"`、`minimize` 后 `minimized:false`、`sendToBack` 后 z 不变；**拖到底** `pos:"minsolo"` + `display:block` + 边框 `rgba(150,164,160,.7)`，松手回到 `391/328`（与拖动前完全一致）、`mode:normal`；**两级共存** 长按绿钮后 `dotmenu:true winmenu:true lv2:true title:"绿色 · 窗口形态"`，点空白后两者同 `false`；**抽屉** 字号滑杆 14→17、点条目切窗并收起、60px 快扫即关；**双击** `max→normal→max` 三轮；**spotfs** `sptn({data})` 抛「只新建、不写入」、`sptn` 建出 `size:0 content:""`、`sptc`→`hello`、`spta`→`hello!`、`sptmetawrite{extra.tag}` 读回 `demo`、`caps` 五档全对、`auto` 连出 `auto-2026-11-10t17-11-58-01/02`、根目录新建报「根目录只用来穿越」、`.perm.notification` → `{act:"perm"}`；**queryfile** `peek` 后 `stillThere:true`、读后 `consumed:true gone:true`、再读报「不存在」、`sptc` 报不可覆盖；**perm 目录** `sptc`/`sptr` 均被拒、`sptx` 出 `perm`；**文件管理器** `.home` 2 行、空目录提示「空目录 · 右键新建，或用上面的 ＋」、右键菜单 8 项、`pv-off:true`、`.perm.notification` 上 `run` 可用而 `edit/del` 变灰、`.doc.license` 上 `run/edit` 都灰；**焦点** 开 timer 后 `after:"BODY"`、`isField:false`、`inside:false`；**Markdown** `.md-tb` 11 个按钮、`Ctrl+B`→`**abc**`、`Ctrl+U`→`<u>xyz</u>`；**贝塞尔** `cubic-bezier(.25,.1,.25,1)`→`(0.21,0.91,0.25,1)`、小球 `translate3d(117px,-6px,0)`；**目录** 根下 `.doc` 在、`.sys` 无；**末窗关闭** `exitDesktop` 命中 1 次、`windows.size:0`；0 pageerror、0 console error | 本轮 |
@@ -3476,5 +3492,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.36 · 一切皆文件 · 窗口是线程</sub>
+  <sub>HTerMinaL 0.0.1.37 · 一切皆文件 · 窗口是线程</sub>
 </p>
