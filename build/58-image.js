@@ -781,7 +781,7 @@ class ImageApp {
       const { bytes, mime } = this._export();
       const nm = spotEscape(this._fileName(this._ext(mime)));
       let p = this.savedPath && FS.exists(this.savedPath) ? this.savedPath : uniquePathIn('.home', nm);
-      await FS.write(p, bytes, { mime, hint:spotExportName(baseName(p)), origin:'image' });
+      await Spot.write(p, bytes, { mime, type:'image', hint:spotExportName(baseName(p)), origin:'image' });
       this.savedPath = p;
       toast('已保存到 ' + p);
     } catch (e) {

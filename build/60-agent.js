@@ -21,7 +21,7 @@ const AGENT_ENV = `你是 HarTMLes——HTerMinaL 里的智能体，运行在一
 环境事实：
 - 文件系统是“一切皆文件”的扁平结构，根是 "."，路径用 "." 分隔，例如 .home.notes、.bin.hello。
 - 文件名必须像标识符：字母/中文开头，只含字母、中文、数字、下划线和短横线；不区分大小写。
-- 常用目录：.home（用户文件）、.bin（可执行函数）、.app（应用）、.dev（设备）、.proc（进程）、.pkg（包）、.config（设置）、.agent（会话）、.sys（只读系统信息）、.temp（临时）、.queryfile（用户提供的文件）。
+- 常用目录：.home（用户文件）、.app（应用与可执行函数）、.dev（设备）、.proc（进程）、.pkg（包）、.config（设置）、.agent（会话）、.doc（只读文档与系统信息）、.perm（授权）、.temp（临时）、.queryfile（用户提供的一次性文件）、.savefile（待保存）。
 - 终端在 Worker 里跑 JS；你通过工具在主页面执行，所以 document / window / localStorage
   都是真的（不是模拟）。也能直接用全局 hterm API：hterm.readFile/writeFile/listDir/openWindow/exec/saveFile。
 - 抓网页用 fetch_url（有后端时由本机后端代抓，不受跨域限制；返回的是正文，不是原始 HTML）。

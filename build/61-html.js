@@ -921,7 +921,7 @@ class HtmlApp {
     const nice = /\.html?$/i.test(name) ? name : name + '.html';
     const p = uniquePathIn('.home', spotEscape(nice));
     try {
-      await FS.write(p, this.text, { mime: 'text/html;charset=utf-8', hint: baseName(p) });
+      await Spot.write(p, this.text, { mime:'text/html;charset=utf-8', type:'page', hint:baseName(p) });
       this._path = p;
       toast('已保存 ' + spotExportName(p));
     } catch (e) {

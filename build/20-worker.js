@@ -1089,8 +1089,11 @@ function makeShell(ctx) {
     if (r && r.act === 'kill') return kill(r.pid);
     return r;
   }
-  /* sptm：挂载。占坑 —— 主线程那边会明确抛「还没做」，不在 worker 里假装成功。 */
-  async function sptm(target, source, opts) { return call('fs.sptm', abs(target), source, opts || {}); }
+  /* sptm：把 JS 节点挂载成函数（不是挂载文件系统） */
+  async function sptm(target, opts) { return call('fs.sptm', abs(target), opts || {}); }
+  async function sptmetaread(p) { return call('fs.meta.read', abs(p)); }
+  async function sptmetawrite(p, patch) { return call('fs.meta.write', abs(p), patch || {}); }
+  async function sptcaps(p) { return call('fs.caps', abs(p)); }
   async function sptx(p, ...args) {
     const d = await call('fs.sptx', abs(p), args);
     if (!d || !d.act) return d;
@@ -1189,7 +1192,7 @@ function makeShell(ctx) {
       ['', 'HTerMinaL · JSHeL 快速参考'],
       ['文件', 'ls(p)  ll(p)  cd(p)  pwd()  cat(p)  write(p,data)  mkdir(p)  rm(p,{r})  mv  cp  stat  tree  find  grep  head  tail  df  mount'],
       ['执行', 'exec(p)  open(p)  run(code)  require("pkg")  python()  exit()'],
-      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  m sptm(target,src)  —— 七个 syscall（m 是占坑）'],
+      ['spotfs', 'c sptc(p,data)  n sptn(p,opts)  a spta(p,data)  x sptx(p)  r sptr(p)  d sptd(p)  m sptm(p)→函数  meta sptmetaread/sptmetawrite  caps sptcaps(p)'],
       ['转义', 'spotEscape(s) 名字→-xx…；spotUnescape 还原；spotExportName 导出去掉病态字符；拖拽/上传共用 importFiles()'],
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
@@ -1221,7 +1224,7 @@ function makeShell(ctx) {
     ['文件', ['ls','ll','dir','cd','pwd','cat','write','writeFile','readFile','listDir','append',
               'mkdir','rm','mv','cp','stat','exists','tree','find','head','tail','grep',
               'open','exec','run','du','df','mount']],
-    ['spotfs', ['sptc','sptn','spta','sptr','sptx','sptd','sptm','spotEscape','spotUnescape','spotExportName']],
+    ['spotfs', ['sptc','sptn','spta','sptr','sptx','sptd','sptm','sptmetaread','sptmetawrite','sptcaps','spotEscape','spotUnescape','spotExportName']],
     ['包', ['install','uninstall','requirePkg','pkg']],
     ['窗口', ['spawn','winOpen','winClose','winList','openWindow','closeWindow','listWindows','agentOpen','jshel']],
     ['系统', ['python','py','saveFile','askFile','fetchText','openUrl','notify','perm','requestPermission',
@@ -1238,7 +1241,7 @@ function makeShell(ctx) {
     append:'追加内容', mkdir:'建目录', rm:'删除', mv:'移动/改名', cp:'复制', stat:'元信息',
     exists:'是否存在', tree:'目录树', find:'按名字找', head:'前 N 行', tail:'后 N 行', grep:'按内容搜',
     open:'用合适的窗口打开', exec:'按类型执行（html→浏览器，js→shell）', run:'执行一段 JS', du:'占用', df:'挂载点', mount:'列挂载',
-    sptc:'创建节点', sptn:'新建（opts）', spta:'追加', sptr:'读取', sptx:'执行', sptd:'删除', sptm:'（占位）',
+    sptc:'覆盖写入（只覆盖已存在）', sptn:'新建（只建不写）', spta:'追加', sptr:'读取（queryfile 读完即焚）', sptx:'执行', sptd:'删除（proc = 结束进程）', sptm:'把 JS 节点挂成函数', sptmetaread:'读元数据', sptmetawrite:'写元数据', sptcaps:'能力表 r/w/x/d/mk',
     install:'装包', uninstall:'卸包', requirePkg:'require 一个包', pkg:'包管理命名空间',
     spawn:'开 shell 窗口跑一段代码', winOpen:'开窗口', winClose:'关窗口', winList:'窗口列表',
     python:'Python（Pyodide）', saveFile:'存到本机', askFile:'选文件', fetchText:'抓网页文本',
@@ -1579,7 +1582,7 @@ function makeShell(ctx) {
     },
     mkdir, rm, mv, cp, stat, exists, tree, find, head, tail, grep, open, exec, run, du, df, mount,
     /* spotfs 六个 syscall（canonical）+ 名字转义 */
-    sptc, sptn, spta, sptr, sptx, sptd, sptm,
+    sptc, sptn, spta, sptr, sptx, sptd, sptm, sptmetaread, sptmetawrite, sptcaps,
     spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport,
     // 包
     install, uninstall, require:requirePkg, pkg:{ install, remove:uninstall, list:() => call('pkg.list'), require:requirePkg },
@@ -1611,7 +1614,7 @@ function makeShell(ctx) {
     // 内建对象
     console:globalThis.console,
     fs:{ read:fsread, write:fswrite, list:fsls, remove:fsrm, mkdir:fsmkdir, stat:fsstat, move:fsmv, copy:fscp, resolve:norm,
-         sptc, sptn, spta, sptr, sptx, sptd, sptm, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
+         sptc, sptn, spta, sptr, sptx, sptd, sptm, sptmetaread, sptmetawrite, sptcaps, spotEscape: spotEsc, spotUnescape: spotUnesc, spotExportName: spotExport },
     term:{ write:out, writeln:(s) => out(s + '\r\n'), clear, columns:() => ctx.cols, rows:() => ctx.rows },
     envVars:{},
     __state:state

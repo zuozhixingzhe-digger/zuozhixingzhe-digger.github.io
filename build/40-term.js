@@ -215,14 +215,14 @@ const Keys = {
   }
 };
 
-/** 当前该接收按键的会话：有聚焦的终端窗口就用它，否则用桌面终端。 */
+/** 当前该接收按键的会话：有聚焦的终端窗口就用它，否则用启动时那扇终端。 */
 function activeSession() {
   const w = (typeof WindowManager !== 'undefined') ? WindowManager.focused() : null;
   if (w && w.content && w.content.term && !w.content.disposed) return w.content;
   return TerminalManager.desktop;
 }
 /** 聚焦窗口若是 hsb2（没有 xterm 会话），顶栏按键要走它自己的键盘通道，
- * 否则会一路发给桌面终端——这正是「顶栏 Ctrl / Esc 在 FreeBSD 里没反应」的原因。 */
+ * 否则会一路发给启动时那扇终端——这正是「顶栏 Ctrl / Esc 在 FreeBSD 里没反应」的原因。 */
 function hsb2Focused() {
   const w = (typeof WindowManager !== 'undefined') ? WindowManager.focused() : null;
   const c = w && w.content;
@@ -629,7 +629,7 @@ class TerminalSession {
     setTimeout(() => this.fitNow(), 30);
     this._bindZoom();
     /* 这里**故意不 focus**。手机上一聚焦就弹输入法，开一扇终端窗口＝整屏被键盘吃掉。
-     * 只有「页面加载完那一次」由 70-boot 聚焦桌面终端，以及用户自己点进来才算数。 */
+     * 只有「页面加载完那一次」由 70-boot 聚焦那扇终端窗口，以及用户自己点进来才算数。 */
   }
 
   /* Ctrl / ⌘ + 滚轮：只缩放这一扇终端，别动全局字号。
@@ -954,26 +954,25 @@ const TerminalManager = {
   sessions: new Set(),
   desktop: null,
 
+  /* 页面启动时的那一个终端。
+   *
+   * 0.0.1.34 起底部不再有「底层终端」——它就是**一扇普通终端窗口**，和其他终端
+   * 窗口没有任何区别，只是开局就处于「隐藏式最大化」（铺满桌面、标题条收起）。
+   * 于是「终端窗口」这个概念只剩一种，Dock、最小化、层叠对谁都一样。
+   */
   bootDesktop() {
-    const host = document.getElementById('term');
-    if (this.desktop) this.desktop.dispose();
-    // 清空旧节点（xterm 会往里塞东西）
-    host.innerHTML = '';
-    this.desktop = new TerminalSession({
-      container: host,
-      role: 'shell',
-      title: 'jshel',
-      cwd: '.home',
-      id: 'desktop',
-      pid: 100,
-      history: loadHistory(),
-      onCwd: (p) => {
-        const a = document.getElementById('tbWhere'); if (a) a.textContent = p;
-        const b = document.getElementById('drSub'); if (b) b.textContent = 'jshel · ' + p;
-      },
-      onExit: () => exitDesktop(),
-    });
-    this.sessions.add(this.desktop);
+    if (this.desktop && !this.desktop.disposed) {
+      const w = this.desktop.win;
+      if (w && WindowManager.windows.has(w.id)) { WindowManager.maxMode(w.id, 'hidden'); return this.desktop; }
+    }
+    const win = WindowManager.open({ type:'shell', cwd:'.home', title:'终端 · .home', desktop:true });
+    if (!win) return null;
+    this.desktop = win.content;
+    win.content.win = win;
+    win.isDesktop = true;
+    /* 先按普通窗口建出来（这样 restoreRect 记的是普通尺寸），再进隐藏式最大化：
+     * 从胶囊还原时回到的是一个正常大小的窗口，而不是铺满屏幕。 */
+    WindowManager.maxMode(win.id, 'hidden');
     return this.desktop;
   },
 
@@ -981,7 +980,13 @@ const TerminalManager = {
     const s = new TerminalSession(opts);
     this.sessions.add(s);
     const oldDispose = s.dispose.bind(s);
-    s.dispose = () => { this.sessions.delete(s); oldDispose(); };
+    s.dispose = () => {
+      this.sessions.delete(s);
+      /* 启动时那扇窗口也是普通窗口：它被关掉之后 desktop 必须跟着失效，
+       * 否则顶栏按键、execInDesktop 会往一个已经 dispose 的会话里写东西。 */
+      if (this.desktop === s) this.desktop = null;
+      oldDispose();
+    };
     return s;
   },
 
@@ -1005,12 +1010,12 @@ function saveHistoryList(list) {
   try { localStorage.setItem('ht.history', JSON.stringify(list.slice(-500))); } catch (e) {}
 }
 
-/* ---------------------------------------------------------------- 底层终端退出 */
+/* ---------------------------------------------------------------- 退出页面（关掉最后一个窗口） */
 let exiting = false;
 function exitDesktop() {
   if (exiting) return;
   exiting = true;
-  toast('终端已退出，正在返回上一级……');
+  toast('所有窗口都关了：这个页面准备退出……');
   setTimeout(() => {
     // 只有「确实从另一个真实页面点进来」时才回退。
     // 直接打开（双击文件 / 新标签粘贴地址）时 referrer 为空、history 里只有一条，
@@ -1059,6 +1064,9 @@ const WIN_DOT_SVG = {
      '<path d="M 39.945204 74.342465 H 169.39726 V 209.71233 c 0,0 7.76712,-87.28767 -129.452056,-135.369865 z"/></g></svg>',
   x: '<svg viewBox="0 0 40 40"><g transform="translate(-1.710 -11.983) scale(.21997)" fill="#000" opacity=".58">' +
      '<path d="M 32.3 86.3 C 76.86 132.90 78.26 151.82 41.1 204.5 C 93.50 175.78 113.34 175.56 165.10 203.1 C 121.96 156.77 121.92 139.09 164.9 92.6 C 108.11 113.12 86.89 112.12 32.3 86.3 Z"/></g></svg>',
+  /* 最后一个窗口的红色按钮：三角朝左，意思是「这一下会把整个页面带走」 */
+  exit: '<svg viewBox="0 0 40 40" class="ic-exit"><g fill="#000" opacity=".62">' +
+     '<path d="M 30 6 L 8 20 L 30 34 Z"/></g></svg>',
   b: '<svg viewBox="0 0 40 40"><g fill="#000" opacity=".58">' +
      '<path d="M 11.94 7 H 22.40 V 15.61 H 16.07 V 24.31 H 11.94 Z"/>' +
      '<path fill-rule="evenodd" d="M 16.87 15.61 V 33 H 28.06 V 15.61 Z M 16.87 16.41 H 22.40 V 24.21 H 16.87 Z"/></g></svg>'
@@ -1195,11 +1203,11 @@ const WindowManager = {
 
     const id = opts.id || uid('w');
     const TYPE_TITLES = { browser:'浏览器', files:'文件', shell:'终端', python:'Python', agent:'HarTMLes', editor:'编辑器', about:'关于', html:'窗口',
-      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', htmlapp:'HTML 编辑器', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
+      calc:'计算器', data:'数据转换', color:'调色盘', markdown:'Markdown', htmlapp:'HTML 编辑器', bezier:'贝塞尔动效', shot:'截图', timer:'计时器', image:'看图修图', urlhash:'链接即状态',
       recorder:'录音机', geo:'定位', view3d:'3D 视图', audio:'音频播放', hsb2:'hsb2 · FreeBSD',
       applist:'所有应用', hanzi:'汉字码 · Hex ↔ Hanzi' };
     const TYPE_SIZE = { browser:[920, 620], files:[820, 540], shell:[780, 480], python:[820, 540], agent:[880, 600], editor:[860, 600], about:[560, 420],
-      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], htmlapp:[1040, 660], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
+      calc:[360, 560], data:[720, 600], color:[660, 560], markdown:[900, 600], htmlapp:[1040, 660], bezier:[860, 560], shot:[720, 620], timer:[420, 560], image:[940, 660], urlhash:[700, 620],
       recorder:[470, 560], geo:[470, 580], view3d:[760, 580], audio:[740, 560], hsb2:[820, 600],
       applist:[720, 560], hanzi:[880, 640] };
     opts.title = opts.title || TYPE_TITLES[opts.type] || '窗口';
@@ -1274,9 +1282,13 @@ const WindowManager = {
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
-    /* 双击标题条 = 最大化 / 还原。色点与工具按钮不算标题（点两下别把窗口放大）。 */
-    bar.addEventListener('dblclick', e => {
-      if (e.target.closest('.win-dot, .win-tools')) return;
+    /* 双击标题条 = 最大化 / 还原。挂在窗口根上而不是 title 上：
+     * 常规最大化时 .win-screen 会铺到 top:0，把标题条盖在下面，
+     * 挂在 title 上的 dblclick 就收不到事件——「最大化之后双击取消不了」就是这个。 */
+    el.addEventListener('dblclick', e => {
+      if (e.target.closest('.win-dot, .win-tools, input, textarea, select, button, .xterm')) return;
+      const r = el.getBoundingClientRect();
+      if (e.clientY - r.top > (win._hh || 56) + 2) return;   // 只有顶部那条带子算标题
       this.toggleMax(id);
     });
     this._bindTitleTip(win);
@@ -1376,6 +1388,7 @@ const WindowManager = {
             onCwd:(p) => { win.cwd = p; if (win.type === 'shell') this.setTitle(win.id, '终端 · ' + p); },
             onExit:() => { this.close(win.id); },
           });
+          win.content.win = win;
           break;
         }
         case 'python': {
@@ -1395,6 +1408,7 @@ const WindowManager = {
         case 'color': win.content = new ColorApp(win.body, opts); break;
         case 'markdown': win.content = new MdApp(win.body, opts); break;
         case 'htmlapp': win.content = new HtmlApp(win.body, opts); break;
+        case 'bezier': win.content = new window.BezierApp(win.body, opts); break;
         case 'shot': win.content = new ShotApp(win.body, opts); break;
         case 'timer': win.content = new TimerApp(win.body, opts); break;
         case 'image': win.content = new ImageApp(win.body, opts); break;
@@ -1424,11 +1438,27 @@ const WindowManager = {
   },
 
   _startDrag(e, win) {
-    if (e.button !== 0 || win.maximized) return;
+    if (e.button !== 0) return;
     if (e.isPrimary === false) return;
     if (e.target.closest('.win-dot') || e.target.closest('.win-tools')) return;
     const bar = e.currentTarget;
     const pid = e.pointerId;
+
+    /* 最大化 / 隐藏式也能一把拖下来：按指针位置还原成普通窗口再跟手。
+     * 以前这里遇到 maximized 直接 return，于是「最大化之后拖到左下角换布局」
+     * 永远没反应——用户看到的就是「拖到左/右下角没法启动预设布局」。 */
+    const mode0 = win.mode || (win.maximized ? 'max' : 'normal');
+    if (mode0 !== 'normal') {
+      const d0 = deskBox();
+      const rr = win.restoreRect || { x:40, y:24, w:Math.min(760, d0.w - 40), h:Math.min(520, d0.h - 60) };
+      const nx0 = Math.round(e.clientX - d0.left - rr.w / 2);
+      const ny0 = Math.round(e.clientY - d0.top - 18);
+      this.maxMode(win.id, 'normal');
+      win.el.style.left = clamp(nx0, 90 - rr.w, d0.w - 90) + 'px';
+      win.el.style.top = clamp(ny0, 0, Math.max(0, d0.h - 60)) + 'px';
+      win.el.style.width = rr.w + 'px';
+      win.el.style.height = rr.h + 'px';
+    }
 
     /* 关键技术：在标题栏上 setPointerCapture。
      * 不捕获时，指针一旦移到窗口内容区（尤其是 iframe 上），pointermove 就派发给
@@ -1487,7 +1517,10 @@ const WindowManager = {
       const nearB = py >= box.h - BOTTOM;
       /* 底部中间：指针落在画布中段，且不贴左右（贴角另有语义） */
       const midX = !nearL && !nearR && px > box.w * 0.25 && px < box.w * 0.75;
-      if (nearB && midX) snapPos = 'min';
+      /* 只剩这一扇窗时，「拖到底 = 最小化」要变成「拖到底 = 不许」：
+       * 框变灰，松手弹回**拖动前**的位置（不是松手的位置）。 */
+      const solo = this.windows.size <= 1;
+      if (nearB && midX) snapPos = solo ? 'minsolo' : 'min';
       else if (nearT && nearL) snapPos = 'tl';
       else if (nearT && nearR) snapPos = 'tr';
       else if (nearT) snapPos = 'full';
@@ -1523,7 +1556,10 @@ const WindowManager = {
       if (moved) { win.el.style.left = nx + 'px'; win.el.style.top = ny + 'px'; }
       win.el.style.transform = '';
       if (snapEl) snapEl.style.display = 'none';
-      if (snapPos === 'min') {
+      if (snapPos === 'minsolo') {
+        win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
+        if (window.toast) toast('最后一个窗口不能最小化：关掉它等于退出整个页面', 'warn');
+      } else if (snapPos === 'min') {
         /* 先放回原位再收进 Dock：恢复时才回到用户原本的位置，而不是拖到底部的位置 */
         win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
         this.minimize(win.id);
@@ -1628,6 +1664,14 @@ const WindowManager = {
       win.el.style.zIndex = ++this.z;
       return;
     }
+    /* 切窗口时把「上一个窗口里正在编辑的输入框」放掉。
+     * 不这么做的话，手机上会一直挂着那块键盘：开计时器、开文件管理器，
+     * 输入法还在耳边——因为焦点根本没离开上一个终端的 helper textarea。 */
+    const act = document.activeElement;
+    if (act && act !== document.body && !win.el.contains(act) &&
+        (act.tagName === 'INPUT' || act.tagName === 'TEXTAREA' || act.isContentEditable)) {
+      try { act.blur(); } catch (e) {}
+    }
     this._focusedId = id;
     for (const w of this.windows.values()) w.el.classList.remove('focus');
     win.el.classList.add('focus');
@@ -1647,6 +1691,12 @@ const WindowManager = {
   minimize(id) {
     const w = this.windows.get(id);
     if (!w || w.minimized) return;
+    /* 只剩这一扇窗时不能最小化：收了它页面就空了，而空白页面是不允许的。
+     * 规则对所有窗口一致，不做例外。 */
+    if (this.windows.size <= 1) {
+      if (window.toast) toast('最后一个窗口不能最小化（关掉它等于退出整个页面）', 'warn');
+      return;
+    }
     try { DotMenu.close(); } catch (e) {}
     w.minimized = true;
     /* 先算 Dock 位置再藏：_syncDock 之后图标位置才准，
@@ -1830,12 +1880,16 @@ const WindowManager = {
     if (w.content && w.content.dispose) { try { w.content.dispose(); } catch (e) {} }
     if (w._ro) { try { w._ro.disconnect(); } catch (e) {} }
     this.windows.delete(id);
+    const lastOne = this.windows.size === 0;
     const wasImmersive = w.mode === 'immersive';
     if (w.mode === 'hidden' || w.mode === 'immersive') w.mode = 'normal';
     if (wasImmersive) this._exitBrowserFS();
     this._syncModeChrome();
     this._syncDock();
     this._animOut(w, () => { try { w.el.remove(); } catch (e) {} });
+    /* 最后一扇窗关上 = 这个页面「退出」。不是留在桌面上看空白——
+     * 桌面空白等于没有系统，语义上和终端里敲 exit 完全一致。 */
+    if (lastOne) setTimeout(() => exitDesktop(), 120);
   },
   closeFocused() {
     const w = this.focused();
@@ -1906,6 +1960,7 @@ const WindowManager = {
   sendDown(id) {
     const w = this.windows.get(id);
     if (!w) return false;
+    if (this.windows.size <= 1) { if (window.toast) toast('只有一个窗口，没有可换层的对象', 'warn'); return false; }
     const z = +(w.el.style.zIndex || 0);
     let below = null;
     for (const o of this.windows.values()) {
@@ -1939,7 +1994,9 @@ const WindowManager = {
       tl:{ x:0, y:0, w:hw, h:hh }, tr:{ x:hw, y:0, w:hw, h:hh },
       bl:{ x:0, y:hh, w:hw, h:hh }, br:{ x:hw, y:hh, w:hw, h:hh },
       /* 底部中间：不是一块吸附区域，只是「松手就最小化」的提示框 */
-      min:{ x:Math.round(d.w * 0.29), y:Math.max(0, d.h - 150), w:Math.round(d.w * 0.42), h:88 }
+      min:{ x:Math.round(d.w * 0.29), y:Math.max(0, d.h - 150), w:Math.round(d.w * 0.42), h:88 },
+      /* 单窗口时同一个位置，只是配色变灰（CSS [data-pos=minsolo]） */
+      minsolo:{ x:Math.round(d.w * 0.29), y:Math.max(0, d.h - 150), w:Math.round(d.w * 0.42), h:88 }
     };
     return map[pos] || null;
   },
@@ -2015,6 +2072,7 @@ const WindowManager = {
   sendToBack(id) {
     const w = this.windows.get(id);
     if (!w) return false;
+    if (this.windows.size <= 1) { if (window.toast) toast('只有一个窗口，它已经在最底层了', 'warn'); return false; }
     const others = [...this.windows.values()].filter(x => x.id !== id && !x.minimized && x.el.isConnected);
     if (!others.length) {
       if (window.toast) toast('已经是最底层：没有其它窗口可以露出', 'warn');
@@ -2050,11 +2108,17 @@ const WindowManager = {
     document.body.classList.toggle('dock-folded', folded);
     const wins = [...this.windows.values()];
     const focused = this.focused();
-    if (!wins.length) {
+    this._syncSolo(wins);
+    /* 窗口总数 ≤ 1 时 Dock 直接不显示——不是「隐藏」，是按规则不存在：
+     * 一个窗口没什么可切换的，而最后一个窗口又不许最小化，Dock 没有任何用处。 */
+    const solo = wins.length <= 1;
+    document.body.classList.toggle('dock-solo', solo);
+    if (!wins.length || solo) {
       dock.innerHTML = '';
       if (wrap) wrap.hidden = true;
       if (pill) pill.hidden = true;
       this._syncWinList();
+      this._syncAppList();
       return;
     }
     /* 折叠后连把手一起收走，只留底部药丸 */
@@ -2066,18 +2130,34 @@ const WindowManager = {
       if (n) n.textContent = String(wins.length);
     }
     const iconOf = (t) => svgIcon(t === 'browser' ? 'browser' : t === 'agent' ? 'agent' : t === 'files' ? 'files' : t === 'python' ? 'python' : t === 'editor' ? 'editor' : 'term');
-    dock.innerHTML = `<button class="dock-item ${!focused ? 'focus' : ''}" data-desk="1" title="桌面终端">${svgIcon('term')}<b>desktop</b><span>jshel</span></button><div class="dock-sep"></div>` +
-      wins.map(w => `<button class="dock-item ${w.minimized ? 'min' : ''} ${focused && focused.id === w.id ? 'focus' : ''}" data-win="${esc(w.id)}" title="${esc(w.title)}">
+    dock.innerHTML = wins.map(w => `<button class="dock-item ${w.minimized ? 'min' : ''} ${focused && focused.id === w.id ? 'focus' : ''}" data-win="${esc(w.id)}" title="${esc(w.title)}">
         <b>${iconOf(w.type)}</b><span>${esc(w.title)}</span></button>`).join('');
     $$('[data-win]', dock).forEach(b => {
       b.onclick = () => this.toggleMin(b.dataset.win);
       this._bindDockMenu(b);
     });
-    const d = $('[data-desk]', dock);
-    if (d) d.onclick = () => { for (const w of wins) this.minimize(w.id); };
     this._bindDockFold();
     this._syncWinList();
     this._syncAppList();
+  },
+
+  /* 只有一个窗口时：红点变「退出」三角，黄/蓝点变灰（CSS 负责），
+   * 菜单里对应的条目也置灰。每次窗口增减都刷一次，状态永远跟着实际同步。 */
+  _syncSolo(wins) {
+    const solo = (wins || [...this.windows.values()]).length <= 1;
+    for (const w of this.windows.values()) {
+      if (w.el.classList.contains('solo') === solo) continue;
+      w.el.classList.toggle('solo', solo);
+      const c = $('.win-dot.c', w.el);
+      if (c) {
+        c.innerHTML = solo ? WIN_DOT_SVG.exit : WIN_DOT_SVG.c;
+        c.title = solo ? '退出：关掉最后一个窗口，整个页面随之退出' : '强制关闭';
+      }
+      const m = $('.win-dot.m', w.el);
+      if (m) m.title = solo ? '最后一个窗口不能最小化' : '最小化';
+      const b = $('.win-dot.b', w.el);
+      if (b) b.title = solo ? '最后一个窗口不能改变层级' : '置于底层';
+    }
   },
 
   /* Dock 图标：单击切换最小化（原有），长按 550ms 弹四钮框。
@@ -2178,6 +2258,7 @@ const DotMenu = {
       `<button class="win-dot m" data-a="min" aria-label="最小化">${WIN_DOT_SVG.m}</button>` +
       `<button class="win-dot x" data-a="max" aria-label="最大化">${WIN_DOT_SVG.x}</button>` +
       `<button class="win-dot b" data-a="back" aria-label="置于底层">${WIN_DOT_SVG.b}</button>`;
+    if (WindowManager.windows.size <= 1) m.classList.add('solo');
     document.body.appendChild(m);
     placePopover(m, anchor, 9);
 
@@ -2185,6 +2266,11 @@ const DotMenu = {
       const b = e.target.closest('[data-a]');
       if (!b) return;
       const a = b.dataset.a;
+      const solo = WindowManager.windows.size <= 1;
+      if (solo && (a === 'min' || a === 'back')) {
+        if (window.toast) toast(a === 'min' ? '最后一个窗口不能最小化' : '最后一个窗口不能改变层级', 'warn');
+        return;              // 不关框：用户还能改主意选别的
+      }
       this.close();
       if (a === 'close') WindowManager.close(id);
       else if (a === 'min') { if (w.minimized) WindowManager.restore(id); else WindowManager.minimize(id); }
@@ -2198,10 +2284,10 @@ const DotMenu = {
      * 只是锚点从色点换成了框里的圆钮。 */
     $$('.win-dot[data-a]', m).forEach(btn => bindLongPress(btn, () => {
       const a = btn.dataset.a;
-      /* 二级框加一枚小尖角：形状和一级菜单略有不同，但 DOM 与内容完全复用。 */
+      /* 二级框加一枚小尖角：形状和一级菜单略有不同，但 DOM 与内容完全复用。
+       * **一级框不关**——用户要的是「两个都在」，直到点别处或真的选了一项。 */
       const sub = WinMenu.open(btn, id, a);
-      if (sub) sub.classList.add('lv2');
-      this.close();
+      if (sub) { sub.classList.add('lv2'); WinMenu._parent = this; }
     }));
     this.el = m; this.anchor = anchor; this.winId = id;
     setTimeout(() => {
@@ -2211,8 +2297,10 @@ const DotMenu = {
     }, 0);
   },
   _outside(e) {
-    if (DotMenu.el && !DotMenu.el.contains(e.target) &&
-        !(DotMenu.anchor && DotMenu.anchor.contains(e.target))) DotMenu.close();
+    if (!DotMenu.el) return;
+    /* 点二级菜单不算「点外面」——它就是从这一级长出来的 */
+    if (typeof WinMenu !== 'undefined' && WinMenu.el && WinMenu.el.contains(e.target)) return;
+    if (!DotMenu.el.contains(e.target) && !(DotMenu.anchor && DotMenu.anchor.contains(e.target))) DotMenu.close();
   },
   _esc(e) { if (e.key === 'Escape') DotMenu.close(); },
   _close() { DotMenu.close(); },
@@ -2248,13 +2336,15 @@ const WinMenu = {
 
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-snap]');
-      if (b) { WindowManager.snap(id, b.dataset.snap); this.close(); return; }
+      if (b) { this.closeAll(); WindowManager.snap(id, b.dataset.snap); return; }
       const md = e.target.closest('[data-mode]');
-      if (md) { this.close(); WindowManager.maxMode(id, md.dataset.mode); return; }
+      if (md) { this.closeAll(); WindowManager.maxMode(id, md.dataset.mode); return; }
       const c = e.target.closest('[data-cmd]');
       if (!c) return;
       const cmd = c.dataset.cmd;
-      this.close();
+      /* 置灰的条目：不执行、不关框，只说明原因 */
+      if (c.disabled || c.classList.contains('is-off')) return;
+      this.closeAll();
       if (cmd === 'close-type') WindowManager.closeType(w.type);
       else if (cmd === 'close-one') WindowManager.close(id);
       else if (cmd === 'down') WindowManager.sendDown(id);
@@ -2271,14 +2361,25 @@ const WinMenu = {
     this.el = m;
     this.winId = id;
     this._dot = dot;
-    return m;
+    /* 这里以前 return 在 addEventListener 前面 —— 监听器永远不会挂上，
+     * 于是「点外面不关」「Esc 不关」两个都失效。 */
     setTimeout(() => {
       document.addEventListener('pointerdown', this._outside, true);
       document.addEventListener('keydown', this._esc, true);
     }, 0);
+    return m;
+  },
+  /* 选中一项：二级框和它下面的一级框一起收 */
+  closeAll() {
+    const p = this._parent;
+    this._parent = null;
+    this.close();
+    if (p) { try { p.close(); } catch (e) {} }
   },
   _html(w, act) {
     const t = esc(w.type);
+    const solo = WindowManager.windows.size <= 1;
+    const off = (why) => solo ? ` is-off" title="${esc(why)}` : '';
     if (act === 'close') {
       const n = [...WindowManager.windows.values()].filter(x => x.type === w.type).length;
       return `<div class="winmenu__title">红色 · 强制退出</div>
@@ -2288,8 +2389,9 @@ const WinMenu = {
     if (act === 'min') {
       const same = [...WindowManager.windows.values()].filter(x => x.type === w.type && !x.minimized).length;
       return `<div class="winmenu__title">黄色 · 最小化</div>
-        <button class="stack" data-cmd="min-one"><span>收进 Dock</span><em>点 Dock 上的图标再回来</em></button>
-        <button class="stack" data-cmd="min-type"><span>同类一起收（${same}）</span><em>把所有「${t}」窗口都最小化</em></button>`;
+        ${solo ? '<div class="wm-note">这是最后一个窗口：收了它页面就空了，所以不允许最小化。</div>' : ''}
+        <button class="stack${off('最后一个窗口不能最小化')}" data-cmd="min-one" ${solo ? 'disabled' : ''}><span>收进 Dock</span><em>点 Dock 上的图标再回来</em></button>
+        <button class="stack${off('最后一个窗口不能最小化')}" data-cmd="min-type" ${solo ? 'disabled' : ''}><span>同类一起收（${same}）</span><em>把所有「${t}」窗口都最小化</em></button>`;
     }
     if (act === 'max') {
       const cur = w.mode || (w.maximized ? 'max' : 'normal');
@@ -2312,11 +2414,15 @@ const WinMenu = {
         ${cur !== 'normal' ? '<button class="stack" data-mode="normal"><span>还原窗口</span><em>回到最大化之前的位置和大小</em></button>' : ''}`;
     }
     return `<div class="winmenu__title">蓝色 · 层叠</div>
-      <button class="stack" data-cmd="bottom"><span>压到最底层</span><em>蓝点单击就是这个（默认行为）</em></button>
-      <button class="stack" data-cmd="down"><span>仅下移一层</span><em>只和紧挨着的那扇窗换个位置</em></button>`;
+      ${solo ? '<div class="wm-note">只有一个窗口，没有可换层的对象。</div>' : ''}
+      <button class="stack${off('只有一个窗口')}" data-cmd="bottom" ${solo ? 'disabled' : ''}><span>压到最底层</span><em>蓝点单击就是这个（默认行为）</em></button>
+      <button class="stack${off('只有一个窗口')}" data-cmd="down" ${solo ? 'disabled' : ''}><span>仅下移一层</span><em>只和紧挨着的那扇窗换个位置</em></button>`;
   },
   _outside(e) {
-    if (WinMenu.el && !WinMenu.el.contains(e.target) && !(WinMenu._dot && WinMenu._dot.contains(e.target))) WinMenu.close();
+    if (!WinMenu.el) return;
+    /* 点在「一级框」里不算外面：那里的每个圆钮都还能再长出一层 */
+    if (typeof DotMenu !== 'undefined' && DotMenu.el && DotMenu.el.contains(e.target)) return;
+    if (!WinMenu.el.contains(e.target) && !(WinMenu._dot && WinMenu._dot.contains(e.target))) WinMenu.close();
   },
   _esc(e) { if (e.key === 'Escape') WinMenu.close(); },
   close() {

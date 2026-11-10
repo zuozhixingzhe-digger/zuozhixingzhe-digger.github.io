@@ -679,7 +679,7 @@ class ShotApp {
     try {
       const bytes = ToolKit.dataUrlBytes(this.url);
       const p = uniquePathIn('.home', name);
-      await FS.write(p, bytes, { mime: ToolKit.mimeOf(this.url), hint: name, origin:'shot' });
+      await Spot.write(p, bytes, { mime: ToolKit.mimeOf(this.url), type:'image', hint: name, origin:'shot' });
       toast('已保存到 ' + p);
     } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
   }
@@ -843,6 +843,22 @@ class MdApp {
         <button class="tl-btn sm" data-a="md">下载 .md</button>
         <span class="tl-note" data-f="st"></span>
       </div>
+      <!-- 格式栏：Markdown 没有快捷键是没法用的。Ctrl/⌘ + B/I/U 与这里的按钮
+           走同一个 applyFmt()，按钮上写的就是快捷键。 -->
+      <div class="md-tb" data-f="tb">
+        <button data-fmt="b" title="加粗（Ctrl/⌘ + B）"><b>B</b></button>
+        <button data-fmt="i" title="斜体（Ctrl/⌘ + I）"><i>I</i></button>
+        <button data-fmt="u" title="下划线（Ctrl/⌘ + U，输出 <u>）"><u>U</u></button>
+        <button data-fmt="s" title="删除线（Ctrl/⌘ + Shift + X）"><s>S</s></button>
+        <button data-fmt="code" title="行内代码（Ctrl/⌘ + 反引号）"><span style="font-family:var(--mono)">&lt;/&gt;</span></button>
+        <span class="md-tb__sep"></span>
+        <button data-fmt="h2" title="二级标题">H2</button>
+        <button data-fmt="ul" title="无序列表">• 列表</button>
+        <button data-fmt="ol" title="有序列表">1. 列表</button>
+        <button data-fmt="quote" title="引用（Ctrl/⌘ + Shift + .）">❝</button>
+        <button data-fmt="link" title="链接（Ctrl/⌘ + K）">🔗</button>
+        <button data-fmt="hr" title="分隔线">—</button>
+      </div>
       <div class="tl-body" style="padding:0">
         <div class="tl-split" data-f="split" style="padding:9px">
           <div class="tl-pane"><textarea class="tl-in" data-f="src" spellcheck="false" placeholder="# 在这里写 Markdown&#10;&#10;左边编辑，右边实时渲染。也可以「打开」.home 里的 .md 文件。"></textarea></div>
@@ -855,9 +871,21 @@ class MdApp {
     this.split = $('[data-f="split"]', this.el);
     this._t = null;
     this.src.addEventListener('input', () => this.schedule());
+    /* Ctrl/⌘ + B/I/U/K/`/Shift+X/Shift+. —— 都在 textarea 上拦，避免浏览器
+     * 把 Ctrl+B 当「打开书签」之类的默认动作。 */
+    this.src.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      const map = { b:'b', i:'i', u:'u', k:'link', '`':'code' };
+      if (map[k]) { e.preventDefault(); this.applyFmt(map[k]); return; }
+      if (k === 'x' && e.shiftKey) { e.preventDefault(); this.applyFmt('s'); return; }
+      if (k === '.' && e.shiftKey) { e.preventDefault(); this.applyFmt('quote'); return; }
+      if (k === 's') { e.preventDefault(); this.saveFile(); return; }
+    });
     this.el.addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b) return;
+      if (b.dataset.fmt) { this.applyFmt(b.dataset.fmt); return; }
       if (b.dataset.mode) { this.setMode(b.dataset.mode); return; }
       const a = b.dataset.a;
       if (a === 'open') this.openFile();
@@ -875,6 +903,54 @@ class MdApp {
     r.style.display = m === 'edit' ? 'none' : '';
     this.split.style.gridTemplateColumns = m === 'split' ? '1fr 1fr' : '1fr';
     this.render();
+  }
+  /* 给选区套标记。没有选区时插一对并把光标放中间（链接是 [文字](url)）。
+   * 行级格式（标题/列表/引用）按行加前缀，已经是那个前缀就取消（再点一次撤销）。 */
+  applyFmt(kind) {
+    const ta = this.src;
+    const v = ta.value, s0 = ta.selectionStart, e0 = ta.selectionEnd;
+    const sel = v.slice(s0, e0);
+    const wrap = (l, r, dflt) => {
+      const inner = sel || dflt || '';
+      const out = l + inner + r;
+      ta.value = v.slice(0, s0) + out + v.slice(e0);
+      const at = sel ? s0 + out.length : s0 + l.length + inner.length + r.length;
+      ta.selectionStart = ta.selectionEnd = at;
+      if (!sel) { ta.selectionStart = s0 + l.length; ta.selectionEnd = s0 + l.length + inner.length; }
+    };
+    const linePrefix = (pre) => {
+      const a = v.lastIndexOf('\n', s0 - 1) + 1;
+      let b = v.indexOf('\n', e0 - 1);
+      if (b < 0) b = v.length;
+      const block = v.slice(a, b);
+      const lines = block.split('\n');
+      const has = lines.every(x => x.startsWith(pre));
+      const next = lines.map(x => has ? x.slice(pre.length) : pre + x).join('\n');
+      ta.value = v.slice(0, a) + next + v.slice(b);
+      ta.selectionStart = a; ta.selectionEnd = a + next.length;
+    };
+    if (kind === 'b') wrap('**', '**', '加粗文字');
+    else if (kind === 'i') wrap('*', '*', '斜体文字');
+    else if (kind === 'u') wrap('<u>', '</u>', '下划线文字');
+    else if (kind === 's') wrap('~~', '~~', '删除的文字');
+    else if (kind === 'code') wrap('`', '`', 'code');
+    else if (kind === 'link') {
+      const text = sel || '链接文字';
+      const out = '[' + text + '](https://)';
+      ta.value = v.slice(0, s0) + out + v.slice(e0);
+      ta.selectionStart = s0 + out.length - 1;
+      ta.selectionEnd = s0 + out.length - 1;
+    }
+    else if (kind === 'h2') linePrefix('## ');
+    else if (kind === 'ul') linePrefix('- ');
+    else if (kind === 'ol') linePrefix('1. ');
+    else if (kind === 'quote') linePrefix('> ');
+    else if (kind === 'hr') {
+      ta.value = v.slice(0, s0) + '\n\n---\n\n' + v.slice(e0);
+      ta.selectionStart = ta.selectionEnd = s0 + 7;
+    }
+    ta.focus();
+    this.schedule();
   }
   setDoc(text) {
     this.src.value = text;
@@ -920,7 +996,7 @@ class MdApp {
       p = uniquePathIn('.home', spotEscape(name));
     }
     try {
-      await FS.write(p, this.src.value, { mime:'text/markdown;charset=utf-8', hint:baseName(p) });
+      await Spot.write(p, this.src.value, { mime:'text/markdown;charset=utf-8', type:'text', hint:baseName(p) });
       this.path = p;
       toast('已保存 ' + p);
     } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
@@ -957,6 +1033,7 @@ const APP_DESC = {
   hsb2:'WASM 里的 FreeBSD 12.0（可选）', applist:'所有应用，就是这一页',
   hanzi:'十六进制 ↔ 汉字，三种方案自动识别',
   htmlapp:'代码区用 canvas 自绘，右侧 iframe 老实渲染（不过滤脚本）。',
+  bezier:'拖两个控制点设计 cubic-bezier，小球立刻按这个节奏跑。',
   timer:'秒表：计次、暂停、厘秒显示；倒计时：到点响三声。最小化后仍在计时。',
 };
 

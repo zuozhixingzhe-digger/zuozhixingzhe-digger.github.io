@@ -77,6 +77,9 @@ const RPC = {
       case 'fs.sptx': return await FS.sptx(a[0], a[1] || []);
       case 'fs.sptd': return await FS.sptd(a[0]);
       case 'fs.sptm': return await FS.sptm(a[0], a[1], a[2] || {});
+      case 'fs.meta.read': return await FS.sptmetaread(a[0]);
+      case 'fs.meta.write': return await FS.sptmetawrite(a[0], a[1] || {});
+      case 'fs.caps': return FS.caps(a[0]);
       case 'fs.escape': return spotEscape(a[0]);
       case 'fs.unescape': return spotUnescape(a[0]);
       case 'fs.exportName': return spotExportName(a[0]);
@@ -400,7 +403,12 @@ const Drawer = {
     };
 
     $('#btnClearHist').onclick = () => { saveHistoryList([]); toast('终端历史已清空'); this.refresh(); };
-    $('#btnRestartTerm').onclick = () => { TerminalManager.bootDesktop(); toast('底层终端已重启'); };
+    $('#btnRestartTerm').onclick = () => {
+      const d = TerminalManager.desktop;
+      if (d && d.win) WindowManager.close(d.win.id);
+      TerminalManager.desktop = null;
+      setTimeout(() => { TerminalManager.bootDesktop(); toast('终端窗口已重开'); }, 260);
+    };
     $('#btnOpenFiles').onclick = () => WindowManager.open({ type:'files' });
     if ($('#btnAllApps')) $('#btnAllApps').onclick = () => { this.close(); WindowManager.open({ type:'applist' }); };
     $('#btnExportFs').onclick = () => this.exportFs();
@@ -456,7 +464,12 @@ const Drawer = {
   },
   open(section) {
     this.opened = true;
-    $('#drawer').classList.add('on');
+    /* 上一次可能是「划到一半被关掉」：先把内联的 transform 清掉，
+     * 否则再打开时抽屉会停在屏幕外面。 */
+    const dr = $('#drawer');
+    dr.style.transition = ''; dr.style.transform = '';
+    dr.classList.remove('dragging');
+    dr.classList.add('on');
     $('#drawer').setAttribute('aria-hidden', 'false');
     $('#drawer-overlay').classList.add('on');
     this.syncControls();
@@ -484,104 +497,108 @@ const Drawer = {
   /* 右滑关闭：抽屉跟手移动，松手按「位移 + 速度」决定关还是弹回。
    * 用 pointer 事件而不是 touch，鼠标拖拽同样生效（桌面上也符合直觉）。
    * 抽屉本身是 touch-action:pan-y，所以横向手势不会被浏览器拿去滚页面。 */
+  /* 抽屉的滑动关闭。
+   *
+   * 之前有两个要命的问题：
+   *   ① 用 `dr.__swipe = true` 当「已绑定」的哨兵，而吞 click 也读同一个字段，
+   *      于是**从绑定那一刻起所有 click 都被吞掉**——抽屉里的按钮全按不动。
+   *   ② 方向判定太严（横向要压过纵向 1.15 倍，纵移 10px 就直接放弃），
+   *      真实手指总是带点纵向抖动，于是「划不动 / 一闪就弹回去」。
+   *
+   * 现在：绑定哨兵叫 __swipeBound，吞 click 用时间戳；方向只要求「横着比竖着多」；
+   * 一旦确认横向就抓指针，之后每一帧只写 transform，松手按位移与速度决定去留。
+   */
   _bindSwipe() {
     const dr = $('#drawer');
     const ov = $('#drawer-overlay');
-    if (!dr || dr.__swipe) return;
-    dr.__swipe = true;
+    if (!dr || dr.__swipeBound) return;
+    dr.__swipeBound = true;
 
-    let active = false, engaged = false;
+    let active = false, engaged = false, pid = null;
     let sx = 0, sy = 0, dx = 0, lastX = 0, lastT = 0, v = 0, w = 0;
 
     const reset = () => {
-      active = engaged = false;
+      active = engaged = false; pid = null;
+      dr.classList.remove('dragging');
       dr.style.transition = '';
       dr.style.transform = '';
       ov.style.transition = '';
       ov.style.opacity = '';
-      dr.classList.remove('dragging');
     };
 
     dr.addEventListener('pointerdown', (e) => {
       if (!this.opened) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      /* 输入控件 / 滑杆 / 自己声明不参与拖拽的，放过 */
+      /* 输入控件、滑杆、明确标注不参与拖拽的区域，放过 */
       if (e.target.closest('input,textarea,select,[data-noswipe]')) return;
       active = true; engaged = false;
       sx = lastX = e.clientX; sy = e.clientY;
       dx = 0; v = 0; lastT = performance.now();
-      w = dr.getBoundingClientRect().width || 380;
+      w = dr.getBoundingClientRect().width || 360;
     });
 
     dr.addEventListener('pointermove', (e) => {
       if (!active) return;
       const mx = e.clientX - sx, my = e.clientY - sy;
       if (!engaged) {
-        /* 先看方向：竖着划是滚列表，横着划才是关抽屉 */
-        if (Math.abs(mx) < 7 || Math.abs(mx) < Math.abs(my) * 1.15) {
-          if (Math.abs(my) > 10) active = false;   /* 判定为纵向滚动，这一轮不再管 */
+        /* 还没确认方向：竖着多就是在滚列表，横着多才接管 */
+        if (Math.abs(mx) < 6) {
+          if (Math.abs(my) > 14) active = false;
           return;
         }
-        engaged = true;
+        if (Math.abs(my) > Math.abs(mx)) { active = false; return; }
+        engaged = true; pid = e.pointerId;
         dr.classList.add('dragging');
         dr.style.transition = 'none';
         ov.style.transition = 'none';
-        try { dr.setPointerCapture(e.pointerId); } catch (err) {}
+        try { dr.setPointerCapture(pid); } catch (err) {}
       }
       e.preventDefault();
-      dx = mx > 0 ? mx : mx * 0.22;          /* 往左只给一点点阻尼，别拉出空白 */
+      dx = mx > 0 ? mx : mx * 0.18;
       const now = performance.now();
       const dt = now - lastT;
       if (dt > 0) v = (e.clientX - lastX) / dt;
       lastX = e.clientX; lastT = now;
-      dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
-      ov.style.opacity = String(Math.max(0, 1 - dx / w * 0.92));
+      dr.style.transform = 'translate3d(' + dx.toFixed(1) + 'px,0,0)';
+      ov.style.opacity = String(Math.max(0, 1 - dx / w * 0.9));
     }, { passive: false });
 
     const up = () => {
       if (!active) return;
       if (!engaged) { active = false; return; }
-      const p = dx / w;
-      /* 松手阈值比原来松一档：位移过 26% 就关，快速轻扫（>0.35px/ms）只要 8% 也算。
-       * 以前 32% + 0.5，手指划得稍微快一点反而被判成「不够远」，弹回去——
-       * 用户看到的就是「闪一下闪回初始态」。 */
-      const far = p > 0.26 || (v > 0.35 && p > 0.08);
-      active = engaged = false;
-      /* 先把 .dragging 摘掉（它还带着 transition:none），再显式指定目标位置。
-       * 关键：不要清掉 inline transform 指望 CSS 的 translateX(100%) 接手——
-       * 那一帧会从 dx 直接跳到 100%，就是那个「闪」。 */
+      const p = Math.max(0, dx) / w;
+      const far = p > 0.22 || (v > 0.3 && p > 0.05);
+      active = false; engaged = false;
       dr.classList.remove('dragging');
-      dr.style.transition = 'transform .22s cubic-bezier(.22,1,.36,1)';
-      ov.style.transition = 'opacity .22s cubic-bezier(.22,1,.36,1)';
+      dr.style.transition = 'transform .2s cubic-bezier(.22,1,.36,1)';
+      ov.style.transition = 'opacity .2s cubic-bezier(.22,1,.36,1)';
       if (far) {
-        dr.style.transform = 'translateX(100%)';
+        dr.style.transform = 'translate3d(100%,0,0)';
         ov.style.opacity = '0';
-        /* 滑动手势之后紧跟的 click 不能落到被划过的按钮上（否则会顺手打开一个窗口） */
-        dr.__swipe = true;
-        setTimeout(() => { dr.__swipe = false; }, 360);
-        this.close();
-        setTimeout(() => {
-          dr.style.transition = ''; dr.style.transform = '';
-          ov.style.transition = ''; ov.style.opacity = '';
-        }, 240);
+        this.close();                       // 只摘 .on，动画由上面的 inline 值接管
+        setTimeout(reset, 220);
       } else {
         dr.style.transform = '';
         ov.style.opacity = '';
-        setTimeout(reset, 260);
+        setTimeout(reset, 220);
       }
+      /* 划过之后紧跟的那一次 click 不能落到按钮上：拖拽不是点击。
+       * 用时间戳，不要用布尔量——那会和「已绑定」抢同一个字段。 */
+      dr.__swipeAt = performance.now();
+      try { dr.releasePointerCapture(pid); } catch (err) {}
+      pid = null;
     };
     dr.addEventListener('pointerup', up);
     dr.addEventListener('pointercancel', up);
     dr.addEventListener('lostpointercapture', up);
-    /* 指针在抽屉外面松开（手指划出屏幕边缘）也要收尾 */
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
-    /* 划过之后那一次 click 一律吞掉：拖拽不是点击 */
     dr.addEventListener('click', (e) => {
-      if (!dr.__swipe) return;
+      if (!dr.__swipeAt || performance.now() - dr.__swipeAt > 420) return;
       e.stopPropagation(); e.preventDefault();
     }, true);
   },
+
   /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
    * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
   refreshWins() {
@@ -620,7 +637,7 @@ const Drawer = {
       set('#stUsage', (u.usage / 1048576).toFixed(2) + ' MB / ' + (u.quota / 1048576).toFixed(0) + ' MB');
       set('#stFiles', String(FS.idx.size));
     } catch (e) {}
-    set('#stSession', (TerminalManager.desktop ? 'desktop' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
+    set('#stSession', (TerminalManager.desktop ? 'term' : '—') + ' + ' + Math.max(0, Proc.map.size - 1) + ' workers');
     set('#stHist', String(loadHistory().length));
     /* 对话条数直接问 IndexedDB（ht-agent），不要问内存里的 harness——
      * 刷新之后 harness 还没建，但历史已经在库里了。
@@ -1212,7 +1229,7 @@ async function boot() {
     installKeys();
     initDropImport();
 
-    step('启动底层终端', 10);
+    step('打开终端窗口', 10);
     TerminalManager.bootDesktop();
     /* 应用「Dock 是否显示」：刷新后也要保持上次的收起状态 */
     WindowManager._syncDock();
@@ -1227,7 +1244,7 @@ async function boot() {
     await sleep(320);
     bootEl.classList.add('gone');
     setTimeout(() => { bootEl.style.display = 'none'; }, 500);
-    /* 唯一一次「自动聚焦」：页面刚加载完，光标直接落在桌面终端里，敲键就能用。
+    /* 唯一一次「自动聚焦」：页面刚加载完，光标直接落在那一扇终端窗口里，敲键就能用。
      * 其它场合（开新窗口、关抽屉、执行脚本）一律不抢焦点——手机上那等于
      * 随时把输入法顶上来。详见 README「焦点规则」。 */
     setTimeout(() => {

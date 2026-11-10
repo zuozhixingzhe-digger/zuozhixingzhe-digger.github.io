@@ -122,6 +122,12 @@
 > 提出：2026-11-03　状态：**已占坑（0.0.1.6）**，调用会明确抛「还没做」
 > 一句话：让 spotfs 能挂上别的东西——fext4 镜像、外部目录、只读的包、内存盘。
 
+> **0.0.1.34 更正**：`sptm` 这个动词被拿去干另一件事了——`sptm(p, opts)` 现在指
+> 「把 `.home` 里的一段 JS 挂成可调用函数」。挂载仍然只有 `mount` 命令（只列不挂），
+> 真做的时候别抢 `sptm` 这个名字，用 `sptmount` / `sptumount` 更清楚。
+> 另外「被 FreeBSD 挂到 `/spotfs`（guest 里就是 `/`）、开机自动挂载」也归到同一件事上：
+> 已经预留 `spotfsTable(prefix)` 导出 `{path,kind,size,meta,type}` 的平表，缺的是驱动。
+
 `sptm(target, source, opts)` 已经注册进 FS / RPC / worker API，`mount` 命令能列内建挂载点。
 **只差实现**，而实现之前必须先回答：
 

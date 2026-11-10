@@ -211,7 +211,7 @@ class RecorderApp {
        * 「.home / rec-… / webm」，父目录不存在直接报错。落盘时走 spotEscape，
        * 名字变成 rec-…-webm；下载到真机时才用回带点的原名。 */
       const stored = spotEscape(name);
-      await FS.write('.home.' + stored, await this.blob.arrayBuffer(), { mime:this.blob.type || 'audio/webm', hint:'录音', origin:'recorder' });
+      await Spot.write('.home.' + stored, await this.blob.arrayBuffer(), { mime:this.blob.type || 'audio/webm', type:'audio', hint:'录音', origin:'recorder' });
       toast('已保存到 .home.' + stored);
     } catch (e) { toast('保存失败：' + (e.message || e), true); }
   }
@@ -411,7 +411,7 @@ class GeoApp {
       capturedAt:new Date().toISOString()
     };
     try {
-      await FS.write('.home.geo-json', JSON.stringify(data, null, 2), { mime:'application/json', hint:'定位' });
+      await Spot.write('.home.geo-json', JSON.stringify(data, null, 2), { mime:'application/json', type:'text', hint:'定位' });
       toast('已保存 .home.geo-json');
     } catch (e) { toast('保存失败：' + (e.message || e), true); }
   }
@@ -590,7 +590,7 @@ class AudioApp {
   async saveFs() {
     if (!this.file) return;
     try {
-      await FS.write('.home.' + spotEscape(this.file.name), await this.file.arrayBuffer(), { mime:this.file.type || 'audio/mpeg', hint:'音频', origin:'audio' });
+      await Spot.write('.home.' + spotEscape(this.file.name), await this.file.arrayBuffer(), { mime:this.file.type || 'audio/mpeg', type:'audio', hint:'音频', origin:'audio' });
       toast('已保存到 .home.' + this.file.name);
     } catch (e) { toast('保存失败：' + (e.message || e), true); }
   }

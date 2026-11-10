@@ -5,7 +5,7 @@
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.33';
+const HT_VERSION = '0.0.1.34';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -459,7 +459,7 @@ function spotExportName(stored) {
 }
 
 /* ---------------------------------------------------------------- 内置文件系统内容 */
-const DIRS = ['.home', '.app', '.dev', '.proc', '.pkg', '.config', '.agent', '.sys', '.perm', '.temp', '.queryfile', '.savefile', '.localstorage'];
+const DIRS = ['.home', '.app', '.dev', '.proc', '.pkg', '.config', '.agent', '.doc', '.perm', '.temp', '.queryfile', '.savefile', '.localstorage'];
 const APP_DEFS = [
   { name:'shell', title:'终端', desc:'新的 JS shell 窗口', type:'shell', icon:'▣' },
   { name:'browser', title:'浏览器', desc:'窗口里的真浏览器（iframe）', type:'browser', icon:'◎' },
@@ -473,6 +473,7 @@ const APP_DEFS = [
   { name:'color', title:'调色', desc:'色相环与六种颜色表示', type:'color', icon:'◐' },
   { name:'markdown', title:'Markdown', desc:'编辑并实时渲染 Markdown', type:'markdown', icon:'¶' },
   { name:'htmlapp', title:'HTML 编辑器', desc:'写 HTML，右边实时渲染（canvas 代码区）', type:'htmlapp', icon:'</>' },
+  { name:'bezier', title:'贝塞尔动效', desc:'拖控制点设计缓动曲线，即时看小球', type:'bezier', icon:'∿' },
   { name:'shot', title:'截图', desc:'把桌面或某个窗口拍成图片', type:'shot', icon:'⬚' },
   { name:'timer', title:'计时器', desc:'秒表与倒计时，到点响铃', type:'timer', icon:'◷' },
   { name:'image', title:'看图修图', desc:'查看图片、裁剪标注打码（截图搭档）', type:'image', icon:'▩' },
@@ -559,7 +560,7 @@ spotfs 只有六个原子操作（其余命令都是它们的组合）：
   .pkg          已安装的包
   .config       设置
   .agent        智能体会话
-  .sys          系统信息（只读）
+  .doc          文档与系统信息（只读）
   .perm         授权（摄像头 / 通知等）
   .temp         临时文件（刷新即失）
   .queryfile    你通过“询问文件”/拖拽交进来的文件
@@ -691,8 +692,8 @@ const r = await fs.read(p);
 const lines = String(r.content || '').split('\\n').length;
 print('已放入', p, '，共', lines, '行');`
   },
-  '.sys.version': { kind:'file', mime:'text/plain', content:'HTerMinaL ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
-  '.sys.license': { kind:'file', mime:'text/plain', content:`Apache License 2.0 OR MIT（双许可，任选其一）
+  '.doc.version': { kind:'file', mime:'text/plain', content:'HTerMinaL ' + HT_VERSION + '\nJSHeL / 一切皆文件\nApache-2.0 OR MIT\n' },
+  '.doc.license': { kind:'file', mime:'text/plain', content:`Apache License 2.0 OR MIT（双许可，任选其一）
 
 Copyright (c) 2026 HTerMinaL contributors
 
@@ -704,7 +705,36 @@ Copyright (c) 2026 HTerMinaL contributors
   html2canvas                MIT
   Pyodide                    MPL-2.0
 完整原文见仓库 licenses/ 目录与 README。` },
-  '.sys.about': { kind:'file', mime:'text/plain', content:`HTerMinaL
+  '.doc.mount': { kind:'file', mime:'text/markdown;charset=utf-8', meta:{ type:'text', hint:'spotfs ↔ FreeBSD 挂载说明' }, content:`# 把 spotfs 挂到 FreeBSD 的 /spotfs
+
+目标：hsb2（FreeBSD）里 \`mount\` 一下就能读写同一份节点，路径映射是
+\`/spotfs/.home.x\` ↔ \`spotfs:.home.x\`。
+
+## 现在的状态
+
+**还没接上，只完成了宿主这一侧的准备。**
+
+\`FS.spotfsTable(prefix)\` 会把节点导出成一张表（path / kind / size / meta / type），
+\`Spot.write|read|remove\` 就是读写口。也就是说「数据和语义」这一层已经就绪。
+
+## 为什么没做完
+
+v86 只模拟 IDE / 网卡 / 串口，**没有 virtio-9p**。要有真挂载点，得在 guest 里跑一个
+用户态文件系统进程（FUSE 或 mount_pseudo + 一个把 HTTP 桥成 inode 的守护），
+再把 v86 的串口/网卡接到宿主。这是一个独立工程，不适合塞进内核窗口里。
+
+## 如果要做，接口已经定好
+
+    host:  GET  /spotfs/list?p=.home      -> [{path,kind,size,type}]
+    host:  GET  /spotfs/read?p=.home.a    -> 原始字节 + meta 头
+    host:  PUT  /spotfs/write?p=.home.a   -> 覆盖（不存在则 409，要用 create）
+    host:  POST /spotfs/create?p=.home.b  -> 新建空节点
+    host:  DELETE /spotfs/remove?p=...    -> 删除
+
+guest: 一个 200 行的 FUSE 守护把这些转成 inode 操作即可；\`.perm\` 之类的只读规则
+由宿主返回 403，守护只需透传错误码。
+` },
+  '.doc.about': { kind:'file', mime:'text/plain', content:`HTerMinaL
 浏览器里的 JS 终端 / 一切皆文件桌面 / 智能体宿主 HarTMLes
 
 一个自包含的 index.html，加上三个可选的单文件模型转发后端。
@@ -822,6 +852,7 @@ const FS = {
       // 补齐内置目录/应用（升级时不丢用户数据）
       await this.ensureBuiltins();
       await this.migrateBinDir();
+      await this.migrateDocDir();
       await this.syncIndex();
     }
     this.persistIndex();
@@ -853,7 +884,7 @@ const FS = {
     for (const [p, f] of Object.entries(SEED_FILES)) {
       await put(p, f.kind, f.content, Object.assign({ hint:'' }, f.meta || {}, f.mime ? { mime:f.mime } : {}));
     }
-    for (const a of APP_DEFS) await put('.app.' + a.name, 'app', '', { app:a.name, hint:a.desc, icon:a.icon, title:a.title });
+    for (const a of APP_DEFS) await put('.app.' + a.name, 'app', '', { app:a.name, hint:a.desc, icon:a.icon, title:a.title, type:'app', exec:'native' });
     for (const d of DEV_DEFS) await put('.dev.' + d.name, 'device', '', { device:d.device, hint:d.hint });
     for (const p of PERM_DEFS) await put('.perm.' + p.name, 'grant', '', { perm:p.name, hint:p.hint });
     this.seeded = true;
@@ -871,7 +902,7 @@ const FS = {
     });
     if (!this.idx.has('.')) await put('.', 'dir', '', { hint:'根目录' });
     for (const d of DIRS) if (!this.idx.has(d)) await put(d, 'dir', '', { hint:'系统目录' });
-    for (const a of APP_DEFS) if (!this.idx.has('.app.' + a.name)) await put('.app.' + a.name, 'app', '', { app:a.name, hint:a.desc, icon:a.icon, title:a.title });
+    for (const a of APP_DEFS) if (!this.idx.has('.app.' + a.name)) await put('.app.' + a.name, 'app', '', { app:a.name, hint:a.desc, icon:a.icon, title:a.title, type:'app', exec:'native' });
     for (const d of DEV_DEFS) if (!this.idx.has('.dev.' + d.name)) await put('.dev.' + d.name, 'device', '', { device:d.device, hint:d.hint });
     for (const p of PERM_DEFS) if (!this.idx.has('.perm.' + p.name)) await put('.perm.' + p.name, 'grant', '', { perm:p.name, hint:p.hint });
     const all = await IDB.all();
@@ -897,6 +928,24 @@ const FS = {
       await IDB.del(k);
     }
     await IDB.del('.bin');
+    return n;
+  },
+
+  /* 0.0.1.34 把只读系统信息目录 `.sys` 改名成 `.doc`（里面本来全是文档）。
+   * 搬一次：先把旧节点挪过去（目标已存在就不覆盖），再删旧目录。 */
+  async migrateDocDir() {
+    if (!this.idx.has('.sys')) return 0;
+    const kids = [...this.idx.keys()].filter(k => k.startsWith('.sys.'));
+    let n = 0;
+    for (const k of kids) {
+      const target = '.doc' + k.slice(4);
+      if (!this.idx.has(target)) {
+        const r = await IDB.get(k);
+        if (r) { await IDB.put(Object.assign({}, r, { path:target, parent:'.doc', name:baseName(target) })); n++; }
+      }
+      await IDB.del(k);
+    }
+    await IDB.del('.sys');
     return n;
   },
 
@@ -1022,7 +1071,7 @@ const FS = {
 
   async write(p, data, meta) {
     p = normPath(p);
-    if (p === '.' || p === '.sys' || p.startsWith('.sys.')) throw new Error('只读路径: ' + p);
+    if (p === '.' || p === '.doc' || p.startsWith('.doc.')) throw new Error('只读路径: ' + p);
     /* .app 里有两类节点：内置应用（kind=app，只读）和用户装的脚本应用（kind=func，可改可删）。
      * 一刀切禁止整个 .app 会让「装进 .app 的脚本」永远改不了。 */
     const oldNode = this.idx.get(p);
@@ -1099,7 +1148,7 @@ const FS = {
 
   async remove(p, recursive) {
     p = normPath(p);
-    if (p === '.' || DIRS.includes(p) || p.startsWith('.sys.') ||
+    if (p === '.' || DIRS.includes(p) || p.startsWith('.doc.') ||
         (p.startsWith('.app.') && (this.idx.get(p) || {}).kind === 'app') ||
         p.startsWith('.dev.') || p.startsWith('.perm.')) {
       throw new Error('不可删除: ' + p);
@@ -1155,44 +1204,217 @@ const FS = {
     return true;
   },
 
-  /* ---------------- spotfs：六个 syscall ----------------
-   * spotfs 是「节点对象图」，不是 ext4；没有权限位，没有 inode。
+  /* ---------------- spotfs：六个 syscall + 元数据 ----------------
+   * spotfs 是「节点对象图」，不是 ext4；没有 inode、没有权限位、没有属主。
+   * 六个原子操作，建 / 读 / 覆盖写 / 追加 一律分开——想要「新建并写入」就调两次，
+   * 不再有「一次调用顺手把内容塞进去」的捷径（那会让「新建」这个动作失去意义）。
    *   c cover   sptc(p, data, meta)  覆盖写入：只能覆盖已存在的非目录节点
-   *   n new     sptn(p, opts)        新建：目录下建节点 / .queryfile 请求文件 / .savefile 待保存
+   *   n new     sptn(p, opts)        新建：只建空节点；.queryfile 请求文件 / .savefile 待保存
    *   a append  spta(p, data)        在末尾追加
    *   x execute sptx(p, args)        执行：返回「动作描述」，由当前环境落地
-   *   r read    sptr(p)              读内容（文件）或索引（目录/对象）
+   *   r read    sptr(p, opts)        读内容（文件）或索引（目录/对象）；queryfile 读完即焚
    *   d delete  sptd(p)              删除：文件删 / 目录递归 / 进程杀 / 链接删
+   * 外加两个元数据操作（也是单独的，不夹在别的调用里）：
+   *   sptmetaread(p) / sptmetawrite(p, patch)
    */
+
+  /* ---------------------------------------------------------------- 能力
+   * 没有用户、没有属主，所以也没有「权限位」可设——这里是一张**预设规则表**，
+   * 对谁都一样，改不了（真要改只能改代码）。它存在的意义不是「防」，而是
+   * 告诉界面「这件事对这个节点有没有意义」，顺便挡掉会把页面逻辑搞坏的误操作
+   * （比如删掉根目录、往 .perm 里写文件）。
+   *
+   * 返回 { r, w, x, d, mk, why }：
+   *   r 读内容 · w 改内容 · x 执行/进入 · d 删除 · mk 在**这个目录里**新建
+   */
+  caps(p) {
+    p = normPath(p);
+    const node = this.virtualStat(p) || this.idx.get(p) || (this.temp.has(p) ? this.temp.get(p) : null);
+    const kind = node ? (node.kind || 'file') : null;
+    const cap = (r, w, x, d, mk, why) => ({ r:!!r, w:!!w, x:!!x, d:!!d, mk:!!mk, why:why || '' });
+
+    if (p === '.') return cap(1, 0, 1, 0, 0, '根目录只用来穿越：不能新建、删除、挂载');
+    if (DIRS.includes(p)) {
+      if (p === '.proc') return cap(1, 0, 1, 0, 0, '进程表由内核维护');
+      if (p === '.perm') return cap(1, 0, 1, 0, 0, '授权表只读；子项只能「申请」');
+      if (p === '.dev') return cap(1, 0, 1, 0, 0, '设备由内核枚举');
+      if (p === '.doc') return cap(1, 0, 1, 0, 0, '文档区只读');
+      if (p === '.queryfile') return cap(1, 0, 1, 0, 1, '只能向用户要文件，不能自己造');
+      if (p === '.savefile') return cap(1, 0, 1, 0, 1, '只能新建「待保存」节点');
+      if (p === '.app') return cap(1, 0, 1, 0, 1, '可以装脚本应用，但不能删目录');
+      return cap(1, 1, 1, 0, 1, '');
+    }
+    /* .perm 里的项：内容不可读，执行 = 申请授权 */
+    if (p.startsWith('.perm.')) return cap(0, 0, 1, 0, 0, '授权项不读内容，执行=申请');
+    /* .doc 里的文档：只读 */
+    if (p.startsWith('.doc.')) return cap(1, 0, 0, 0, 0, '文档区只读：能看，不能改、不能执行');
+    /* .proc.<pid>：读状态；删除 = 结束进程（对应窗口/后台一并关掉） */
+    if (p.startsWith('.proc.')) return cap(1, 0, 0, 1, 0, '删除 = 结束这个进程');
+    if (p.startsWith('.dev.')) return cap(1, 1, 1, 0, 0, '');
+    /* 用户交进来的：读一次即消费，不能写 */
+    if (p.startsWith('.queryfile.')) return cap(1, 0, 0, 1, 0, '用户交进来的文件：读一次即消费');
+    /* 待保存的：写 = 保存到本机，节点随即消失 */
+    if (p.startsWith('.savefile.')) return cap(1, 1, 0, 1, 0, '写入即保存到本机，节点随即消失');
+    /* .app 里的：内置应用只读，脚本/页面可改可删 */
+    if (p.startsWith('.app.')) {
+      if (kind === 'app') return cap(1, 0, 1, 0, 0, '内置应用：不可改、不可删');
+      return cap(1, 1, 1, 1, 0, '');
+    }
+    if (kind === 'dir') return cap(1, 1, 1, 1, 1, '');
+    if (kind === 'grant') return cap(0, 0, 1, 0, 0, '授权项不读内容，执行=申请');
+    if (kind === 'proc') return cap(1, 0, 0, 1, 0, '删除 = 结束进程');
+    if (kind === 'device') return cap(1, 1, 1, 0, 0, '');
+    /* 普通文件：能不能「执行」看类型，不看后缀——
+     * 代码 / 页面 / 应用可以跑；文本、图片、音频只能看。 */
+    const t = this.typeOf(node);
+    const x = (t === 'code' || t === 'page' || t === 'app' || t === 'wasm') ? 1 : 0;
+    return cap(1, 1, x, 1, 0, x ? '' : '这是 ' + t + '，没有可执行入口');
+  },
+  can(p, op) { return !!this.caps(p)[op]; },
+  assert(p, op) {
+    const c = this.caps(p);
+    if (c[op]) return c;
+    const names = { r:'读', w:'写', x:'执行', d:'删除', mk:'新建' };
+    throw new Error((names[op] || op) + '不了「' + normPath(p) + '」' + (c.why ? '：' + c.why : ''));
+  },
+
+  /* ---------------------------------------------------------------- 类型判定
+   * 顺序是**元数据 → 魔数 → 后缀**。
+   * 后缀最不可信（一个 .txt 里可以是 wasm），魔数能看穿伪装，而元数据里写的是
+   * 「这个节点到底是什么」——它由导入 / 保存 / 安装时自动写入，是首选依据。
+   */
+  sniff(data) {
+    if (data == null) return null;
+    let u8 = null;
+    if (data instanceof ArrayBuffer) u8 = new Uint8Array(data.slice(0, 16));
+    else if (data instanceof Uint8Array) u8 = data.subarray(0, 16);
+    else if (data instanceof Blob) return null;      // Blob 要异步读，交给调用方
+    else if (typeof data === 'string') {
+      const h = data.slice(0, 5);
+      if (/^\s*<!doctype html|^\s*<html/i.test(data.slice(0, 64))) return 'page';
+      if (h === '\x00asm') return 'wasm';
+      return 'text';
+    }
+    if (!u8 || u8.length < 4) return null;
+    if (u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) return 'image';
+    if (u8[0] === 0xFF && u8[1] === 0xD8 && u8[2] === 0xFF) return 'image';
+    if (u8[0] === 0x47 && u8[1] === 0x49 && u8[2] === 0x46) return 'image';
+    if (u8[0] === 0x52 && u8[1] === 0x49 && u8[2] === 0x46 && u8[3] === 0x46) return 'media';
+    if (u8[0] === 0x00 && u8[1] === 0x61 && u8[2] === 0x73 && u8[3] === 0x6D) return 'wasm';
+    if (u8[0] === 0x50 && u8[1] === 0x4B && u8[2] === 0x03 && u8[3] === 0x04) return 'archive';
+    if (u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46) return 'document';
+    return null;
+  },
+  typeOf(st, data) {
+    if (!st) return 'none';
+    const m = st.meta || {};
+    if (m.type) return m.type;
+    if (m.mime) {
+      const t = String(m.mime);
+      if (/^image\//.test(t)) return 'image';
+      if (/^audio\//.test(t)) return 'audio';
+      if (/^video\//.test(t)) return 'video';
+      if (/html/.test(t)) return 'page';
+      if (/javascript|ecmascript/.test(t)) return 'code';
+      if (/json|xml|csv|yaml|markdown|text\//.test(t)) return 'text';
+    }
+    switch (st.kind) {
+      case 'dir': return 'dir';
+      case 'app': return 'app';
+      case 'func': return 'code';
+      case 'device': return 'device';
+      case 'grant': return 'perm';
+      case 'proc': return 'process';
+      case 'package': return 'package';
+      case 'object': return 'object';
+    }
+    const magic = this.sniff(data);
+    if (magic) return magic;
+    return 'text';
+  },
+
+  /* ---------------------------------------------------------------- 自动名字
+   * `auto-2027-01-02T12-32-45-01`：秒级时间戳 + 两位序号。
+   * 一秒内要多于 99 个就往后接一段：-99-01、-99-02……（横线本身就是分隔符，
+   * 不会和序号混淆）。冒号换成短横线，因为 spotfs 名字里不允许它。
+   */
+  autoName(dir) {
+    const p2 = (n) => String(n).padStart(2, '0');
+    const d = new Date();
+    const stamp = d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) +
+      'T' + p2(d.getHours()) + '-' + p2(d.getMinutes()) + '-' + p2(d.getSeconds());
+    const seq = (n, depth) => {
+      if (n <= 99) return '-' + p2(n);
+      if (depth > 6) return '-' + p2(n % 100);
+      return seq(99, depth + 1) + seq(n - 99, depth + 1);
+    };
+    for (let i = 1; i < 100000; i++) {
+      const name = 'auto-' + stamp + seq(i, 0);
+      const path = (dir && dir !== '.' ? dir + '.' : '.') + name;
+      if (!this.exists(normPath(path))) return normPath(path);
+    }
+    throw new Error('autoName: 名字用完了');
+  },
+
   async sptc(p, data, meta) {
     p = normPath(p);
     const st = await this.stat(p);
     if (!st) throw new Error('sptc: 不存在，不能覆盖（新建请用 sptn）: ' + p);
     if (st.kind === 'dir') throw new Error('sptc: 不能覆盖目录: ' + p);
+    this.assert(p, 'w');
     if (st.kind === 'device') {
-      /* 设备节点：写入即交给设备。这里只记录「写过」，真正的副作用在 worker 侧设备层。 */
       return { path:p, kind:'device', device:(st.meta || {}).device, wrote:String(data == null ? '' : data).length };
     }
-    return this.write(p, data, Object.assign({}, st.meta || {}, meta || {}));
+    await this.write(p, data, Object.assign({}, st.meta || {}, meta || {}));
+    /* .savefile：写完了就等于「用户点了保存」。不论成没成，节点都消失——
+     * 它本来就只是个「待保存」的筐，不是存储。 */
+    if (parentPath(p) === '.savefile') {
+      await this.flushSavefile(p);
+      return { path:p, kind:'savefile', saved:true };
+    }
+    return this.stat(p);
   },
 
+  /* 新建：**只建不写**。想写就再调一次 sptc。
+   * p 可以是完整路径，也可以是目录（此时用 opts.name，或自动起名）。 */
   async sptn(p, opts) {
-    p = normPath(p);
     opts = opts || {};
-    if (this.exists(p)) throw new Error('sptn: 已存在，请用 sptc 覆盖: ' + p);
-    const par = parentPath(p);
-    if (par !== '.' && !this.exists(par)) throw new Error('sptn: 父目录不存在: ' + par);
-    /* .queryfile 下的「新建」= 向用户要一个文件 */
+    let path = p ? normPath(p) : null;
+    let st0 = path ? await this.stat(path) : null;
+    if (!path || (st0 && st0.kind === 'dir')) {
+      const dir = (st0 && st0.kind === 'dir') ? path : normPath(opts.dir || '.home');
+      const name = opts.name ? sanitizeName(opts.name, 'file') : null;
+      path = name ? dir + '.' + name : this.autoName(dir);
+      st0 = null;
+    }
+    if (opts.kind === 'dir') {
+      this.assert(parentPath(path), 'mk');
+      if (this.exists(path)) throw new Error('sptn: 已存在: ' + path);
+      await this.mkdir(path);
+      return this.stat(path);
+    }
+    if (opts.data !== undefined) {
+      throw new Error('sptn: 只新建、不写入。要写内容请紧接着调 sptc(' + path + ', data)');
+    }
+    const par = parentPath(path);
+    this.assert(par, 'mk');
+    if (this.exists(path)) throw new Error('sptn: 已存在，请用 sptc 覆盖: ' + path);
+
+    /* .queryfile 下的「新建」= 向用户要一个文件（要回来的东西是只读的一次性副本） */
     if (par === '.queryfile') {
       const got = await askFile({ multiple:false, accept:opts.accept });
-      return got ? { path:got, kind:'queryfile' } : null;
+      return got ? { path:got, kind:'queryfile', consume:true } : null;
     }
-    /* .savefile 下的「新建」= 登记一个「关闭时保存」的节点 */
-    const meta = Object.assign({ hint: opts.hint || '保存到本机' }, opts.meta || {});
+
+    const meta = Object.assign({ hint:opts.hint || '' }, opts.meta || {});
+    if (opts.mime) meta.mime = opts.mime;
+    if (opts.type) meta.type = opts.type;
+    const kind = opts.kind || (/^\.app\./.test(path) ? 'func' : 'file');
+    if (kind !== 'file') meta.kind = kind;
+    /* .savefile 下的「新建」= 登记一个「保存时才会落盘」的节点 */
     if (par === '.savefile') meta.saveOnClose = true;
-    const kind = opts.kind || (/^\.app\./.test(p) ? 'func' : 'file');
-    return this.write(p, opts.data == null ? '' : opts.data,
-      Object.assign({ kind, mime: opts.mime || guessMime(p, opts.data) }, meta));
+    await this.write(path, '', meta);
+    return this.stat(path);
   },
 
   async spta(p, data) {
@@ -1200,6 +1422,7 @@ const FS = {
     const st = await this.stat(p);
     if (!st) throw new Error('spta: 不存在: ' + p);
     if (st.kind === 'dir') throw new Error('spta: 不能追加到目录: ' + p);
+    this.assert(p, 'w');
     const r = await this.read(p);
     const old = r.content;
     if (old instanceof ArrayBuffer) {
@@ -1212,30 +1435,40 @@ const FS = {
     return this.write(p, String(old == null ? '' : old) + String(data == null ? '' : data), st.meta);
   },
 
-  async sptr(p) {
+  /* opts.peek = true：只看一眼，不消费（文件管理器的预览栏用这个） */
+  async sptr(p, opts) {
     p = normPath(p);
+    opts = opts || {};
     const st = await this.stat(p);
     if (!st) throw new Error('sptr: 不存在: ' + p);
+    this.assert(p, 'r');
     if (st.kind === 'dir') {
       const rows = await this.list(p);
-      return { path:p, kind:'dir', index:rows.map(r => ({ name:r.name, path:r.path, kind:r.kind, size:r.size })) };
+      return { path:p, kind:'dir', type:'dir', index:rows.map(r => ({ name:r.name, path:r.path, kind:r.kind, size:r.size })) };
     }
-    if (st.kind === 'device') return { path:p, kind:'device', device:(st.meta || {}).device };
-    if (st.kind === 'grant') return { path:p, kind:'grant', perm:(st.meta || {}).perm };
-    if (st.kind === 'object') {
-      const r = await this.read(p);
-      let v = r.content;
-      try { v = JSON.parse(String(v || 'null')); } catch (e) {}
-      return { path:p, kind:'object', value:v };
-    }
+    if (st.kind === 'device') return { path:p, kind:'device', type:'device', device:(st.meta || {}).device };
+    if (st.kind === 'grant') return { path:p, kind:'grant', type:'perm', perm:(st.meta || {}).perm };
     const r = await this.read(p);
-    return { path:p, kind:st.kind, content:r.content, meta:r.meta };
+    let content = r.content;
+    const type = this.typeOf(st, content);
+    if (st.kind === 'object') {
+      let v = content;
+      try { v = JSON.parse(String(content || 'null')); } catch (e) {}
+      return { path:p, kind:'object', type:'object', value:v, meta:r.meta };
+    }
+    /* 一次性文件：读完就把节点抹掉（永久删除，不进回收站） */
+    if (parentPath(p) === '.queryfile' && !opts.peek) {
+      await this.remove(p, true);
+      return { path:p, kind:st.kind, type, content, meta:r.meta, consumed:true };
+    }
+    return { path:p, kind:st.kind, type, content, meta:r.meta };
   },
 
   async sptx(p, args) {
     p = normPath(p);
     const st = await this.stat(p);
     if (!st) throw new Error('sptx: 不存在: ' + p);
+    this.assert(p, 'x');
     if (st.kind === 'dir') return { act:'enter', path:p };
     if (st.kind === 'func') {
       const r = await this.read(p);
@@ -1246,14 +1479,20 @@ const FS = {
     if (st.kind === 'grant') return { act:'perm', path:p, perm:(st.meta || {}).perm };
     if (st.kind === 'package') return { act:'package', path:p, spec:(st.meta || {}).spec };
     const r = await this.read(p);
-    const mime = String((r.meta && r.meta.mime) || '');
-    if (st.kind === 'object') {
+    const type = this.typeOf(st, r.content);
+    /* 判类型只看元数据 / 魔数，不看后缀：.app 里放的是页面就开浏览器，
+     * 放的是 JS 就跑，放的是 wasm 就交给 wasm 宿主。
+     * 注意顺序：**先按 type 分流，再看 kind**。以前 `kind==='object'` 排在前面，
+     * 于是一个 `{kind:'object', mime:'text/javascript'}` 的节点被判成「对象」，
+     * 执行按钮点了毫无反应——typeOf 明明算出 `code`，却被 kind 抢了先。 */
+    if (type === 'page') return { act:'html', path:p, html:String(r.content || '') };
+    if (type === 'code') return { act:'js', path:p, source:String(r.content || '') };
+    if (st.kind === 'object' || type === 'object') {
       let v = r.content;
-      try { v = JSON.parse(String(v || 'null')); } catch (e) {}
+      try { v = JSON.parse(String(r.content || 'null')); } catch (e) {}
       return { act:'object', path:p, value:v };
     }
-    if (/html/i.test(mime)) return { act:'html', path:p, html:String(r.content || '') };
-    return { act:'file', path:p, content:r.content, meta:r.meta };
+    return { act:'file', path:p, content:r.content, meta:r.meta, type };
   },
 
   async sptd(p) {
@@ -1261,15 +1500,85 @@ const FS = {
     if (p === '.' || DIRS.includes(p)) throw new Error('sptd: 不能删除系统目录: ' + p);
     const st = await this.stat(p);
     if (!st) throw new Error('sptd: 不存在: ' + p);
-    /* 进程：结束（只有强制结束） */
+    this.assert(p, 'd');
+    /* 进程：结束（只有强制结束）。这一步会真的把关着这个进程的窗口关掉。 */
     if (st.kind === 'proc') return { act:'kill', pid:Number(baseName(p)) };
-    /* .savefile：删除 = 先保存到本机，再从文件系统消失 */
     if (parentPath(p) === '.savefile') { await this.flushSavefile(p); return true; }
     await this.remove(p, true);
     return true;
   },
 
-  /* .savefile 里的节点：导出到本机后从 spotfs 删除 */
+  /* ---------------------------------------------------------------- 元数据
+   * 单独读、单独写，不掺杂在别的小调用里（自动更新除外：导入/保存/安装时会自己写）。
+   * 返回的是**人类可读 + 程序可用**的一份：类型判定看这里的 type/mime。
+   */
+  async sptmetaread(p) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptmetaread: 不存在: ' + p);
+    const m = st.meta || {};
+    const caps = this.caps(p);
+    /* extra = 「我们不认识、但你想记下来」的键值对。meta.extra 就是专门放它的筐，
+     * 其余零散的自定义键也一起并进来，读的时候不用管当初是怎么写的。 */
+    const extra = Object.assign({}, (m.extra && typeof m.extra === 'object') ? m.extra : {});
+    for (const k of Object.keys(m)) {
+      if (['hint','mime','type','kind','app','icon','title','device','perm','spec','url','name','saveOnClose','source','binary','origin','interpreter','lsKey','extra'].includes(k)) continue;
+      extra[k] = m[k];
+    }
+    return {
+      path:p, kind:st.kind, type:this.typeOf(st, st.content),
+      mime:m.mime || '', size:st.size || 0,
+      readonly:!caps.w, executable:caps.x,
+      ctime:st.ctime || st.mtime || 0, mtime:st.mtime || 0,
+      hint:m.hint || '', extra
+    };
+  },
+  async sptmetawrite(p, patch) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptmetawrite: 不存在: ' + p);
+    this.assert(p, 'w');
+    const p0 = patch || {};
+    const merged = Object.assign({}, st.meta || {}, p0);
+    /* extra 是「扩展区」：传进来的是增量，不是整体替换（否则改一个键会抹掉别的） */
+    if (p0.extra && typeof p0.extra === 'object') {
+      merged.extra = Object.assign({}, (st.meta && st.meta.extra) || {}, p0.extra);
+    }
+    /* 只改元数据：内容原样搬一遍，避免「改个类型把内容弄丢」 */
+    if (st.kind === 'dir') {
+      await IDB.put({
+        path:p, parent:parentPath(p), name:baseName(p), kind:'dir',
+        content:'', meta:merged, ctime:st.ctime || Date.now(), mtime:Date.now(), size:0
+      });
+      await this.syncIndex();
+      EventBus.emit('fs', { type:'meta', path:p });
+      return merged;
+    }
+    const r = await this.read(p);
+    await this.write(p, r.content, merged);
+    return merged;
+  },
+
+  /* sptm —— 把可执行的 JS 节点**挂载成函数**：拿到手就能像普通函数那样调。
+   * （把整个 spotfs 挂给 FreeBSD 的 /spotfs 是另一件事，见 spotfsTable()。） */
+  async sptm(p, opts) {
+    p = normPath(p);
+    const st = await this.stat(p);
+    if (!st) throw new Error('sptm: 不存在: ' + p);
+    if (!(st.kind === 'func' || this.typeOf(st) === 'code')) {
+      throw new Error('sptm: 只能把 JS 节点挂成函数: ' + p);
+    }
+    const r = await this.read(p);
+    const src = (r.meta && r.meta.source) || String(r.content || '');
+    const name = baseName(p);
+    const path = p;
+    const fn = new Function('return async function ' + (opts && opts.as || 'mounted_' + name.replace(/[^\w$]/g, '_')) +
+      '(...args){ let __p=' + JSON.stringify(path) + '; ' + src + '\n}')();
+    fn.path = path;
+    return fn;
+  },
+
+  /* .savefile 里的节点：导出到本机后从文件系统删除 */
   async flushSavefile(p) {
     p = normPath(p);
     const st = await this.stat(p);
@@ -1280,15 +1589,20 @@ const FS = {
     return true;
   },
 
-  /* sptm —— 挂载。**占坑，未实现。**
-   * 为什么留一个只会抛错的 syscall：sptx 的判别表、.mounts 的展示、文档里的
-   * 语义都已经把它算进去了，缺了它这套模型就不完整；但真做起来要先解决
-   * 「同一份节点该被谁持有」「卸载时数据归谁」「路径跨挂载点怎么解析」，
-   * 这些没有想清楚之前，给一个假能用比给一个明确的「还没做」更糟。 */
-  async sptm(target, source, opts) {
-    opts = opts || {};
-    throw new Error('sptm: 挂载还没做（占位）。目标 ' + normPath(target) +
-      (source ? '，来源 ' + String(source) : '') + ' —— 现在只有 idb / tmpfs / procfs / devfs / pkgfs 五个内建挂载点');
+  /* ---------------------------------------------------------------- 导出给「别的系统」看
+   * 目的：让 FreeBSD（hsb2）里有个 /spotfs 能读到同一份节点。
+   * 现在只做到「快照 + 写回」这一步：v86 没有 virtio-9p，真挂载需要在 guest 里
+   * 跑一个把 HTTP/串口桥接成文件系统的服务，那是一个独立工程（README 里写明）。
+   * 有这张表，那层桥接将来只要把 read/write 对到这里就行，不用再改语义。
+   */
+  spotfsTable(prefix) {
+    prefix = normPath(prefix || '.');
+    const out = [];
+    for (const [path, rec] of this.idx) {
+      if (prefix !== '.' && path !== prefix && !path.startsWith(prefix + '.')) continue;
+      out.push({ path, kind:rec.kind, size:rec.size || 0, meta:rec.meta || {}, type:this.typeOf(rec) });
+    }
+    return out;
   },
 
   async usage() {
@@ -1345,6 +1659,92 @@ const FS = {
     ];
   }
 };
+/* ---------------------------------------------------------------- Spot
+ * 应用（记事本、截图、看图、录音、HTML 编辑器……）只走这一层，不直接碰
+ * `FS.write / FS.remove / FS.mkdir`。理由：裸操作绕过了 spotfs 的语义
+ * （新建和写入是两件事、queryfile 读一次就没了、savefile 写完就消失、
+ * 能力表决定「这个动作有没有意义」）。系统自己为了解决启动/迁移之类的问题
+ * 才用裸操作，那是例外，不是常规。
+ */
+const Spot = {
+  stat: (p) => FS.stat(p),
+  list: (p) => FS.list(p),
+  caps: (p) => FS.caps(p),
+  can: (p, op) => FS.can(p, op),
+  typeOf: (st, data) => FS.typeOf(st, data),
+  meta: (p) => FS.sptmetaread(p),
+  setMeta: (p, patch) => FS.sptmetawrite(p, patch),
+  /* 普通读。queryfile 里的东西读一次就没了——这是设计，不是 bug。 */
+  read: (p) => FS.sptr(p),
+  /* 只想看一眼（预览、列个摘要），不消费 */
+  peek: (p) => FS.sptr(p, { peek:true }),
+  /* 有就覆盖、没有就新建，两步 internally，但对调用方是一步「保存」 */
+  async write(p, data, meta) {
+    meta = meta || {};
+    const st = await FS.stat(p);
+    if (!st) {
+      await FS.sptn(p, { kind: meta.kind || 'file', mime: meta.mime, type: meta.type, meta });
+    }
+    return FS.sptc(p, data, meta);
+  },
+  mkdir(p) { return FS.sptn(p, { kind:'dir' }); },
+  remove(p) { return FS.sptd(p); },
+  /* 「保存到本机」：在 .savefile 里建一个待保存节点，写进去就落盘并消失 */
+  async save(name, data, mime) {
+    const nm = spotEscape(String(name || 'download'));
+    let path = '.savefile.' + nm;
+    let i = 2;
+    while (FS.exists(path)) path = '.savefile.' + nm + '-' + i++;
+    await FS.sptn(path, { kind:'file', mime, meta:{ hint:name } });
+    await FS.sptc(path, data, { mime });
+    return path;
+  },
+  /* 执行一个节点：把 sptx 的「动作描述」在主线程落地 */
+  async run(p, args) {
+    const st = await FS.stat(p);
+    if (!st) throw new Error('不存在: ' + p);
+    const act = await FS.sptx(p, args || []);
+    return Spot.act(act);
+  },
+  async act(d) {
+    if (!d) return d;
+    if (d.act === 'enter') return { kind:'dir', path:d.path };
+    if (d.act === 'app') return WindowManager.open({ app:d.app, path:d.path, args:d.args });
+    if (d.act === 'html') return WindowManager.open({ type:'browser', html:d.html, title:baseName(d.path) });
+    if (d.act === 'js') return WindowManager.open({ type:'shell', code:d.source, title:'执行 · ' + baseName(d.path) });
+    if (d.act === 'perm') return requestPermission(d.perm);
+    if (d.act === 'file') return d;
+    if (d.act === 'object') return d.value;
+    if (d.act === 'kill') return { kind:'kill', pid:d.pid };
+    if (d.act === 'package') return d;
+    if (d.act === 'device') return d;
+    return d;
+  },
+  /* 双击的默认动作：能执行就执行，不能就按类型打开（编辑器 / 看图 / 浏览器），
+   * 再不行才看属性。返回做了什么，方便界面提示。 */
+  async openSmart(p) {
+    const st = await FS.stat(p);
+    if (!st) throw new Error('不存在: ' + p);
+    if (st.kind === 'dir') return { how:'enter', path:p };
+    const type = FS.typeOf(st);
+    const c = FS.caps(p);
+    /* 能力表说能执行就执行（脚本 / 页面 / 应用 / 授权项）；
+     * 不能执行才按类型落到编辑器、看图、音频，最后才是属性。 */
+    if (c.x) {
+      const act = await FS.sptx(p);
+      await Spot.act(act);
+      return { how:'exec', type };
+    }
+    if (type === 'image') { WindowManager.open({ type:'image', path:p, title:spotExportName(baseName(p)) }); return { how:'view', type }; }
+    if (type === 'audio' || type === 'video') { WindowManager.open({ type:'audio', path:p, title:spotExportName(baseName(p)) }); return { how:'view', type }; }
+    if (type === 'text' || type === 'code' || type === 'page') {
+      WindowManager.open({ type:'editor', path:p, title:spotExportName(baseName(p)) });
+      return { how:'edit', type };
+    }
+    return { how:'meta', type };
+  }
+};
+
 async function packContent(c) {
   if (c == null) return { t:'s', v:'' };
   if (typeof c === 'string') return { t:'s', v:c };

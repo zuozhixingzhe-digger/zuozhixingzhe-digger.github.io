@@ -1,9 +1,9 @@
 # HTerMinaL
 
-> 在浏览器里运行的 JS 终端 —— 一切皆文件，桌面就是终端，窗口是线程。
-> 当前版本 **0.0.1.33**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
+> 在浏览器里运行的 JS 终端 —— 一切皆文件，窗口是线程。
+> 当前版本 **0.0.1.34**（四段式版本号，默认末位 +1；第三位 +1 表示「上一个台阶」，见[版本号与提交规则](#2-版本号与提交规则)）。
 
-`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 1.2 MB，无构建依赖、可直接双击打开）。
+`HTerMinaL` 是一个**完全自包含的单文件网页**（`index.html`，约 1.3 MB，无构建依赖、可直接双击打开）。
 它把 xterm.js 当作前端渲染层，把浏览器的 JS 引擎（跑在 Web Worker 里）当作内核，
 再往上长出一套 Unix 味道的文件系统、窗口管理器和 AI 智能体宿主——宿主里的那个智能体，
 连同它背后的 harness，叫 **HarTMLes**。
@@ -174,8 +174,14 @@ readme     welcome
 
 ### 桌面
 
-**底层终端只有一个**，永远铺在窗口下面。窗口可以拖拽移动、八向改大小、最小化 / 最大化 / 关闭；
-拖到屏幕边缘会吸附成半屏或全屏。底部 dock 列出所有窗口，点击切换。
+**桌面底下没有常驻终端了**（0.0.1.34 起）。页面一启动就打开一扇**普通终端窗口**，只是它处于
+**隐藏式最大化**（铺满桌面、标题条收起）——它和之后 `Alt+T` 开出来的终端没有任何区别。
+窗口可以拖拽移动、八向改大小、最小化 / 最大化 / 关闭；拖到屏幕边缘会吸附成半屏、四分之一屏或全屏。
+
+底部 Dock 只在**窗口数 ≥ 2** 时出现；只剩一扇时它整条不显示（按规则不显示，不是自动收起）。
+**最后一扇窗口**还不能最小化、不能改层级（黄钮/蓝钮变灰，点了会说明原因），
+红钮换成**朝左的三角形**——那意思是「关掉它 = 退出整个页面」。
+拖着最后一扇窗往底部中间去，仍然会出提示框，但是**灰的**，松手弹回**拖动前**的位置。
 
 **提示符有两套**，没有设置项：
 
@@ -223,7 +229,7 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 
 | 组合 | 作用 |
 | --- | --- |
-| `Alt+T` | 新开一个终端窗口（和底层终端一模一样） |
+| `Alt+T` | 新开一个终端窗口（和启动时那扇完全一样） |
 | `Alt+B` | 新开浏览器窗口 |
 | `Alt+A` | 打开智能体 |
 | `Alt+F` | 打开文件管理器 |
@@ -256,9 +262,10 @@ xterm 的 `cursorBlink` 关掉，闪烁完全由这一层控制。
 （小于 180ms 连发间隔，所以每次都能感到）。**键盘输入不振动**——打字时手本来就在键上，
 再震一下纯属干扰。桌面浏览器没有振动马达，`navigator.vibrate` 不存在时静默跳过。
 
-**底层终端只有一个**。它如果因为任何原因终止（`exit()`、`Ctrl+D`、Worker 异常），
-会自动回到浏览器上一级页面（有真实来源页时）或刷新整个页面（否则）。
-换句话说：终端死了 = 这个「操作系统」关机了。
+**关掉最后一扇窗口 = 退出整个页面**。不管那扇窗是终端、文件管理器还是计算器，
+只要桌面上一个窗口都不剩，就走 `exitDesktop()`：有真实来源页就回退，否则刷新自毁重来。
+不允许留一个空白页面——空桌面在这个系统里没有意义。终端那个 Worker 终止（`exit()`、`Ctrl+D`、
+异常）同样会关掉它所在的那扇窗，于是同样的规则接着生效。
 
 ## 5. JSHeL 速查
 
@@ -815,17 +822,17 @@ api('窗口')   // 过滤：名字或说明里含「窗口」的
 ```text
 .                          根
 ├── .home                  家目录（默认 cwd）
-├── .app                   可执行文件（函数）
-├── .app                   应用
+├── .app                   应用：内置入口（kind=app）+ 脚本应用（kind=func）
 ├── .dev                   设备（tty / null / zero / random / time / console）
 ├── .proc                  进程（每个 Worker 一个条目）
 ├── .pkg                   已安装的包
 ├── .config                配置
 ├── .agent                 智能体会话
-├── .sys                   系统信息
+├── .doc                   文档区（关于 / 许可证 / 版本 / 挂载说明，只读）
 ├── .perm                  权限申请单
 ├── .temp                  临时变量（内存态，刷新即失）
-├── .queryfile             向用户要文件（阻塞式）
+├── .queryfile             向用户要文件（阻塞式，读一次即消失）
+├── .savefile              向用户存文件（写完即消失）
 └── .localstorage          localStorage 的镜像
 ```
 
@@ -942,32 +949,96 @@ await write('.dev.tty', 'hello\n');     // 屏幕上直接出现 hello
 「权限」不是文件属性；`.perm.*` 是**授权申请单**，点它才会去问浏览器（摄像头 / 通知 / 定位…）。
 fext4（虚拟 ext4 镜像）才需要模仿 ext4 的权限，spotfs 和它**不直接兼容**，只能靠转换或勉强使用——这是设计使然。
 
-只有**七个**原子操作，其余命令都是它们的组合：
+#### 七个 syscall：建、读、覆盖写、追加必须是四件事（0.0.1.34 起）
 
 | 动词 | syscall | 干什么 |
 | --- | --- | --- |
-| cover | `sptc(p, data, meta)` | 覆盖写入；只覆盖已有节点，不能新建，对目录不生效 |
-| new | `sptn(p, opts)` | 新建；父目录下建节点。`.queryfile` 下 = 向用户要文件；`.savefile` 下 = 关闭时保存到本机 |
+| cover | `sptc(p, data, meta)` | **覆盖写**；只覆盖已有节点，不能新建，对目录不生效 |
+| new | `sptn(p, opts)` | **只新建、绝不写入**；`p` 可以是目录（用 `opts.name` 或自动起名），`opts.kind:'dir'` 建目录 |
 | append | `spta(p, data)` | 末尾追加 |
-| execute | `sptx(p)` | 执行：JS 脚本 / HTML 页面 / 对象 / 目录 / 权限，自动判别 |
-| read | `sptr(p)` | 读内容（文件）或索引（目录、对象） |
-| delete | `sptd(p)` | 删除：文件删、目录递归删、进程结束、链接解除 |
-| mount | `sptm(target, source)` | **占位，未实现**：调用会明确抛错，不会假装挂上 |
+| read | `sptr(p, opts)` | 读内容（文件）或索引（目录、对象）；`opts.peek` = 只看不消费 |
+| execute | `sptx(p, args)` | 执行：JS / HTML / app / 对象 / 目录 / 权限，按**元数据**判别 |
+| delete | `sptd(p)` | 删除：文件删、目录递归删、**删 proc = 结束那个进程（对应窗口/后台直接关掉）**、链接解除 |
+| metadata | `sptmetaread(p)` / `sptmetawrite(p, patch)` | 读写元数据，见下 |
 
-`sptm` 之所以先占坑：`sptx` 的判别表、`mount` 命令的展示、这套模型的语义都已经把它算进去了，
-缺了它模型不完整；但真做起来要先想清楚「同一份节点归谁持有」「卸载时数据归谁」「路径怎么跨挂载点解析」，
-这些问题没有答案之前，给一个**假能用**比给一个**明确的还没做**更糟。
-`mount`（不带参数）能列出当前五个内建挂载点：`idb://hterm`、`ls://local`、`tmpfs`、`procfs`、`devfs`、`pkgfs`。
+外加一个 `sptm(p, opts)`：把 `.home` 里的一段 JS **挂成可调用函数**（`new Function` 包一层），
+于是「文件即函数」不只是 `exec`，也能像普通函数那样直接调。
 
-```js
-await sptn('.home.notes', { data: 'hi' });   // 新建
-await spta('.home.notes', ', there');        // 追加 → 'hi, there'
-await sptc('.home.notes', 'over');           // 覆盖 → 'over'
-await sptr('.home.notes');                   // { kind:'file', content:'over', ... }
-await sptd('.home.notes');                   // 删除
+**为什么要拆开**：`sptn(p, {data})` 这种「一次搞定」看着方便，但它把「新建」和「写入」绑死了——
+于是 `.queryfile`（新建即向用户要文件）与 `.savefile`（写完即落盘消失）这两个目录**没法表达**。
+所以现在 `sptn` 收到 `opts.data` 会直接抛错：
+
+```text
+sptn: 只新建、不写入。要写内容请紧接着调 sptc(...)
 ```
 
-`.savefile` 是个特殊目录：在这里 `sptn` 一个节点并写入，关闭（或 `sptd`）时就会**请求保存到本机**，然后节点消失。
+正确姿势是两步：
+
+```js
+await sptn('.home.notes');            // ① 建出一个空节点（size 0、content ''）
+await sptc('.home.notes', 'hi');      // ② 再写
+await spta('.home.notes', ', there'); // 追加 → 'hi, there'
+await sptr('.home.notes');            // { kind:'file', content:'hi, there', ... }
+await sptd('.home.notes');            // 删除
+```
+
+**`sptn` 不写文件名就自动起名**：`auto-2027-01-02T12:32:45-01`，末两位是同一秒内的序号
+（`01`、`02`…），超过 99 就往前接一段继续（`-99-01`）。注意 spotfs **不区分大小写、内部一律小写存储**，
+所以落盘看到的是 `auto-2027-01-02t12-32-45-01`。
+
+#### `.queryfile` 与 `.savefile`：两个「一次性」目录
+
+| 目录 | 新建时 | 可读 | 可写 | 结局 |
+| --- | --- | --- | --- | --- |
+| `.queryfile` | 自动 `askFile()` 向用户要文件 | 是（只读） | 否（不可覆盖、不可追加） | **被读一次就永久消失**（`peek` 不算读） |
+| `.savefile` | 建 + 写完 | 是 | 只走覆盖写 | 无论保存成功与否，节点都消失 |
+
+所以「把一个文件交给用户」是：`sptn('.savefile.xxx')` → `sptc('.savefile.xxx', data)` → 节点消失；
+要读一次性文件就 `sptr(p)`，读完它自己就没了，想先看一眼用 `sptr(p, {peek:true})`。
+
+#### 元数据：判断东西先看元数据，再看魔数
+
+`sptmetaread(p)` 回一份：
+
+```js
+{ path, kind, type, mime, size, readonly, executable, ctime, mtime, hint, extra }
+```
+
+- `type`：`text` / `image` / `audio` / `code` / `page` / `app` / `wasm` / `binary`…**决定怎么执行它**；
+- `extra`：自由 JSON（记录别的文件系统的键值对、来源、缩略图参数…），`sptmetawrite` 对它是**增量合并**；
+- **不看后缀**。判定顺序是 `meta.type` → `meta.mime` → `kind` → **魔数**（PNG/JPEG/GIF/RIFF/wasm/ZIP/PDF、
+  字符串里的 doctype / asm）→ 兜底 `text`。导入、另存、拖进来的时候元数据会被自动补齐；
+- 主动改元数据是**单独一次操作**（`sptmetawrite`），不和读写混在一起；自动流程里的除外。
+
+于是 `.app` 里到底「是原生 GUI 注册项、还是 JS 程序、还是 HTML 页面」也靠元数据说清楚：
+`app`+`exec:'native'` 走内置窗口，`func` 走 `sptx`（也可以 `sptm` 挂成函数），`page` 走 `sptx` 开浏览器。
+
+#### 能力表：谁能做什么（预设、对人一致、不给改）
+
+`FS.caps(p)` 回 `{ r, w, x, d, mk, why }`：读、写、执行、删除、新建。**这不是权限系统**——
+没有用户、没有属主、没有 `chmod`，对谁都一样，也不提供设置。它只回答一个问题：
+「这件事做了有意义吗，还是会把页面逻辑搞坏」。`FS.can(p,'w')` / `FS.assert(p,'w')` 是它的两个快捷方式，
+`assert` 抛出来的句子会直接进 toast：`删不了「.doc.about」：文档区只读：能看，不能改、不能执行`。
+
+| 路径 | r | w | x | d | mk | 说明 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `.`（根） | ✓ | ✗ | ✓ | ✗ | ✗ | 只用来穿越；不能新建、删除、挂载 |
+| `.home` … | ✓ | ✓ | ✓ | ✓ | ✓ | 普通可写区 |
+| `.doc.*` | ✓ | ✗ | ✗ | ✗ | ✗ | 文档区：能看不能改、不能执行 |
+| `.perm.*` | ✗ | ✗ | ✓ | ✗ | ✗ | 不读内容；**执行 = 发起授权申请** |
+| `.proc.*` | ✓ | ✗ | ✗ | ✓ | ✗ | **删除 = 结束这个进程**（窗口随之关闭） |
+| `.queryfile.*` | ✓ | ✗ | ✗ | ✓ | ✗ | 用户交进来的文件：读一次即消费 |
+| `.savefile.*` | ✓ | ✓ | ✗ | ✓ | ✗ | 写入即保存到本机，节点随即消失 |
+| 普通文件 | ✓ | ✓ | 按类型 | ✓ | — | `x` 由 `type` 决定（code / page / app / wasm） |
+
+应用层（文件管理器、编辑器、看图、浏览器…）**只走 `Spot` 门面**，不裸操作节点：
+`Spot.stat/list/caps/can/typeOf/meta/setMeta/read/peek/write/save/mkdir/remove/run/openSmart`。
+裸操作只有系统自己为了解决某个问题才会做（种子数据、迁移、导入导出），
+别的地方一旦裸操作，就是 bug——真发现了应该反过来改 spotfs，而不是在应用里绕过去。
+
+> **尽力而为的那一项**：spotfs 预留了 `spotfsTable(prefix)`，导出一份 `{path,kind,size,meta,type}` 的平表，
+> 给「FreeBSD 里挂到 `/spotfs`（guest 里就是 `/`）、开机自动挂载」留口。目前只做到「能导出这张表」，
+> 真正的挂载驱动还没写——`sptm` 那句「明确的还没做，好过假能用」同样适用于它。
 
 ### 名字转义：外部文件怎么进入 spotfs
 
@@ -1062,7 +1133,7 @@ Worker 通过 Blob URL 构造（源码内联在 `<script id="worker-src" type="t
 
 ## 9. Python 环境
 
-底层终端里敲 `python()`（或按 `Ctrl+Shift+P` 开独立窗口）进入 **Pyodide**（Python 3.12.1，WASM）。
+终端窗口里敲 `python()`（或按 `Ctrl+Shift+P` 开独立窗口）进入 **Pyodide**（Python 3.12.1，WASM）。
 
 ```text
 > python()
@@ -1119,7 +1190,7 @@ dropIntoDir(items, dir, {move})                        // 窗口间拖拽的落�
 DragBus.get() / DragBus.write(dt, items) / DragBus.clear()   // 拖拽信道（同文档变量 + dataTransfer）
 
 // —— 终端 / 线程 ——
-exec(code)                  // 在底层终端执行一行
+exec(code)                  // 在终端窗口里执行一行
 python()                    // 进入 Python
 spawn(code, opts)           // 新开终端窗口
 threads.list() / threads.kill(pid)
@@ -2102,7 +2173,7 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 入口有三个，都是同一个东西：
 
 ```text
-顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / 汉字码 / Markdown / HTML 编辑器 / 截图 / 看图修图 / 链接即状态 / 计时器 / 所有应用
+顶栏 ▦ 启动器 → 计算器 / 数据转换 / 调色盘 / 汉字码 / Markdown / HTML 编辑器 / **贝塞尔动效** / 截图 / 看图修图 / 链接即状态 / 计时器 / 所有应用
 终端里        → tool calc        （不带参数敲 tools 看清单）
 文件系统      → .app.calc 也能 open
 ```
@@ -2112,8 +2183,9 @@ A：关的是「后端替你抓」。前端还有直连、`r.jina.ai`、`allorig
 | **计算器** `calc` | 完整 | 递归下降表达式解析（不是 `eval`）、`DEG/RAD`、记忆、历史、键盘直输、阶乘/幂/多参函数 |
 | **数据转换** `data` | 完整 | 编码互转（文本/Base64/Base64URL/Base32/Hex/二进制/十进制大整数/URL/HTML 实体）、时间戳与时区、哈希（SHA-1/256/384/512 + MD5）、随机数 |
 | **调色盘** `color` | 完整 | 色相环 + RGB/HSL/HSV/CMYK/YUV/Lab 六种表示联动、EyeDropper、从页面截图取色、WCAG 对比度、历史色 |
-| **Markdown** `markdown` | 完整 | 分栏实时预览、白名单清洗（`<script>`/`on*`/`javascript:` 一律删）、导出 HTML、下载 `.md` |
+| **Markdown** `markdown` | 完整 | 分栏实时预览、白名单清洗（`<script>`/`on*`/`javascript:` 一律删）、导出 HTML、下载 `.md`；顶栏格式栏（粗/斜/下划线/删除线/行内代码/H2/列表/引用/链接/分隔线）+ `Ctrl+B/I/U/K`、`Ctrl+Shift+X`、`Ctrl+Shift+.`、`Ctrl+S` |
 | **HTML 编辑器** `htmlapp` | 完整 | **代码区是 canvas 自绘的**（行号、语法高亮、光标、选区、撤销栈，1px 透明 textarea 只做 IME 代理），右边 iframe **老实渲染**——`<script>`、`on*`、`javascript:` 全不拦，默认带 `sandbox` 可一键摘掉；分栏随窗口宽度自动改上下，改一个字就重渲染（180ms 防抖），保留滚动位置，显示渲染耗时与体积。存 `.home` / 读本地文件 |
+| **贝塞尔动效** `bezier` | 完整 | 拖两个控制点设计 `cubic-bezier()`，曲线与小球同步；10 条常用预设（ease / back / anticipate…）、时长滑杆、循环、复制 CSS、存进 `.home`。求解用牛顿迭代 + 二分兜底，和浏览器同一套缓动公式 |
 | **截图** `shot` | 完整 | 桌面 / 指定窗口 / 整个文档，1–3× 缩放，PNG/JPEG/WebP，存进 `.home` 或直接下载；拍完点「编辑」直接送进看图窗口 |
 | **看图修图** `image` | 完整 | 缩放/适应/拖拽平移、裁剪、旋转 90°、水平/垂直翻转、按宽度缩放；矩形 / 箭头 / 画笔 / 文字 / 打码五种标注（带暗色描边，落在同色底上也看得见）；Alt+点击取色、Ctrl+V 粘贴剪贴板图片、Ctrl+Z 撤销（按像素数自动限步）、导出 PNG/JPEG/WebP |
 | **链接即状态** `urlhash` | 完整 | 把文本或 JS 压进 URL 的 `#` 片段，复制链接即可还原；带 `run=1` 时**先弹确认框**再执行 |
@@ -2236,7 +2308,7 @@ tools / tool color         → 工具清单 / 打开某个工具
 - 版本号常量：
   - 前端 `build/30-core.js` → `const HT_VERSION = '0.0.1.0';`
   - 后端 `modelserver.py` → `VERSION`、`modelserver.js` → `VERSION`、`modelserver.go` → `version`
-  - 两者必须一致；前端会把 `HT_VERSION` 注进顶栏、抽屉、启动屏、`.sys.version`、`uname`
+  - 两者必须一致；前端会把 `HT_VERSION` 注进顶栏、抽屉、启动屏、`.doc.version`、`uname`
 
 **提交信息**用中文，首行一句话说清「改了什么」，正文列要点与验证方式。分支固定 `main`。
 
@@ -2252,7 +2324,8 @@ build/
   10-body.html             ← DOM 骨架：顶栏、桌面、启动屏、启动器、抽屉、模态
   20-worker.js             ← Worker 内核：ANSI、行编辑器、execute()、DOM 代理、agentTui
   25-compat.js             ← HSB：MiniShell（管道/重定向/变量）+ coreutils + vim/nano + fastfetch
-  30-core.js               ← 主线程底座：HT_VERSION / Settings / 路径规则 / FS / IDB / Pkg
+  30-core.js               ← 主线程底座：HT_VERSION / Settings / 路径规则 / FS（spotfs syscall
+                             六件套 + 元数据 + 能力表 + Spot 门面）/ IDB / Pkg
   40-term.js               ← xterm 装载、Keys（顶栏控制键）、自定义光标、TerminalSession、
                              WindowManager（拖拽/缩放/窗动效）
   50-apps.js               ← BrowserApp / FilesApp / EditorApp（srcdoc、协议拦截、内部新标签）
@@ -2268,6 +2341,8 @@ build/
   60-agent.js              ← 智能体：prompt、工具定义、循环、JSONL 会话、Markdown 渲染
   61-html.js               ← HtmlApp（HTML 编辑与实时渲染）：canvas 自绘代码区 + Worker 词法着色
                              + 真 iframe 渲染（不过滤）
+  62-bezier.js             ← BezierApp（贝塞尔动效设计器）：牛顿迭代求 t、拖控制点、10 条预设、
+                             时长滑杆、循环播放、复制 CSS、存 .home
   65-tui.js                ← 终端内智能体宿主（AgentTuiHost）+ DOM RPC + 截图
   66b-hanzi-data.js        ← 汉字码数据表（4096 / 2048 两张字表，生成物，勿手改）
   67-hanzi.js              ← HanziApp（汉字码）：hex ↔ 汉字三种方案、末尾标记字自动识别
@@ -2520,10 +2595,22 @@ const py = offY + vRow * cellH;                            // 行
 - **长按 550ms**（触屏）或**右键**（桌面）：弹出 `DotMenu`——红黄绿蓝横排的四圆钮，**框里没有任何文字**。
 - 顶栏的隐藏式胶囊**只有图标**，不写标题、不挂原生 `title`；长按 / 右键同样弹四钮框。
 - Dock 图标长按也弹同一个框。三处共用一份实现（`bindLongPress`），不要各写一套。
-- **二级菜单**：四钮框里的每个圆钮**再长按一次**，展开这个动作的完整菜单（`WinMenu`，带文字与吸附网格），
-  一级框自动收起。内容与色点右键的菜单**是同一份**，只是锚点从色点换成了圆钮，外加一枚小尖角指出「从哪长出来的」——
-  三处入口都支持。
+- **二级菜单**：四钮框里的每个圆钮**再长按一次**，展开这个动作的完整菜单（`WinMenu`，带文字与吸附网格）。
+  **两级必须同时显示**——一级框不收起，二级框锚在圆钮旁边（带一枚小尖角指出「从哪长出来的」）；
+  只有「点了框外」或「真的选中了某一项」才两级一起关。内容与色点右键的菜单**是同一份**，三处入口都支持。
   黄色（最小化）以前是「待定」占位，现在是真动作：收这一扇 / 同类一起收。
+- **最后一扇窗口**（`wins.length <= 1`）单独一套规则，`_syncSolo()` 负责切类、换图标、改 tooltip：
+  - **Dock 整条不显示**——按规则不显示，不是自动收起（`#dockWrap[hidden]`，`#dock` 也清空）；
+  - 黄钮 / 蓝钮**变灰**，点了只说明原因（「最后一个窗口不能最小化」），不改变状态；
+  - 红钮换成**朝左的三角形**（`WIN_DOT_SVG.exit`，`M 30 6 L 8 20 L 30 34 Z`）——暗示「这一下会把整个页面带走」；
+  - 拖到底部中间仍然出提示框，但是**灰的**（`.win-snap[data-pos="minsolo"]`），松手弹回**拖动前**的坐标（`ox/oy`），
+    不是松手的坐标；
+  - 关掉它（`close()` 后 `windows.size === 0`）→ `exitDesktop()`：有真实来源页就回退，否则刷新自毁。
+    **不允许留一个空白页面**。
+- 隐藏式最大化（`.hidemax`）与常规最大化都能**直接拖下来**：`_startDrag` 不再因为 `win.maximized` 早退，
+  而是先 `maxMode(id,'normal')` 再按指针定位、跟手。
+- **双击标题条**最大化 / 还原的事件挂在**窗口根**上，判据是 `clientY - rect.top <= _hh + 2`：
+  常规最大化时 `.win-screen` 会铺到 `top:0` 把标题条盖住，挂在 `.win-title` 上就收不到事件。
 - 拖窗口时判定吸附的**是指针（鼠标 / 手指）的位置**，不是提手、也不是窗口边框：
   指针进到画布边缘 10px 内才吸；拖到**底部中间**（指针落进下沿 28px、横向 25%–75%）出现黄框，松手最小化。
   `0.0.1.32` 用提手位置判过一次，方向错了——手指才是用户真正在控制的东西。
@@ -2535,11 +2622,11 @@ const py = offY + vRow * cellH;                            // 行
 
 | 场合 | 自动聚焦？ | 说明 |
 | --- | --- | --- |
-| 页面加载完成 | **是**，一次 | 光标落在桌面终端里，打开就能敲 |
+| 页面加载完成 | **是**，一次 | 光标落在启动时那扇终端窗口里，打开就能敲 |
 | 弹窗里有输入框（`modal` / `modalPrompt`） | **是** | 不聚焦等于让用户多点一下；这是「让用户输入」的框 |
 | 某个工具自己的输入（改文字、重命名、搜索框） | 由点击触发 | 点了「文字」工具才聚焦，不是开窗就聚焦 |
 | 开终端 / 命令行窗口 | 否 | 用户点了才进输入态，否则手机键盘立刻占半屏 |
-| 关闭抽屉 / 执行脚本 / 切换窗口 | 否 | 这些动作不改变「用户想不想打字」 |
+| 关闭抽屉 / 执行脚本 / 切换窗口 | 否 | 切窗时会主动 `blur()` 上一个窗口里的 `input` / `textarea`，键盘别跟着跑 |
 
 实现上就一句话：**除了启动流程与需要输入的弹窗，任何地方都不要写 `.focus()`**。
 桌面端看起来「开窗即输入」很顺手，代价是手机端每次开窗都弹键盘——这个取舍已经定死。
@@ -2551,7 +2638,7 @@ const py = offY + vRow * cellH;                            // 行
 
 ```bash
 ./build.sh
-# index.html: 441616 bytes
+# index.html: 1343549 bytes
 ```
 
 脚本做的事：拼接分片 → 内联 Worker 源码（`20` + `25`）→ 写出 `index.html` → `node --check` 校验主线程与 Worker 两份 JS。
@@ -2575,6 +2662,12 @@ const py = offY + vRow * cellH;                            // 行
 | `F5` / `F11` / `F12` | `defaultPrevented` 分别为 `false` / `true` / `false`；F11 后 `body.fs` 切换 |
 | 窗口动效 | 开窗有 `htWinIn`、关窗 `htWinOut`、最小化 `htWinMin`、最大化带 `.tween`，动画类会被清掉 |
 | 窗口几何 | 最大化后尺寸 = `#desk`；还原回原尺寸；拖动位移 = 鼠标位移（含穿越 iframe） |
+| 启动态 | 只有一扇 `shell` 窗口、`mode:hidden`、带 `.solo`、`#dockWrap[hidden]`、焦点在 `.xterm` 内 |
+| 单窗口规则 | 红点 = 朝左三角；`minimize()` / `sendToBack()` 被拒；拖到底 `data-pos="minsolo"` 灰框、松手回原位 |
+| 末窗退出 | 关掉最后一扇 → `exitDesktop()` 命中 1 次、`windows.size` 归 0（不留空白页） |
+| 四钮框 | 长按绿钮：`.dotmenu` 与 `.winmenu` **同时存在**；点空白后两者一起消失；双击 `max→normal→max` |
+| spotfs | `sptn({data})` 抛错；`sptc/spta/sptr` 分离；`peek` 不消费、`sptr` 读后 `gone:true`；`caps` 五档；根目录不许新建 |
+| 文件管理器 | 空目录有提示；右键 8 项且按能力置灰；预览可折；`.doc.*` 上「编辑 / 执行」都灰 |
 | 浏览器 | 传 HTML 走 `srcdoc` 能渲染；`mailto:` 出面板块；`target=_blank` 变内部标签 |
 | 截图 | `shot('#desk')` 返回 `data:image/png;base64,` 开头的字符串（约 300 KB） |
 | 主题 | `prefers-color-scheme` 切换即时跟随 |
@@ -3114,6 +3207,26 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 教训：**测试别断言给人看的文案**；文案会随安全收敛而改，结构不会。
 失败分支自己也不能崩，否则测试失去诊断能力。
 
+**74. 同一个字段既当「已绑定」又当「吞 click」，等于把整个抽屉焊死**
+0.0.1.33 的 `_bindSwipe()` 用 `dr.__swipe` 做两件事：已绑定判重、以及「刚刚划过，吞掉紧跟的 click」。
+后果是从绑定那一刻起 `dr.__swipe` 就是真值，抽屉里**每一个按钮的 click 都被吞**——
+用户报「里面界面的按钮都按不了」，我一开始还在找 CSS / `pointer-events`。
+**修法**：拆成两个字段，`__swipeBound` 管绑定、`__swipeAt`（时间戳）管吞 click。
+教训：一个字段只能有一个含义；「哨兵 + 状态」混用，一定会变成恒真条件。
+
+**75. 事件挂在被盖住的那一层上，永远不会触发**
+「最大化后双击标题栏取消不了」——`dblclick` 挂在 `.win-title` 上，而 `.win.max .win-screen{top:0}`
+把它整个盖住，事件压根到不了。看着像「双击逻辑没实现」，其实是**命中测试**问题。
+**修法**：挂窗口根 + 用 `clientY - rect.top <= _hh + 2` 自己判「顶部那条带子」。
+同理，「拖到左下角不起预设布局」是 `_startDrag` 里 `if (win.maximized) return` 早退——
+两处都是「先假设用户不会这么操作」。
+
+**76. `sptn(p, {data})` 一时方便，把两个目录的语义堵死了**
+「新建」和「写入」捆在一个调用里，`.queryfile`（新建＝向用户要文件、读完即消失）与
+`.savefile`（写完即落盘、节点即消失）就没法表达——它们的**写入时机**本身就是语义。
+**修法**：`sptn` 只建不写，带 `data` 直接抛错，调用方必须「新建 + `sptc`」两步。
+教训：合并操作前先问「这两个步骤之间，有没有人需要插一脚」。
+
 ## 8. 借鉴声明
 
 本项目的**大量设计决策与实现片段，主动借鉴了同作者的前作**
@@ -3193,6 +3306,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 版本 | 日期 | 变更条目 |
 | --- | --- | --- |
+| 0.0.1.34 | 2026-11-10 | **第八批次（20 条）：底部不再是终端 + 最后一个窗口规则 + spotfs 调用规范化 + 文件管理器重写 + 贝塞尔设计器**：①**桌面底下没有常驻终端了**：页面启动时打开的是**一扇普通终端窗口**，只是处于「隐藏式最大化」——它和 `Alt+T` 开出来的完全一样，Dock、最小化、层叠对谁都一样；`#term-view` / `#term` 那一套 DOM 与样式全删，终端只活在 `.win-term` 里。②**单窗口规则**：总窗口数 ≤1 时 Dock **整条不显示**（按规则不显示，不是自动隐藏）；最后一扇窗不能最小化、不能改层级（黄/蓝钮变灰，点了只说明原因），红钮换成**朝左的三角形**；拖到底部仍然出框，但是**灰的**，松手弹回**拖动前**的位置。③**关掉最后一扇 = 退出整页**：不限类型，`windows.size === 0` 就走 `exitDesktop()`（有真实来源页回退，否则刷新自毁），不允许空白桌面。④**窗口交互三修**：双击最大化/还原改挂**窗口根**并用 `clientY - rect.top <= _hh` 判顶部条带（最大化时 `.win-screen` 盖住了标题条，挂在标题上的事件永远收不到）；`_startDrag` 去掉 `win.maximized` 早退，隐藏式/最大化都能直接拖下来（「拖到左下角不起预设布局」的真因）；四钮框与二级菜单**两级共存**——二级长按不再关一级框，两边的 `_outside` 互不算外面，真选中时才 `closeAll()`。⑤**抽屉两个真 bug**：`_bindSwipe` 拿同一个 `dr.__swipe` 既当「已绑定」又当「吞 click」哨兵，于是从绑定那一刻起抽屉里**所有按钮都点不动**、滑动也永不生效；拆成 `__swipeBound` + `__swipeAt` 时间戳，方向判定放宽（`abs(my) > abs(mx)` 才放弃）。⑥**手机键盘不再乱弹**：`focus()` 切窗时 `blur()` 上一个窗口里的 `input` / `textarea`。⑦**spotfs 规范化**：`sptn()` 只新建、绝不写入（带 `opts.data` 直接抛错，必须「新建 + `sptc`」两步）；不给名字就 `auto-YYYY-MM-DDTHH-MM-SS-NN` 自动起名，>99 递归续写；`.queryfile` 里新建 = 自动向用户要文件、只读、**读一次即永久消失**（`peek` 不算读）；`.savefile` 里写完 = 立刻落盘、**无论成败节点都消失**；新增 `sptmetaread/sptmetawrite`（`type/mime/readonly/executable/ctime/mtime/hint/extra`，`extra` 增量合并），判断类型**先看元数据再看魔数**（PNG/JPEG/GIF/RIFF/wasm/ZIP/PDF + doctype/asm），不看后缀；`sptm(p)` 改成把 JS **挂成函数**；新增 `Spot` 门面，应用层只走它，裸操作只剩系统自己。⑧**统一能力表** `FS.caps(p) → {r,w,x,d,mk,why}`：预设、对人一致、不给设置——根目录只能穿越（不能新建/删除/挂载）、`.doc` 只读、`.perm` 只 x（执行＝申请）、`.proc` 删除＝杀进程、两个一次性目录各按上条；`assert` 把原因直接抛成 toast 文案。⑨**`.sys` → `.doc`**（里面本来全是文档），带启动迁移，新增 `.doc.mount` 写清 FreeBSD `/spotfs` 挂载的打算。⑩**文件管理器整类重写**：`pointerdown` 起 520ms 长按 → 上下文菜单，移动 >8px 取消（＝拖拽）；空目录给提示不再「打不开」；每行标 `r/w/x/d`；预览栏可折；「打开」→「编辑」（**对齐 `w`**，只读区只能用预览看）、「执行」对齐 `x`（文件夹＝进入），不适宜项变灰；双击走 `openSmart()`：可执行先执行，不行退编辑器，再退属性。⑪**新应用贝塞尔动效设计器**：拖两个控制点即时看小球动效，10 条预设、时长滑杆、循环、复制 CSS、存 `.home`，求解用牛顿迭代 + 二分兜底。⑫**Markdown 快捷键**：顶栏 11 个格式按钮 + `Ctrl/⌘ B/I/U/K/反引号`、`Ctrl+Shift+X`、`Ctrl+Shift+.`、`Ctrl+S`，再点一次可撤销。⑬顺手把 `tools` 命令的清单补齐（新增 htmlapp / bezier / timer / applist，去掉四个「维护中」），`mount` 的占位文案改成「FreeBSD `/spotfs`」那句真话。 |
 | 0.0.1.33 | 2026-11-10 | **交互十项：吸附改认指针、四钮框可再长按、双击标题、按窗缩放、拖动不闪、抽屉顺滑、计算器即刻响应、焦点规则、`$` 可用、Tab 轮换**：①**吸附判据改回指针**——上版我按提手矩形判，是我把需求记错了；现在只看鼠标 / 手指：进画布边缘 10px 才吸，底部中间（指针在下沿 28px、横向 25%–75%）才是「最小化」黄框。②**四钮框再长按 → 二级菜单**：`DotMenu` 里的红黄绿蓝每个圆钮都能再长按一次，展开该动作的完整 `WinMenu`（带文字与吸附网格），一级框自动收起；窗口色点、顶栏胶囊、Dock 图标三处入口都一样。**复用**：长按手势抽成 `bindLongPress()`（原来抄了三份），浮层定位抽成 `placePopover()`（原来抄了三份）；黄色菜单从「待定」占位改成真动作（收这一扇 / 同类一起收）。③**双击标题条最大化 / 还原**：排除色点与工具按钮；触屏没有 `dblclick`，在拖动收尾里自己数两下（340ms、位移 <30px）。④**Ctrl / ⌘ + 滚轮缩放**：只改**这一扇**终端的 `fontSize`（8–32），随即 `fit()` 重排列数，不动全局设置；页面本身不缩放。⑤**拖动不再闪**：拖动期只写 `transform: translate3d()`，松手才把坐标兑现回 `left/top`——窗口里的 canvas / iframe 一个像素都不用重画，顺带不再在拖动时关掉内容区的 `backdrop-filter`（那一关就是「闪一下」的来源）。⑥**抽屉滑动关闭**：阈值从 32%/0.5 放宽到 26%/0.35，修掉「快速轻扫反而判不够远、弹回去」；关闭路径显式指定 `translateX(100%)` 再摘 `.on`，不再有一帧跳回原位；划完吞掉紧跟的 `click`；关闭不再把焦点塞回终端。⑦**计算器跟手**：按键改走 `pointerdown`（不再等 click 合成），`click` 只给键盘触发兜底；顺带修 `WindowManager.focus()`——以前每点一下窗口内任意位置都重建整条 Dock 的 DOM，连点两下第二下要排队。⑧**焦点规则**：默认一律不自动聚焦，只有「页面加载完成」与「需要输入的弹窗」例外；开终端窗口、关抽屉、执行脚本都不再抢焦点。⑨**`$` / `$$` 能用了**：不是没定义，是 `prefetchDom()` 看到代码里没有 `document` 这个词就直接返回，拿到的是没有快照的空壳（`tagName` 是 undefined、`length` 0）；现在 `$(` / `$$(` 也参与选择器预取。⑩**Tab 多候选轮换**：补完公共前缀后再按，第一次出表并填第一个，之后每按一次就地换成下一个，绕回开头；替换只动光标前那一截（`complete()` 新增 `base`），不会把 `document.query` 拼成 `document.queryquerySelector`。 |
 | 0.0.1.32 | 2026-11-09 | **HTML 编辑器（canvas 自绘）+ Tab 补全重写 + 吸附只认提手 + 渲染风暴清零**：①新增应用 **HTML 编辑与实时渲染器 `htmlapp`**：代码区**用 canvas 2D 自己画**——行号、关键字/标签/属性/字符串/注释/数字着色、真光标与选区、点击定位、Ctrl+Z 撤销 / Ctrl+Shift+Z 重做、Tab 整块缩进、Ctrl+S 存盘 / Ctrl+Enter 立即运行；上面盖 1px 透明 textarea 只当 IME 代理（中文输入法靠它，caret 设透明），所以「原生」得没有 contenteditable 那些脾气。高亮在 **Worker 里做词法**（token 数组回传主线程着色，3 秒超时降级成单色）。右侧 iframe **老实渲染**——`<script>`、`on*`、`javascript:` 一个都不过滤，默认带 `sandbox`，需要时点「隔离」摘掉；边打边渲染（180ms 防抖、保留滚动位置、显示耗时与体积），分栏在 620px 以下自动改上下；深浅两套调色板。存进 `.home`、也能读本地文件。与小浏览器**并存**，互不替代。②**Tab 补全整个重写**：修掉「补的是当前目录文件」——控制台没有当前目录，补全先判类型：**路径**（`./` `../` `~/`）才去问文件系统，**成员链**（`Math.` `document.quer` `FS.wr`）走成员目录，**光秃秃一个词**走全局标识符。成员目录由主线程沿原型链爬 3 层后随 `init` 送进 Worker（~39 KB，`window` 一项 1366 个成员），不跨线程往返。候选排成表：按类型上色、名字列按**显示宽度**对齐（中文占两格）、每个带一句话说明、超宽自动折行；**按一次补公共前缀，同位置再按一次才列表**。新增 `api()` / `api("窗口")` 打印全部内置 API（9 组手写名单 + 说明），`help()` 补「补全」「全表」两行。③**吸附只认提手**：阈值收回 10px，判定矩形就是 `.win-handle` 自己的 `getBoundingClientRect`——窗口别的地方、别的参数一律不参与；底部 40px 那条黄框判「最小化」，中间带用提手中心 25%–75% 判。于是「往左偏一点点就贴合」没了：离边 30px 不吸，贴到 2px 才吸。④**桌面卡顿**：计时器从「无条件 `setInterval(50)`」改成**按需**——秒表跑才 50ms、倒计时才 200ms、不跑直接 `clearInterval`；9 个元素引用缓存下来，值没变就不写 DOM，计次列表只在条数变化时重建。⑤**手机粘贴多行不再断**：手机 IME 粘贴**不带** xterm 的括号粘贴标记（`\x1b[200~`），于是整段代码被当成一串回车逐行执行——只有第一行跑了，后面全变成「命令不存在」。改成在 `feed()` 里识别「一次性到达的多字符且含 `\n`」→ 当作整段插入缓冲，交给 `scanJs()` 判断括号闭合后一次执行。 |
 | 0.0.1.31 | 2026-11-09 | **窗口交互大修 + 渲染守护 + 计时器**：①标题栏双击最大化；**绿点的隐藏式最大化改成「顶栏只留一个 26px 图标」**——无文字、无原生 tooltip，且同一时刻只允许一扇窗占据（新的进来，旧的退回常规最大化）；**长按色点 / 胶囊 / Dock 图标统一弹「红黄绿蓝四圆钮」**，框里一个字都没有，点外部或 Esc 关闭。②**红点 = 强制关闭**：`close()` 立刻 dispose（智能体 abort + 落盘、hsb2 停 v86），这里没有「后台」这种东西。③**窗口拖到画布底部中间出现黄框，松手最小化**；吸附判定从 10px 放宽到 46px 并同时看指针与窗口边缘，修掉「靠右能吸、靠左吸不到」。④四色点改为指定色 `#e01715 / #f5b900 / #8de312 / #19e6f0`。⑤新开窗口的高度不再压住 Dock（默认下限），只有用户随后拖动才可越过。⑥「彻底全屏」真的发 `requestFullscreen`，并点亮顶栏全屏按钮；Esc / F11 退出浏览器全屏时同步退出该模式。⑦**新增渲染守护 `Guard`**：Worker 每 10 秒心跳 + resize 立即巡检，修正 NaN / 过小 / 过大 / 完全出界的窗口、比窗口还高的提手、文档横向溢出；修正后 15 秒「睡死时间」防闪烁。⑧卡顿：动画去掉 `filter:blur`、取消 `.win` 常驻 `will-change`、拖动与几何过渡期间关闭 `backdrop-filter`。⑨调色盘 HSV 选区镜像——HSV 的 S 被当成 HSL 的 S 存，点上方却选中下方；改成先算 RGB 再反解 HSL，标记点改用 HSV 的 S/V。⑩智能体：**只贴图片、不写字也能发送**；新增收敛护栏（单轮 8 分钟、观察结果连续两次相同即停、连续 4 次 JS 失败即停、重复输出追问最多 2 次）；「更多」里的会话清空也弹确认框。⑪`.bin` 全部并入 `.app`（旧数据自动迁移、hsb1 保留回退），README 增补 `.app` 目录索引。⑫「所有应用」按**系统预装 / 已安装（来自 .app）**分组，新增列表 / 方块两种视图。⑬数据转换：去掉所有「换算」按钮改成四格实时联动（秒 / 毫秒 / 日期 / 时区都能填），删掉「现在」栏目改成标题栏按钮，卡片补标题栏、顶部改真选项卡。⑭汉字码：汉字侧识别出方案后顶部选项卡自动跟随；删掉「自检通过」「已按 4096 字编码」。⑮截图新增「截图时隐藏本窗口」。⑯新增**计时器 / 秒表**应用（计次、倒计时响铃、最小化不停）。⑰致谢 seekHarness（wingchi-leung）：借鉴其步数预算、停滞检测与收尾追问三条机制。 |
@@ -3242,6 +3356,7 @@ message。教训：**「输入不可信」和「输出也要收敛」是两件�
 
 | 时间 | 任务 | 改动 | 验证 | 推送 |
 | --- | --- | --- | --- | --- |
+| 2026-11-10 17:20 | 0.0.1.34：底部不再是终端 + 最后一个窗口 + spotfs 规范化 + 文件管理器重写 + 贝塞尔 | `build/30-core.js`（`HT_VERSION`；`.sys`→`.doc` + `migrateDocDir()` + `.doc.mount`；新增 `caps/can/assert` 能力表、`sniff/typeOf` 类型判定、`autoName()`；`sptn` 拆成**只建不写** + `.queryfile`/`.savefile` 两个一次性分支；`sptr` 加 `peek` 与读后消费；`sptx` 按 `type` 分流；新增 `sptmetaread/sptmetawrite`（`extra` 增量合并）、`sptm` 改挂函数、`Spot` 门面、`spotfsTable()`）、`build/20-worker.js`（`sptm` 新签名；新增 `sptmetaread/sptmetawrite/sptcaps` 三处挂载 + `help()` 行）、`build/70-boot.js`（RPC `fs.meta.read`/`fs.meta.write`/`fs.caps`；`_bindSwipe` 整个重写：`__swipeBound`/`__swipeAt` 分离 + 方向判定放宽 + 阈值 22%/0.3&5%；`Drawer.open()` 清 `transition/transform`；`btnRestartTerm` 关旧窗口再 `bootDesktop()`；启动文案「打开终端窗口」）、`build/40-term.js`（`WIN_DOT_SVG.exit` 朝左三角；`bootDesktop()` 改成开一扇普通 `shell` 窗 + `maxMode(hidden)`；双击挂窗口根 + `_hh` 判条带；`_startDrag` 去 `maximized` 早退；底部 `solo?'minsolo':'min'` + 灰框 + 回原位 + toast；`minimize/sendDown/sendToBack` 单窗拒绝；`close()` 末窗 `exitDesktop()`；`_syncDock` 单窗清空 + `_syncSolo()`；`DotMenu` 两级共存 + `.solo`；`WinMenu` 修 `return m` 位置 + `closeAll()` + `disabled`；`focus()` 切窗 blur；`create()` dispose 清 `desktop`）、`build/50-apps.js`（`FilesApp` 整类重写：长按/右键菜单、双击自数、空目录提示、权限小标记、预览折叠、`_syncBar` 对齐 `w/x/d`、`open`→`Spot.openSmart`、`run`→`sptx`+`Spot.act`、新增 `showMeta/rename/paste/copy/cut`；`EditorApp` 走 `Spot.read/write`）、`build/55-tools.js`（`MdApp` 格式栏 + `applyFmt` + 快捷键）、`build/58-image.js`/`59-media.js`/`61-html.js`（保存走 `Spot.write` + `type`）、`build/62-bezier.js`（**新增** ~330 行：`solveBezier`、`PRESETS`、`BezierApp`）、`build/00-head.html`（删 `#term-view`；`.win.solo`/`.dotmenu.solo`/`.win-snap[minsolo]`；`.md-tb`；`.bz*` 全套；`.fm-row .perm`/`.fm.pv-off`/`.fmctx`）、`build/10-body.html`（删终端 DOM；启动器加 bezier）、`build/25-compat.js`（`mount` 文案改 FreeBSD `/spotfs`；`tools` 清单补 6 项 + 去掉「维护中」）、`build/30-core.js`+`modelserver.{py,js,go}`（版本 0.0.1.34）、`build.sh`（拼 62）、`tests/test_v134.py`（新增）、`README.md`、`TASKS.md` | Playwright（1280×800）：**启动态** `wins:1 mode:hidden cls:"win solo focus hidemax"`、`dockHidden:true`、`dockLen:0`、`chip.on:true`、焦点在 `.xterm` 内；**单窗** 红点 `d:"M 30 6 L 8 20 L 30 34 Z"`、`minimize` 后 `minimized:false`、`sendToBack` 后 z 不变；**拖到底** `pos:"minsolo"` + `display:block` + 边框 `rgba(150,164,160,.7)`，松手回到 `391/328`（与拖动前完全一致）、`mode:normal`；**两级共存** 长按绿钮后 `dotmenu:true winmenu:true lv2:true title:"绿色 · 窗口形态"`，点空白后两者同 `false`；**抽屉** 字号滑杆 14→17、点条目切窗并收起、60px 快扫即关；**双击** `max→normal→max` 三轮；**spotfs** `sptn({data})` 抛「只新建、不写入」、`sptn` 建出 `size:0 content:""`、`sptc`→`hello`、`spta`→`hello!`、`sptmetawrite{extra.tag}` 读回 `demo`、`caps` 五档全对、`auto` 连出 `auto-2026-11-10t17-11-58-01/02`、根目录新建报「根目录只用来穿越」、`.perm.notification` → `{act:"perm"}`；**queryfile** `peek` 后 `stillThere:true`、读后 `consumed:true gone:true`、再读报「不存在」、`sptc` 报不可覆盖；**perm 目录** `sptc`/`sptr` 均被拒、`sptx` 出 `perm`；**文件管理器** `.home` 2 行、空目录提示「空目录 · 右键新建，或用上面的 ＋」、右键菜单 8 项、`pv-off:true`、`.perm.notification` 上 `run` 可用而 `edit/del` 变灰、`.doc.license` 上 `run/edit` 都灰；**焦点** 开 timer 后 `after:"BODY"`、`isField:false`、`inside:false`；**Markdown** `.md-tb` 11 个按钮、`Ctrl+B`→`**abc**`、`Ctrl+U`→`<u>xyz</u>`；**贝塞尔** `cubic-bezier(.25,.1,.25,1)`→`(0.21,0.91,0.25,1)`、小球 `translate3d(117px,-6px,0)`；**目录** 根下 `.doc` 在、`.sys` 无；**末窗关闭** `exitDesktop` 命中 1 次、`windows.size:0`；0 pageerror、0 console error | 本轮 |
 | 2026-11-10 13:40 | 0.0.1.33：吸附认指针 + 四钮框二级菜单 + 双击标题 + 按窗缩放 + 拖动不闪 + 抽屉 + 计算器 + 焦点规则 + `$` + Tab 轮换 | `build/40-term.js`（吸附改指针：`SNAP=10`/`BOTTOM=28` + `px/py`；拖动改 `translate3d` + 松手兑现 `left/top`；新增 `bindLongPress()`/`placePopover()`；`_bindDotMenu`/`_bindDockMenu`/胶囊改调 `bindLongPress`；`DotMenu.open` 给四个圆钮挂二级长按；`WinMenu` 黄色菜单改真动作 + `min-one`/`min-type`；`focus()` 加同窗快路径；`_bindZoom()`（Ctrl/⌘+wheel，8–32px，随会话）；`_mount` 去掉 `term.focus()`、`dispose` 解绑 wheel；双击标题排除 `.win-tools`；触屏双击 340ms 判定）、`build/70-boot.js`（抽屉滑动：阈值 26%/0.35、显式 `translateX(100%)`、吞 click、`window` 兜底 pointerup、去掉关闭后聚焦；`execInDesktop` 去掉聚焦；启动完成 `setTimeout` 聚焦桌面终端一次）、`build/55-tools.js`（`CalcApp._bind` 改 `pointerdown` + click 兜底去重）、`build/20-worker.js`（`complete*` 三个分支都返回 `base`；Tab 多候选轮换 + `_tabCycle`；`prefetchDom` 识别 `$(`/`$$(`；`help()` 两行）、`build/00-head.html`（`.win.dragging{will-change:transform}`；去掉拖动期 `.win-screen` 的 `backdrop-filter:none`；`.winmenu.lv2` 小尖角）、`build/30-core.js` + `modelserver.{py,js,go}`（版本）、`tests/test_v133.py`、`tests/test_menu.py`、`tests/test_focus_drag.py`（新增）、`README.md`（§5.5 轮换、§5.9 二级菜单与指针吸附、§5.10 焦点规则、日志）、`TASKS.md` | Playwright（1440×900）：**焦点** 加载后 `activeElement` = `.xterm-helper-textarea`；开终端窗口后仍是桌面终端；browser/files/editor/agent/image/htmlapp/color/data 八个应用开完，焦点都在窗口之外（`inside:false`）；**Tab 轮换** `document.q` → `query` → `queryCommandState` → `queryCommandSupported` → `querySelector` → `querySelectorAll`；**`$`** `typeof $` = function、`$$("#topbar").length` = 1、`$("#topbar").tagName` = HEADER；**双击** 标题文字中心 → `max`（1440 宽），再双击 → `normal`（780）；**缩放** 14 → 17（3 格），`devicePixelRatio` 仍 1；两扇 shell 分别 14 / 15，互不影响；**吸附** 窗口贴边但指针在中间 → 不吸；指针移到左缘 4px → `pos:"left"`，松手 `left:0,w:720`；**计算器** pointerdown 后 12ms `expr` 已是 `1`；连点 `1 + 2 =` → `res:3`；**抽屉** 60px 快扫即关（`left:1440`、`opened:false`）；**二级菜单** 色点长按 → 4 钮；再长按绿钮 → 「绿色 · 窗口形态」且一级框已收；胶囊 → 黄 → 「黄色 · 最小化 / 同类一起收（1）」；Dock → 蓝 → 「蓝色 · 层叠」；**拖动** 拖到一半 `left/top` 仍是 `200/100`、`transform:translate3d(-151px,-100px,0)`，松手 `317/160`；帧间隔 `p50 16.7 / p95 16.7 / max 16.8`、长任务 0；缩放+打字 `p95 33.3`、长任务 0；0 pageerror | 本轮 |
 | 2026-11-09 21:50 | 0.0.1.32：HTML 编辑器（canvas 代码区）+ Tab 补全重写 + 吸附只认提手 + 渲染风暴清零 | `build/61-html.js`（**新增** ~700 行：`HxWorker` 共享 Worker 词法着色 + 3s 超时降级、`HX_SAMPLE`、`class HtmlApp`：`_build/_bind/_layout/_resizeCanvas/_metrics/_lines/_pos/_colX/_hitTest/_draw/_paint/_segments/_colorOf/_applyTheme/_scheduleToken/_pushUndo/_setText/_syncTa/_onInput/_onKey/_insert/_deleteSel/_move/_indentBlock/_ensureCaretVisible/_onDown/_onMove/_onUp/_onWheel/_onSplit/_startBlink/_cycleView/_layoutFrame/_scheduleRun/_render/_openFile/_saveFile/onResize/dispose`）、`build/00-head.html`（`.hx/.hx-bar/.hx-sp/.hx-chk/.hx-body/.hx-edit/.hx-cv/.hx-in/.hx-gutter/.hx-prev/.hx-frame/.hx-foot` 全套 + 窄屏媒体查询）、`build/10-body.html`（启动器加 htmlapp）、`build/30-core.js`（`HT_VERSION` 0.0.1.32、`APP_DEFS` 加 htmlapp）、`build/40-term.js`（吸附重写：`SNAP=10` + 只取 `.win-handle` 的 rect + `BOTTOM=40` + 提手中心 25%–75% 判中间带；新增 `HT_MEMBER_DESC`/`HT_SURFACE_NAMES`/`_htSurface`/`htSurface()`，`_spawn` 的 `init` 带 `surface`；`TYPE_TITLES`/`TYPE_SIZE` 加 htmlapp、`_render` 加分发）、`build/20-worker.js`（`feed()` 整段粘贴识别；`SURFACE` + `init.surface`；`surfaceOf/kindOf/membersOfPath/descFor/tabLines/wrapText/commonPrefix/completePath/complete` 全新；Tab 键改「先补公共前缀、同位置再按才列表」；`API_GROUPS`/`API_DESC`/`apiTable` 与 `api`/`apiList` 全局；`help()` 补两行）、`build/55-tools.js`（`TimerApp` 去掉无条件 `setInterval(50)`，改 `_cacheEls/_txt/_syncTick/_paint` 按需刷新；`APP_DESC` 加 htmlapp）、`build.sh`（拼 61-html.js）、`modelserver.{py,js,go}`（版本）、`tests/test_complete.py`、`tests/test_htmlapp.py`、`tests/test_snap_paste.py`（新增）、`README.md`（§5.5 Tab 补全、§15 工具表加 htmlapp/timer、文件地图、日志）、`TASKS.md` | Playwright（无头 Chromium）：**吸附** 提手离左缘 30px → `pos:null`，贴 2px → `pos:"left"` 且 `{x:0,w:700}`；**手机粘贴** 一次投入 14 行 IIFE → 终端先 `[粘贴 14 行]` 再 `done 49`（49 个按钮真变红），无半截残留；**Tab 补全** `doc⇥`→`document`、`document.quer⇥`→`document.query`、同位置再按列出 6 项含「querySelector() 函数 找第一个匹配的元素」、`Math.⇥⇥` 9 项、`./⇥⇥` 7 个目录（蓝色）、`api()` 打出 9 组分组表；**HTML 编辑器** canvas 画出 28 行 + 行号，点第二行 `{row:1,col:9,focused:true}`，键入立即出现，Tab 缩进 +2、Ctrl+Z 回退，改文本 → iframe 内出现 `HELLO-RENDER`，`<script>` 真执行（`RAN`），保存 `{found:true,content:"<p id=\"s\">saved</p>"}`，分栏 1/0 切换正常、430px 窄窗自动 `320px 6px 1fr` 上下排、浅色主题可读；**性能** 7 窗空闲 6s DOM 变更 **0**（修前同场景 1280+），帧间隔 空闲 `p50 16.7/p95 16.8/max 16.8`、拖动 40 步 `p95 16.8/p99 33.3`、连打 60 字 `p95 16.7`，长任务 **0**；0 pageerror | 本轮 |
 | 2026-11-09 19:45 | 0.0.1.31：窗口交互大修（18 条）+ 渲染守护 + 计时器 | `build/00-head.html`（四色变量 `--dot-red/yellow/green/blue`；`#hidChip` 改 26px 纯图标；新增 `.dotmenu` 四圆钮框与 `dmIn`；`.win-snap[data-pos="min"]` 黄框；动画删 `filter:blur`、去常驻 `will-change`、拖动期关 `backdrop-filter`；`.al-views/.al-list/.al-row`；`.tl-tabs/.tl-tab` 改真选项卡 + `.tl-card`；`.tm-*` 计时器）、`build/10-body.html`（胶囊去文字、启动器加 timer）、`build/30-core.js`（`HT_VERSION`、`DIRS` `.bin`→`.app`、全部种子改 `.app.*`、`APP_DEFS` 加 timer、`write()`/`remove()` 只保护 `kind==='app'`、新增 `migrateBinDir()`、正则 `/^\.app\./`）、`build/25-compat.js`（`tryExternal` 先 `.app.` 再 `.bin.`）、`build/40-term.js`（`WIN_DOT_SVG` 常量、`DotMenu` 对象、`_bindDotMenu` 550ms、`_bindDockMenu`、`maxMode/minimize/close/focus` 调 `DotMenu.close()`、`_syncModeChrome` 去 `title`、吸附 `EDGE=46` 双条件、`_snapRect.min`、松手 `minimize`、`open()` 的 `dockReserve`、`_enterBrowserFS/_exitBrowserFS`、`TYPE_TITLES/TYPE_SIZE` 加 timer）、`build/55-tools.js`（`AppListApp` 重写：双视图 + 分组 + `_runInstalled`；`ShotApp` 加隐藏窗口；新增 `TimerApp`）、`build/56-data.js`（`buildTime` 四格联动、删 `refreshNow`）、`build/57-color.js`（`pickSV` 走 RGB 反解、`sync()` 用 HSV 的 s/v）、`build/60-agent.js`（发送判空改看附件、`run()` 加 `TIME_BUDGET`/`obsKey`/`jsFails`/`nudges` + `REASON` 文案）、`build/67-hanzi.js`（删 `hz-foot`/`_paintSelf`/`selfTest`、`_len` 联动选项卡）、`build/68-guard.js`（**新增**：Worker 心跳 10s + resize 巡检 + `every()` 注册口 + `_guardUntil` 睡死时间）、`build/70-boot.js`（`agentClear` 确认框、`fullscreenOn` 认 `immersive`、`toggleFullscreen` 走 `exitImmersive`、监听 `fullscreenchange`、boot 调 `Guard.init()`）、`build.sh`、`modelserver.{py,js,go}`（版本）、`README.md`（§5.9 四色点规范、§8.2 致谢 seekHarness、`.app` 目录索引、日志）、`TASKS.md` | Playwright（无头 Chromium）：双击标题 `{mode:'max', width:'100%'}`；长按红点 `{n:4, txt:''}` 无文字、Dock 长按 `n=4`、胶囊 `{txt:'', w:26, title:null, svg:true}` 且第二扇窗进来旧的退回 `max`；彻底全屏 `{body:true, fsBtn:true, ball:'grid'}`；左缘吸附 `{'pos':'left'}` 命中、底部中段黄框松手 → `minimize`；守护把 40×30 / left 5000 / top −200 修正为 `280×188, l:1110, t:0` 且 15s 内不反复；时间戳填 `1700000000` → `ms 1700000000000 / dt 2023-11-15 06:13:20`，反向填日期同步 sec/ms，「现在」按钮生效；汉字码 2048 编码粘回 → 顶部自动切 `['B']`、解码回 `48656c6c6f`；HSV top `5.1%/v95`、bottom `94.9%/v5`、mid `49.8%/v50` 无镜像；计时器秒表 `00:01.29` + 计次 `#1 00:01.34`、倒计时 `01:00→00:59 倒计时中`；截图隐藏窗口 `2200×1532 · 1.31 MB` 且事后 `visibility:visible`；智能体纯图片 `{called:1, t:'', atts:1}`、停滞停在 `⏹ 连续多次输出相同内容，自动追问两次仍未改变，已停止本轮。`；所有应用系统预装 20 + 已安装 20（14 func + 6 html）、`.app` 目录 40 项；`tests/test_dialog.py`、`tests/test_fm.py` 全绿，0 pageerror | 本轮 |
@@ -3331,5 +3446,5 @@ SPDX-License-Identifier: Apache-2.0 OR MIT
 ---
 
 <p align="center">
-  <sub>HTerMinaL 0.0.1.33 · 桌面就是终端 · 一切皆文件</sub>
+  <sub>HTerMinaL 0.0.1.34 · 一切皆文件 · 窗口是线程</sub>
 </p>

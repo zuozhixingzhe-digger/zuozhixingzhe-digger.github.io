@@ -753,7 +753,7 @@ const COMPAT = (function () {
 
   def('mount', async (a) => {
     if (a[0]) {
-      return { code: 1, err: 'mount: sptm 还没做（占位）。目前只有内建挂载点，不能自己挂。\n' };
+      return { code: 1, err: 'mount: 挂载还没做（占位）。spotfs 打算被 FreeBSD 挂到 /spotfs（guest 里就是 /），现在只导出了表，没有驱动。\n' };
     }
     const ms = await IO.call('fs.mounts');
     const w = Math.max(...ms.map(m => m.path.length), 5);
@@ -761,10 +761,14 @@ const COMPAT = (function () {
   }, '列出挂载点（挂载本身未实现）');
 
   def('tools', async () => {
-    const names = ['calc', 'data', 'color', 'markdown', 'shot', 'image', 'urlhash', 'recorder', 'geo', 'view3d', 'audio'];
-    return { out: names.map(n => n.padEnd(10) + ({ calc:'科学计算器', data:'数据转换', color:'调色盘', markdown:'Markdown 渲染',
-      shot:'网页内截屏', image:'看图 / 修图', urlhash:'链接即状态', recorder:'录音机（维护中）', geo:'定位（维护中）',
-      view3d:'3D 视图（维护中）', audio:'音频播放（维护中）' })[n]).join('\n') + '\n' };
+    const names = ['calc', 'data', 'color', 'markdown', 'htmlapp', 'bezier', 'shot', 'image', 'urlhash', 'timer', 'recorder', 'geo', 'view3d', 'audio', 'applist'];
+    const desc = {
+      calc:'科学计算器', data:'数据转换', color:'调色盘', markdown:'Markdown 编辑 / 渲染',
+      htmlapp:'HTML 编辑 + 实时渲染', bezier:'贝塞尔动效设计器', shot:'网页内截屏',
+      image:'看图 / 修图', urlhash:'链接即状态', timer:'计时器 / 秒表', recorder:'录音机',
+      geo:'定位', view3d:'3D 视图', audio:'音频播放', applist:'所有应用'
+    };
+    return { out: names.map(n => n.padEnd(10) + (desc[n] || '')).join('\n') + '\n' };
   }, '列出工具');
 
   def('tool', async (a) => {

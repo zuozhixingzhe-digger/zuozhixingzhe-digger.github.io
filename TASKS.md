@@ -1,9 +1,86 @@
-# 待办 · 2026-11-10 第七批次（v0.0.1.33）
+# 待办 · 2026-11-10 第八批次（v0.0.1.34）
+
+> 用户要求：①「更多」抽屉仍滑不动、里面按钮按不了；②窗口拖到左/右下角不起预设布局；③已最大化时双击标题栏取消不了；④隐藏式最大化的四钮框与 Dock 上那套四钮框，再长按会只剩二级框——两级必须共存，直到点别处或真选中；⑤计时器/文件管理器打开会唤起输入法；⑥文件管理器空文件夹打不开、双击难开；⑦`.perm` 里的东西不能执行、目录本身被误当成可写；⑧**底部不再是终端**：启动即一扇普通终端窗口（隐藏式最大化），单窗口不显示 Dock，最后一个窗口不能最小化/改层级，拖到底变灰框且回原位，关掉它 = 整页退出；⑨新增贝塞尔动效设计器；⑩Markdown 支持 Ctrl-B/I/U 与顶栏按钮；⑪**调用规范化**：应用一律走 spotfs 暴露的 syscall，建/读/覆盖写/追加全分开，`sptn` 只建不写、可自动起名，`sptmetaread/write` 读写元数据且判断优先看元数据，`.queryfile` 读一次即消失、`.savefile` 写完即消失；⑫文件管理器长按/右键上下文菜单、拖够距离才算拖拽；⑬预览栏可隐藏；⑭「打开」→「编辑」，编辑/执行与 w/x 对齐、不适宜项变灰；⑮双击自动判断（执行→编辑→属性）；⑯统一能力表（预设、对人一致、根目录只能穿越）；⑰`.sys` → `.doc`。
+> 状态：`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成并实测
+>
+> 第七批次（v0.0.1.33）已归档到文末附录。
+
+## A. 最后的窗口与 Dock 规则
+
+- [x] `bootDesktop()` 改为「开一扇普通 `shell` 窗口 → 立刻 `maxMode(hidden)`」，底部不再有常驻终端
+- [x] `#term-view` / `#term` 一套 DOM 与 CSS 全删；终端只活在 `.win-term` 里
+- [x] 总窗口 ≤1 时 `#dockWrap` 直接 `hidden`（按规则不显示，不是自动隐藏）；`#dock` 清空
+- [x] 单窗口：`.solo` 类 → 黄/蓝钮变灰且点击被拒（toast 说明原因）；红点换「朝左三角」`ic-exit`
+- [x] 拖到底：`snapPos = 'minsolo'` → 灰框 + 「最后一个窗口不能最小化」
+- [x] `minsolo` 松手弹回**拖动前**的位置（`ox/oy`），不是松手位置
+- [x] 关掉最后一个窗口 → `exitDesktop()`（沿旧语义：能回退就回退，否则自毁重载）
+- [x] `TerminalManager.create` 的 dispose 包装里同步清 `desktop`，避免顶栏往死会话写
+- [x] 实测：启动 `wins:1 mode:hidden cls:"win solo focus hidemax"`、`dockHidden:true`；`left/top` 弹回 391/328 原值；关最后一扇 `exitDesktop` 命中 1 次、`windows.size:0`
+
+## B. 窗口交互修复
+
+- [x] 双击最大化/还原改挂**窗口根** + `clientY - rect.top <= _hh + 2` 判顶部条带（`hidemax` 下标题条被盖住收不到事件）
+- [x] `_startDrag` 去掉 `if (win.maximized) return`：最大化/隐藏式都能拖下来（先 `maxMode(normal)` 再按指针定位）
+- [x] 四钮框与二级菜单**两级共存**：二级长按不再 `dotmenu.close()`
+- [x] `DotMenu._outside` 与 `WinMenu._outside` 互不算「外面」；真选中时 `WinMenu.closeAll()` 两级同收
+- [x] `WinMenu.open` 把 `return m` 移到 `addEventListener` 之后（原来监听器根本没挂上）
+- [x] 实测：长按绿钮后 `dotmenu:true winmenu:true lv2:true`，点空白后两者同 `false`；双击 `max`→`normal`→`max`
+
+## C. 抽屉
+
+- [x] `_bindSwipe` 重写：`__swipeBound` 专管「已绑定」，`__swipeAt` 时间戳专管「吞 click」——以前共用一个字段，导致绑定即吞光所有 click
+- [x] 方向判定放宽（`abs(my) > abs(mx)` 才放弃等待），阈值 22% / 0.3px·ms⁻¹ & 5%
+- [x] 实测：字号滑杆 14→17 生效；点窗口条目切窗并收起；60px 快扫即关
+
+## D. spotfs 规范化（最大一块）
+
+- [x] `sptn()` 只新建不写入：带 `opts.data` 直接抛错，要求「新建 + `sptc`」两步
+- [x] `sptn` 可给目录 + 省略名字 → `autoName()`：`auto-YYYY-MM-DDTHH-MM-SS-NN`，>99 递归续写
+- [x] `.queryfile` 里 `sptn` → 自动 `askFile()` 向用户要文件；该目录 `w:false`、读一次即 `remove()`
+- [x] `.savefile` 里 `sptc` 写完 → 立刻落盘并抹掉节点（无论成败）
+- [x] 拆清 `sptc`(覆盖写) / `spta`(追加) / `sptr`(读) / `sptx`(执行) / `sptd`(删) / `sptm`(挂函数)
+- [x] `sptmetaread` / `sptmetawrite`：`{path,kind,type,mime,size,readonly,executable,ctime,mtime,hint,extra}`，`extra` 增量合并
+- [x] 类型判定顺序：`meta.type` → `meta.mime` → `kind` → **魔数**（PNG/JPEG/GIF/RIFF/wasm/ZIP/PDF + doctype/asm）→ `text`
+- [x] `sptx` 按 `type` 分流：`page→{act:'html'}`、`code→{act:'js'}`、`app→native|js|html`、`grant→perm`
+- [x] 新增 `Spot` 门面（`stat/list/caps/can/typeOf/meta/setMeta/read/peek/write/save/mkdir/remove/run/openSmart`），应用层只走它
+- [x] `spotfsTable()`：导出 `{path,kind,size,meta,type}`，给 FreeBSD `/spotfs` 桥接留口
+- [x] 能力表 `caps(p)`：根目录只穿越；`.perm` 只 x；`.doc` 只 r；`.proc` 删除=杀进程；`.queryfile` 读一次；`.savefile` 写即走
+- [x] `.sys` → `.doc`（`DIRS`、`version/license/about`、新增 `.doc.mount` 说明挂载），带 `migrateDocDir()`
+- [x] 实测：`sptn({data})` 抛「只新建、不写入」；`sptc`→`hello`、`spta`→`hello!`；`peek` 不消费、读后 `gone:true`；根目录新建报「根目录只用来穿越」；`.perm.notification` → `{act:'perm'}`
+
+## E. 文件管理器
+
+- [x] `FilesApp` 整类重写：`pointerdown` 起 520ms 长按 → 上下文菜单；移动 >8px 取消（=拖拽）；`pointerup` 自数两下（420ms）判双击
+- [x] 上下文菜单按能力置灰（`edit/run/copy/cut/rename/download/meta/del`）
+- [x] 空目录给提示（含「这里不让你新建：原因」），不会再「打不开」
+- [x] 每行加 `r/w/x/d` 权限小标记；预览栏可折（`.fm.pv-off`）
+- [x] 「打开」→「编辑」（需要 `w`）、「执行」（需要 `x`，文件夹=进入）；不适宜项变灰
+- [x] 双击 → `Spot.openSmart()`：可执行先执行，不行退编辑器，再退属性
+- [x] 预览用 `Spot.peek`，不会把 `.queryfile` 消费掉
+- [x] 实测：`.home` 2 行；空目录提示「空目录 · 右键新建…」；菜单 8 项；`.perm.notification` 上 `run` 可用、`edit/del` 变灰；`.doc.license` 上 `run/edit` 都灰
+
+## F. 新应用与其它
+
+- [x] `62-bezier.js`：`BezierApp`（canvas 拖两个控制点、10 条预设、时长滑杆、播放/循环、复制 CSS、存到 `.home`），牛顿迭代 + 二分兜底求 `t`
+- [x] Markdown：`.md-tb` 格式栏 11 个按钮 + `Ctrl/⌘ B/I/U/K/反引号`、`Ctrl+Shift+X`、`Ctrl+Shift+.`、`Ctrl+S`
+- [x] 焦点：`WindowManager.focus()` 切窗时 `blur()` 上一个窗口里的 input/textarea（开计时器不再弹输入法）
+- [x] 启动文案「重开终端窗口」→ 关旧窗口再 `bootDesktop()`
+- [x] 实测：贝塞尔 `cubic-bezier(.25,.1,.25,1)` → `(0.21,0.91,...)`、小球 `translate3d` 在动；Markdown `Ctrl+B` → `**abc**`、`Ctrl+U` → `<u>xyz</u>`
+
+## G. 回归与文档
+
+- [x] `tests/test_v134.py`（新增）：启动态 / 单窗口规则 / 灰框回弹 / 两级共存 / 抽屉 / 双击 / spotfs 全套 / `.perm` / 文件管理器 / 焦点 / Markdown / 贝塞尔 / `.doc` / 退出
+- [x] 0 pageerror、0 console error
+- [x] README：开发日志置顶 0.0.1.34、新增「最后一个窗口」「能力表与元数据」两节、版本号四处同步
+
+---
+
+# 附：第七批次（v0.0.1.33，已完成）
 
 > 用户要求：①吸附该认「鼠标 / 手指」而不是提手（上一版我理解错了）；②顶栏胶囊与 Dock 里的四色钮也要能继续长按出二级浮框，并复用现有实现；③双击标题栏最大化 / 还原；④Ctrl+滚轮按窗口缩放终端字号；⑤拖动时内容闪烁；⑥「更多」抽屉难以滑动关闭、总闪回；⑦计算器快速连点反应不过来；⑧默认不自动聚焦输入框（加载完成与需要输入的弹窗除外），并写进 README；⑨`$`、`$$` 似乎不能用；⑩Tab 多候选时继续按 Tab 依次轮换。
 > 状态：`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成并实测
 >
-> 第六批次（v0.0.1.32：HTML 编辑器 + Tab 补全重写 + 吸附认提手）已完成，见文末附录。
+> 第六批次（v0.0.1.32：HTML 编辑器 + Tab 补全重写 + 吸附认提手）已归档到更下面。
 
 ## A. 吸附与拖动
 
@@ -52,8 +129,6 @@
 - [x] Tab：公共前缀 → 出表并填第一个 → 再按换下一个（`_tabCycle`）
 - [x] README 新增 §5.10 焦点规则；§5.5 改写为轮换；§5.9 补二级菜单与指针吸附
 - [x] 实测 `document.q` 连按五次：`query` → `queryCommandState` → `queryCommandSupported` → `querySelector` → `querySelectorAll`
-
----
 
 # 附：第六批次（v0.0.1.32，已完成）
 

@@ -1,4 +1,4 @@
-"""文件管理器：双击打开、工具栏「打开 / 执行」的回归测试。"""
+"""文件管理器：双击自动判断、工具栏「编辑 / 执行」的回归测试（0.0.1.34 起「打开」改名「编辑」）。"""
 import asyncio, json
 from playwright.async_api import async_playwright
 
@@ -70,15 +70,15 @@ async def main():
         print('run html', json.dumps(info, ensure_ascii=False))
         await pg.screenshot(path='/workspace/fm-run-html.png')
 
-        # 打开 JS（应进编辑器）
-        await click_row('run-test-js', 'open')
+        # 编辑 JS（应进编辑器）
+        await click_row('run-test-js', 'edit')
         info = await pg.evaluate("""() => {
             const ws=[...WindowManager.windows.values()];
             const w=ws[ws.length-1];
             return {type:w.type, hasArea:!!w.body.querySelector('textarea'),
                     val:(w.body.querySelector('textarea')||{}).value?.slice(0,40)};
         }""")
-        print('open js', json.dumps(info, ensure_ascii=False))
+        print('edit js', json.dumps(info, ensure_ascii=False))
 
         # 双击（鼠标真双击）
         n0 = await pg.evaluate("() => WindowManager.windows.size")

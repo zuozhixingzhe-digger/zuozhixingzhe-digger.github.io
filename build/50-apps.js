@@ -233,7 +233,7 @@ class BrowserApp {
     const cross = !html;
     try {
       const p = uniquePathIn('.home', spotEscape(htmlFileName(name)));
-      await FS.write(p, cross ? this._fallbackHtml() : html, { mime:'text/html;charset=utf-8', hint:name, origin:'browser' });
+      await Spot.write(p, cross ? this._fallbackHtml() : html, { mime:'text/html;charset=utf-8', type:'page', hint:name, origin:'browser' });
       toast(cross ? '跨域页面读不到内容，已保存跳转页 → ' + p : '已保存到 ' + p);
     } catch (e) { toast('保存失败：' + (e && e.message || e), true); }
   }
@@ -551,27 +551,36 @@ class BrowserApp {
   }
 }
 
-/* ---------------------------------------------------------------- 文件管理器 */
+/* ---------------------------------------------------------------- 文件管理器
+ * 这一版把「能不能做」这件事交给 spotfs 的能力表（`Spot.caps`）：
+ *   按钮会置灰、右键菜单会置灰，理由写在 title 里；
+ *   双击不再靠后缀猜，先看元数据、再看魔数（`Spot.openSmart`）。
+ * 所有文件操作走 `Spot.*`（也就是 spt*），不直接 FS.write ——
+ * queryfile 读一次就没了、savefile 写完就落盘，这些语义只有 spt* 认。
+ */
 class FilesApp {
   constructor(container, opts) {
     this.el = container;
     this.path = normPath((opts && opts.path) || '.home');
     this.sel = null;
-    this._blobs = new Map();   // path -> {url, name, mime}，拖出去时用
+    this.clip = null;            // { path, cut:false }
+    this.preview = true;
+    this._blobs = new Map();
     this.el.innerHTML = `<div class="fm">
       <div class="fm-bar">
         <button class="btn" data-a="up" title="上级">↑</button>
         <button class="btn" data-a="home" title="家目录">⌂</button>
         <div class="fm-path"></div>
         <button class="btn" data-a="refresh" title="刷新">⟳</button>
-        <button class="btn" data-a="newfile" title="新建文件">＋</button>
+        <button class="btn" data-a="newfile" title="新建文件（只建，不写）">＋</button>
         <button class="btn" data-a="newdir" title="新建目录">+dir</button>
-        <button class="btn" data-a="newwin" title="再开一个文件管理器（同一个目录，方便拖来拖去）">⧉</button>
-        <button class="btn" data-a="open" title="打开选中的文件：文本进编辑器，图片进看图，目录就进去">打开</button>
-        <button class="btn" data-a="run" title="执行选中的文件：HTML 开浏览器，JS 开 shell 跑">执行</button>
+        <button class="btn" data-a="newwin" title="同一个目录再开一个窗口">⧉</button>
+        <button class="btn" data-a="paste" title="粘贴" disabled>粘贴</button>
+        <button class="btn" data-a="edit" title="编辑（r/w）">编辑</button>
+        <button class="btn" data-a="run" title="执行（x）">执行</button>
         <button class="btn" data-a="upload" title="上传">⇧</button>
-        <button class="btn danger" data-a="del" title="删除">✕</button>
-        <button class="btn" data-a="download" title="下载">↓</button>
+        <button class="btn danger" data-a="del" title="删除（d）">✕</button>
+        <button class="btn" data-a="preview" title="显示 / 隐藏预览栏">▤</button>
       </div>
       <div class="fm-list"></div>
       <div class="fm-prev">选择文件查看内容</div>
@@ -581,50 +590,170 @@ class FilesApp {
     this.prevEl = $('.fm-prev', this.el);
     $$('[data-a]', this.el).forEach(b => b.onclick = () => this.act(b.dataset.a));
     this._off = EventBus.on('fs', () => { if (document.contains(this.el)) this.load(); });
+    /* 菜单的「点外面关」必须绑定到实例：document 上的监听里 this 是 document */
+    this._ctxOutB = (e) => { if (this._ctx && !this._ctx.contains(e.target)) this._ctxClose(); };
+    this._ctxEscB = (e) => { if (e.key === 'Escape') this._ctxClose(); };
     this._bindList();
     this._bindDrop();
     this.load();
   }
 
-  /* 行事件用委托，不绑在行上。
-   *
-   * 双击以前绑的是 row.ondblclick —— 但列表每次 fs 事件都会整体重建，
-   * 第一下点击之后只要来一次刷新，第二下就落在新节点上，dblclick 永远不会触发，
-   * 于是「双击打不开」。这里改成自己数点击：同一行 420ms 内点两下就打开，
-   * 时间戳存在应用实例上，重建多少遍都不影响。
-   * dblclick 仍然保留（原生事件能来就用），但 open() 自带 500ms 去重，
-   * 两条路都走到也只会开一个窗口。 */
+  /* ---------------------------------------------------------------- 列表交互
+   * 一个 pointerdown 决定三件事：短按 = 选中、长按 = 上下文菜单、拖过 8px = 拖拽。
+   * 用指针事件而不是 dblclick：列表每次 fs 变化都会重建，绑在行上的 dblclick
+   * 很容易在「第一下点击之后的一次刷新」里丢掉——这就是「双击很难打开」。
+   */
   _bindList() {
-    this._lastClick = { p: '', t: 0 };
-    this.listEl.addEventListener('click', (e) => {
-      const row = e.target.closest && e.target.closest('.fm-row');
-      if (!row || !this.listEl.contains(row)) return;
-      const p = row.dataset.p;
-      this.select(p);
+    this._lastClick = { p:'', t:0 };
+    let press = null;
+
+    const rowOf = (e) => e.target.closest && e.target.closest('.fm-row');
+
+    this.listEl.addEventListener('pointerdown', (e) => {
+      const row = rowOf(e);
+      if (!row) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      press = { p:row.dataset.p, x:e.clientX, y:e.clientY, t:Date.now(), moved:false, timer:0 };
+      press.timer = setTimeout(() => {
+        if (!press || press.moved) return;
+        press.fired = true;
+        this.select(press.p);
+        if (press.p) this.select(press.p);
+        this.ctxMenu(press.p, e.clientX, e.clientY);
+      }, 520);
+      this._prefetchBlob(row.dataset.p);
+    });
+
+    this.listEl.addEventListener('pointermove', (e) => {
+      if (!press) return;
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) {
+        press.moved = true;
+        clearTimeout(press.timer);
+      }
+    });
+
+    const up = (e) => {
+      if (!press) return;
+      clearTimeout(press.timer);
+      const p = press.p, moved = press.moved, fired = press.fired;
+      press = null;
+      if (moved || fired) return;
       const now = Date.now();
+      this.select(p);
+      /* 双击判定沿用「自己数两下」，420ms 窗口；不依赖原生 dblclick */
       if (this._lastClick.p === p && now - this._lastClick.t < 420) {
-        this._lastClick = { p: '', t: 0 };
+        this._lastClick = { p:'', t:0 };
         this.open(p);
       } else {
         this._lastClick = { p, t: now };
       }
+    };
+    this.listEl.addEventListener('pointerup', up);
+    this.listEl.addEventListener('pointercancel', () => { if (press) { clearTimeout(press.timer); press = null; } });
+
+    this.listEl.addEventListener('contextmenu', (e) => {
+      const row = rowOf(e);
+      if (!row) return;
+      e.preventDefault();
+      this.select(row.dataset.p);
+      /* 右键也顺手选中：不然右边预览栏空着，菜单里的「编辑 / 执行」说的是谁不明确 */
+      if (row.dataset.p) this.select(row.dataset.p);
+      this.ctxMenu(row.dataset.p, e.clientX, e.clientY);
     });
-    this.listEl.addEventListener('dblclick', (e) => {
-      const row = e.target.closest && e.target.closest('.fm-row');
-      if (row) this.open(row.dataset.p);
+    /* 空白处右键 = 目录菜单（新建/粘贴/刷新） */
+    this.listEl.addEventListener('contextmenu', (e) => {
+      if (rowOf(e)) return;
+      e.preventDefault();
+      this.ctxMenu(null, e.clientX, e.clientY);
     });
     this.listEl.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || !this.sel) return;
-      e.preventDefault();
-      e.ctrlKey || e.metaKey ? this.run(this.sel) : this.open(this.sel);
+      if (!this.sel) return;
+      if (e.key === 'Enter') { e.preventDefault(); e.ctrlKey || e.metaKey ? this.run(this.sel) : this.open(this.sel); }
+      else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.del(); }
+      else if (e.key === 'F2') { e.preventDefault(); this.rename(); }
     });
   }
 
-  /* 把东西拖进文件管理器 = 落进它当前目录。
-   * 两种来源：
-   *   外部文件（OS）   → importFiles（转义成 spotfs 名字）
-   *   窗口间拖拽       → dropIntoDir（复制 / Shift 移动），支持目录整棵树
-   */
+  /* ---------------------------------------------------------------- 右键 / 长按菜单 */
+  ctxMenu(p, x, y) {
+    this._ctxClose();
+    const m = document.createElement('div');
+    m.className = 'winmenu fmctx';
+    const row = p ? this._rowInfo(p) : null;
+    const c = p ? Spot.caps(p) : Spot.caps(this.path);
+    const item = (cmd, label, hint, ok, why) =>
+      `<button class="stack${ok ? '' : ' is-off'}" data-cmd="${cmd}" ${ok ? '' : 'disabled title="' + esc(why || '这个操作对它是没有意义的') + '"'}>
+        <span>${esc(label)}</span><em>${esc(hint || '')}</em></button>`;
+    let html;
+    if (!p) {
+      html = `<div class="winmenu__title">${esc(spotExportName(baseName(this.path)))} · 目录</div>
+        ${item('newfile', '新建文件', '只建空节点，内容另写', c.mk, c.why)}
+        ${item('newdir', '新建目录', '', c.mk, c.why)}
+        <div class="winmenu__sep"></div>
+        ${item('paste', '粘贴到这里', this.clip ? spotExportName(baseName(this.clip.path)) : '剪贴板是空的', !!this.clip, '先复制一个过来')}
+        ${item('refresh', '刷新', '', true)}`;
+    } else {
+      const type = Spot.typeOf(row.st);
+      const name = spotExportName(baseName(p));
+      html = `<div class="winmenu__title">${esc(name)} · ${esc(type)}</div>
+        ${type === 'dir'
+          ? item('open', '进入', '目录的执行就是「进去」', c.x, c.why)
+          : item('edit', '编辑', '文本 / 代码 / 页面', c.r, c.why)}
+        ${item('run', '执行', 'x：脚本跑起来、页面开浏览器、授权发申请', c.x, c.why)}
+        <div class="winmenu__sep"></div>
+        ${item('copy', '复制', 'Ctrl+C', c.r, c.why)}
+        ${item('cut', '剪切', 'Ctrl+X', c.r && c.d, c.why)}
+        ${item('rename', '重命名', 'F2', c.w, c.why)}
+        ${item('download', '下载到本机', '', c.r && type !== 'dir', c.why)}
+        <div class="winmenu__sep"></div>
+        ${item('meta', '属性 / 元数据', '类型、时间、只读、扩展', true)}
+        ${item('del', '删除', 'd', c.d, c.why)}`;
+    }
+    m.innerHTML = html;
+    document.body.appendChild(m);
+    m.style.left = '0px'; m.style.top = '0px';
+    const mw = m.offsetWidth, mh = m.offsetHeight;
+    m.style.left = Math.round(Math.min(x, innerWidth - mw - 8)) + 'px';
+    m.style.top = Math.round(Math.min(y, innerHeight - mh - 8)) + 'px';
+    m.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cmd]');
+      if (!b || b.disabled) return;
+      const cmd = b.dataset.cmd;
+      this._ctxClose();
+      if (cmd === 'open') this.open(p);
+      else if (cmd === 'edit') this.run(p, 'edit');
+      else if (cmd === 'run') this.run(p, 'exec');
+      else if (cmd === 'copy') { this.clip = { path:p, cut:false }; this._syncBar(); toast('已复制 ' + spotExportName(baseName(p))); }
+      else if (cmd === 'cut') { this.clip = { path:p, cut:true }; this._syncBar(); toast('已剪切 ' + spotExportName(baseName(p))); }
+      else if (cmd === 'rename') this.rename(p);
+      else if (cmd === 'download') { this.sel = p; this.download(); }
+      else if (cmd === 'meta') this.showMeta(p);
+      else if (cmd === 'del') { this.sel = p; this.del(); }
+      else if (cmd === 'newfile') this.newEntry(false);
+      else if (cmd === 'newdir') this.newEntry(true);
+      else if (cmd === 'paste') this.paste();
+      else if (cmd === 'refresh') this.load();
+    });
+    this._ctx = m;
+    setTimeout(() => {
+      document.addEventListener('pointerdown', this._ctxOutB, true);
+      document.addEventListener('keydown', this._ctxEscB, true);
+    }, 0);
+  }
+  _ctxClose() {
+    if (!this._ctx) return;
+    this._ctx.remove();
+    this._ctx = null;
+    document.removeEventListener('pointerdown', this._ctxOutB, true);
+    document.removeEventListener('keydown', this._ctxEscB, true);
+  }
+
+  _rowInfo(p) {
+    const row = this._rows && this._rows.find(r => r.path === p);
+    return row || { path:p, name:baseName(p), kind:'file', st:{} };
+  }
+
+  /* 把东西拖进文件管理器 = 落进它当前目录。 */
   _bindDrop() {
     const root = $('.fm', this.el);
     if (!root) return;
@@ -661,7 +790,7 @@ class FilesApp {
       }
       if (!_hasFiles(e)) return;
       e.preventDefault();
-      e.__htDropHandled = true;      // 告诉全局：这个 drop 已经有人收
+      e.__htDropHandled = true;
       root.classList.remove('drop');
       const files = [...((e.dataTransfer && e.dataTransfer.files) || [])];
       if (!files.length) return;
@@ -673,8 +802,6 @@ class FilesApp {
     });
   }
 
-  /* 拖出去：dragstart 必须同步 setData，所以在 pointerdown 时就把内容读成 Blob URL 备好。
-   * Chrome 认 DownloadURL=mime:filename:url —— 拖到桌面/资源管理器即落盘。 */
   async _prefetchBlob(p) {
     if (this._blobs.has(p)) return;
     try {
@@ -689,6 +816,7 @@ class FilesApp {
       this._blobs.set(p, { url, name:spotExportName(baseName(p)), mime:blob.type || 'application/octet-stream' });
     } catch (e) {}
   }
+
   async act(a) {
     try {
       if (a === 'up') { this.path = parentPath(this.path); await this.load(); }
@@ -696,81 +824,126 @@ class FilesApp {
       else if (a === 'refresh') await this.load();
       else if (a === 'newfile') await this.newEntry(false);
       else if (a === 'newdir') await this.newEntry(true);
-      else if (a === 'newwin') {
-        /* 同一个目录再开一个窗口：拖来拖去时最有用的是「两个窗口并排」。 */
-        const w = WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
-        return w;
-      }
-      else if (a === 'open') await this.openSel();
+      else if (a === 'newwin') return WindowManager.open({ type:'files', path:this.path, title:'文件 · ' + this.path });
+      else if (a === 'edit') await this.editSel();
       else if (a === 'run') await this.run(this.sel);
+      else if (a === 'paste') await this.paste();
       else if (a === 'upload') await this.upload();
       else if (a === 'del') await this.del();
-      else if (a === 'download') await this.download();
+      else if (a === 'preview') {
+        this.preview = !this.preview;
+        this.el.querySelector('.fm').classList.toggle('pv-off', !this.preview);
+        if (this.preview && this.sel) this.select(this.sel);
+      }
     } catch (e) { toast(e.message || String(e), true); }
   }
+
   async load() {
     this.pathEl.textContent = this.path;
     this.pathEl.title = this.path;
-    /* 换目录后旧选中项不属于这里；同一目录内刷新则保留高亮（行会被重建，
-     * 所以高亮必须重新画，不能只在 select 时写一次 style）。 */
     if (this.sel && parentPath(this.sel) !== this.path) this.sel = '';
-    const rows = await FS.list(this.path);
-    if (!rows.length) { this.listEl.innerHTML = '<div class="fm-empty">空目录</div>'; return; }
-    this.listEl.innerHTML = rows.map(r => `<div class="fm-row" data-p="${esc(r.path)}">
-      <span class="ico" style="font-family:var(--mono);color:${r.kind === 'dir' ? 'var(--accent)' : r.kind === 'func' ? 'var(--amber)' : 'var(--fg-mute)'}">${r.kind === 'dir' ? '▸' : r.kind === 'func' ? 'λ' : r.kind === 'app' ? 'a' : r.kind === 'device' ? 'v' : r.kind === 'package' ? 'p' : r.kind === 'grant' ? '!' : r.kind === 'proc' ? '&' : '·'}</span>
-      <span class="nm" style="${r.kind === 'dir' ? 'color:var(--accent)' : r.kind === 'func' ? 'color:var(--amber)' : ''}" title="${esc(r.name)}">${esc(spotExportName(r.name))}${r.kind === 'dir' ? '.' : ''}</span>
-      <span class="kd">${esc(r.kind)}</span>
-      <span class="sz">${r.kind === 'dir' ? '' : fmtBytes(r.size)}</span>
-    </div>`).join('');
+    let rows = [];
+    try { rows = await Spot.list(this.path); } catch (e) { rows = []; }
+    this._rows = rows;
+    const c = Spot.caps(this.path);
+    if (!rows.length) {
+      /* 空目录也要能「有东西可点」：给一行说明 + 两个入口，
+       * 否则用户只能靠工具栏，而工具栏那会儿还分不清自己该点哪个。 */
+      this.listEl.innerHTML = `<div class="fm-empty">${c.mk ? '空目录 · 右键新建，或用上面的 ＋ / +dir' : '空目录（这里不让你新建：' + esc(c.why || '只读') + '）'}</div>`;
+      this._syncBar();
+      return;
+    }
+    const mark = (st, p) => {
+      const k = Spot.caps(p);
+      const dot = (on, ch) => `<i class="pdot${on ? ' on' : ''}" title="${ch}">${ch}</i>`;
+      return dot(k.r, 'r') + dot(k.w, 'w') + dot(k.x, 'x') + (st.kind !== 'dir' ? dot(k.d, 'd') : '');
+    };
+    this.listEl.innerHTML = rows.map(r => {
+      const st = { kind:r.kind, meta:r.meta, size:r.size, mtime:r.mtime };
+      const type = Spot.typeOf(st);
+      const icon = r.kind === 'dir' ? '▸' : type === 'code' ? 'λ' : type === 'page' ? '◫' : type === 'image' ? '▩'
+        : r.kind === 'app' ? 'a' : r.kind === 'device' ? 'v' : r.kind === 'package' ? 'p'
+        : r.kind === 'grant' ? '!' : r.kind === 'proc' ? '&' : '·';
+      const color = r.kind === 'dir' ? 'var(--accent)' : type === 'code' ? 'var(--amber)' : type === 'image' ? 'var(--blue)' : 'var(--fg-mute)';
+      return `<div class="fm-row" data-p="${esc(r.path)}" tabindex="-1" draggable="true">
+        <span class="ico" style="font-family:var(--mono);color:${color}">${icon}</span>
+        <span class="nm" style="${r.kind === 'dir' ? 'color:var(--accent)' : ''}" title="${esc(r.name)}">${esc(spotExportName(r.name))}${r.kind === 'dir' ? '.' : ''}</span>
+        <span class="perm">${mark(st, r.path)}</span>
+        <span class="kd">${esc(type)}</span>
+        <span class="sz">${r.kind === 'dir' ? '' : fmtBytes(r.size)}</span>
+      </div>`;
+    }).join('');
     $$('.fm-row', this.listEl).forEach(row => {
-      /* click / dblclick 不在这里绑：_bindList 用委托统一处理，
-       * 列表重建不会把「双击」这个动作弄丢。 */
       const p = row.dataset.p;
-      row.tabIndex = -1;
-      row.draggable = true;
-      /* pointerdown 是 dragstart 之前唯一能安全预读的时机 */
-      row.addEventListener('pointerdown', () => { this._prefetchBlob(p); });
       row.addEventListener('dragstart', (e) => {
         row.classList.add('dragging');
-        /* 拖拽一开始就把可能的「双击」意图作废：拖动结束不该顺带打开文件 */
         this._lastClick = { p:'', t:0 };
-        const c = this._blobs.get(p);
-        /* 同文档窗口之间靠这个 item 传递：路径 + 存储名。
-         * 外部应用靠 DownloadURL（下面那行），两者互不影响。 */
+        const c2 = this._blobs.get(p);
         DragBus.write(e.dataTransfer, [{
           kind:'spot', path:p, name:baseName(p),
           display:spotExportName(baseName(p)),
-          mime:(c && c.mime) || ''
+          mime:(c2 && c2.mime) || ''
         }], p, 'copyMove');
-        if (c) {
-          try { e.dataTransfer.setData('DownloadURL', c.mime + ':' + c.name + ':' + c.url); } catch (err) {}
-        }
+        if (c2) { try { e.dataTransfer.setData('DownloadURL', c2.mime + ':' + c2.name + ':' + c2.url); } catch (err) {} }
       });
       row.addEventListener('dragend', () => { row.classList.remove('dragging'); DragBus.clear(); });
     });
+    this._syncBar();
     this.paintSel();
   }
-  /* 选中高亮：列表重建后要能重新画回来 */
+
+  _syncBar() {
+    const sel = this.sel;
+    const c = sel ? Spot.caps(sel) : null;
+    const set = (a, on, why) => {
+      const b = $(`[data-a="${a}"]`, this.el);
+      if (!b) return;
+      b.disabled = !on;
+      b.title = why || b.title;
+    };
+    /* 「编辑」= 可写（w），不是「可读」：只读区域（.doc / .queryfile）用预览看，
+     * 真要改就得先复制到 .home。见 README「能力表」。 */
+    set('edit', !!sel && c.w, '编辑内容（需要 w）');
+    set('run', !!sel && c.x, '执行（需要 x）');
+    set('del', !!sel && c.d, '删除（需要 d）');
+    set('paste', !!this.clip, '粘贴');
+  }
+
   paintSel() {
     $$('.fm-row', this.listEl).forEach(r => {
       r.style.background = r.dataset.p && r.dataset.p === this.sel ? 'rgba(94,234,212,.08)' : '';
     });
   }
+
   async select(p) {
     this.sel = p;
     this.paintSel();
+    this._syncBar();
+    if (!this.preview) return;
     try {
-      const st = await FS.stat(p);
+      const st = await Spot.stat(p);
       if (!st) return;
-      if (st.kind === 'dir') { this.prevEl.textContent = '目录 ' + p + '\n' + (await FS.list(p)).length + ' 项'; return; }
+      const type = Spot.typeOf(st);
+      if (st.kind === 'dir') {
+        const rows = await Spot.list(p);
+        const c = Spot.caps(p);
+        this.prevEl.textContent = '目录 ' + p + '\n' + rows.length + ' 项\n\n' +
+          '能力：' + ['r','w','x','d','mk'].filter(k => c[k]).join(' ') + (c.why ? '\n原因：' + c.why : '');
+        return;
+      }
       if (st.kind === 'app' || st.kind === 'device' || st.kind === 'grant' || st.kind === 'proc' || st.kind === 'package') {
         this.prevEl.textContent = JSON.stringify(st.meta, null, 2);
         return;
       }
-      const r = await FS.read(p);
+      if (parentPath(p) === '.queryfile') {
+        this.prevEl.textContent = '用户交进来的文件（' + type + '，' + fmtBytes(st.size) + '）\n\n' +
+          '它是**一次性的**：真正读一次之后节点就永久消失。\n双击 / 执行会消费它；这里只显示摘要，不读内容。';
+        return;
+      }
+      /* 预览用 peek：queryfile 的「看一眼」不能算消费 */
+      const r = await Spot.peek(p);
       const mime = (r.meta && r.meta.mime) || '';
-      /* 图片给缩略图，不给「[二进制] 12 KB」——看图工具好歹要从这里进得去 */
-      if (/^image\//i.test(mime)) {
+      if (/^image\//i.test(mime) || type === 'image') {
         const url = await contentToDataUrl(r.content, mime);
         this.prevEl.textContent = '';
         const img = new Image();
@@ -779,96 +952,134 @@ class FilesApp {
         img.src = url;
         const cap = document.createElement('div');
         cap.className = 'fm-imgcap';
-        cap.textContent = spotExportName(baseName(p)) + ' · ' + fmtBytes(r.size);
-        img.onload = () => { cap.textContent = spotExportName(baseName(p)) + ' · ' + img.naturalWidth + '×' + img.naturalHeight + ' · ' + fmtBytes(r.size); };
+        cap.textContent = spotExportName(baseName(p)) + ' · ' + fmtBytes(st.size);
+        img.onload = () => { cap.textContent = spotExportName(baseName(p)) + ' · ' + img.naturalWidth + '×' + img.naturalHeight + ' · ' + fmtBytes(st.size); };
         this.prevEl.appendChild(img);
         this.prevEl.appendChild(cap);
         return;
       }
-      let c = r.content;
-      if (c instanceof ArrayBuffer || c instanceof Blob) { this.prevEl.textContent = '[二进制] ' + fmtBytes(c.size || c.byteLength || 0); return; }
-      c = String(c == null ? '' : c);
-      this.prevEl.textContent = c.slice(0, 6000) + (c.length > 6000 ? '\n…（已截断）' : '');
+      let cc = r.content;
+      if (cc instanceof ArrayBuffer || cc instanceof Blob) { this.prevEl.textContent = '[二进制] ' + fmtBytes(cc.size || cc.byteLength || 0); return; }
+      cc = String(cc == null ? '' : cc);
+      this.prevEl.textContent = cc.slice(0, 6000) + (cc.length > 6000 ? '\n…（已截断）' : '');
     } catch (e) { this.prevEl.textContent = '读取失败：' + e.message; }
   }
+
+  /* 双击：能执行就执行，否则按类型打开，最后才是属性。 */
   async open(p) {
-    /* 去重：双击的两条判定路径（自己数的点击 + 原生 dblclick）可能都走到这里，
-     * 500ms 内同一个文件只开一次，免得并排弹出两个一样的窗口。 */
     const now = Date.now();
     if (this._opened && this._opened.p === p && now - this._opened.t < 500) return;
     this._opened = { p, t: now };
-    const st = await FS.stat(p);
+    let st;
+    try { st = await Spot.stat(p); } catch (e) { return; }
     if (!st) return;
     if (st.kind === 'dir') { this.path = p; await this.load(); return; }
-    if (st.kind === 'app') { WindowManager.open({ app:st.meta.app || st.name }); return; }
-    if (st.kind === 'func') { WindowManager.open({ type:'editor', path:p, title:st.name }); return; }
-    const nm = spotExportName(baseName(p));
-    const mime = (st.meta && st.meta.mime) || '';
-    if (/^image\//i.test(mime) || /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(nm)) {
-      WindowManager.open({ type:'image', path:p, title:'看图 · ' + nm });
-      return;
-    }
-    WindowManager.open({ type:'editor', path:p, title:st.name });
+    try {
+      const r = await Spot.openSmart(p);
+      if (r.how === 'meta') this.showMeta(p);
+      else if (r.how === 'exec' && p.startsWith('.perm.')) toast('已向浏览器申请「' + baseName(p) + '」');
+    } catch (e) { toast(e.message || String(e), true); }
   }
-  async openSel() {
+  async editSel() {
     if (!this.sel) { toast('先在列表里选一个文件'); return; }
-    await this.open(this.sel);
+    this.run(this.sel, 'edit');
   }
-  /* 执行：只处理「这个文件本身是个程序」的几种。
-   *   HTML → 浏览器窗口（沙箱 iframe）
-   *   JS   → shell 窗口，代码在 worker 里跑，输出直接落在终端
-   *   app / func → 各自的入口
-   * 其余（图片、纯文本、二进制）明确说不能执行，不假装能跑。 */
-  async run(p) {
+  /* run(p, how)：how='exec' 只执行；'edit' 强制用编辑器/看图打开 */
+  async run(p, how) {
     p = p || this.sel;
-    if (!p) { toast('先在列表里选一个文件'); return; }
+    if (!p) { toast('先在列表里选一个东西'); return; }
     let st;
-    try { st = await FS.stat(p); } catch (e) { st = null; }
-    if (!st) { toast('文件不存在或已被删除', true); return; }
+    try { st = await Spot.stat(p); } catch (e) { st = null; }
+    if (!st) { toast('不存在或已被删除', true); return; }
     if (st.kind === 'dir') { this.path = p; await this.load(); return; }
-    if (st.kind === 'app') { WindowManager.open({ app:st.meta && st.meta.app || st.name }); return; }
+    const type = Spot.typeOf(st);
     const nm = spotExportName(baseName(p));
-    if (st.kind === 'func') {
-      const r = await FS.read(p);
-      const src = (r.meta && r.meta.source) || String(r.content || '');
-      WindowManager.open({ type:'shell', code:src, title:'执行 · ' + nm });
-      return;
-    }
-    if (st.kind !== 'object') { toast('「' + nm + '」不是可执行的东西', true); return; }
-    const mime = String((st.meta && st.meta.mime) || '');
-    if (/html/i.test(mime) || /\.html?$/i.test(nm)) {
-      const r = await FS.read(p);
-      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('读不出页面内容', true); return; }
-      WindowManager.open({ type:'browser', html:String(r.content || ''), title:'执行 · ' + nm });
-      return;
-    }
-    if (/javascript|ecmascript/i.test(mime) || /\.(js|mjs|cjs)$/i.test(nm)) {
-      const r = await FS.read(p);
-      if (r.content instanceof ArrayBuffer || r.content instanceof Blob) { toast('这个文件是二进制，不是脚本', true); return; }
-      WindowManager.open({ type:'shell', code:String(r.content || ''), title:'执行 · ' + nm });
-      return;
-    }
-    if (/python/i.test(mime) || /\.py$/i.test(nm)) {
-      toast('Python 请在 python 窗口里运行（工具栏没有这条入口）', true);
-      return;
-    }
-    toast('「' + nm + '」没有可执行的入口', true);
+    try {
+      if (how !== 'edit') {
+        /* 授权、进程、包、设备、应用、脚本、页面：全都走 sptx 的统一判别 */
+        const c = Spot.caps(p);
+        if (c.x) {
+          const act = await FS.sptx(p);
+          if (act.act === 'perm') { await requestPermission(act.perm); toast('已申请「' + act.perm + '」'); return; }
+          if (act.act === 'kill') { toast('结束进程请用删除（sptd）', true); return; }
+          await Spot.act(act);
+          return;
+        }
+      }
+      if (type === 'image') { WindowManager.open({ type:'image', path:p, title:'看图 · ' + nm }); return; }
+      if (type === 'audio' || type === 'video' || type === 'media') { WindowManager.open({ type:'audio', path:p, title:'音频 · ' + nm }); return; }
+      if (type === 'text' || type === 'code' || type === 'page' || type === 'document') {
+        WindowManager.open({ type:'editor', path:p, title:nm });
+        return;
+      }
+      toast('「' + nm + '」是 ' + type + '，没有可以打开的入口（可以看属性）', true);
+      this.showMeta(p);
+    } catch (e) { toast(e.message || String(e), true); }
   }
+
+  async showMeta(p) {
+    try {
+      const m = await Spot.meta(p);
+      await modal({
+        title:'属性 · ' + spotExportName(baseName(p)),
+        body:`<pre style="margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.7;white-space:pre-wrap">${esc(JSON.stringify(m, null, 2))}</pre>`,
+        buttons:[{ label:'关闭', primary:true }]
+      });
+    } catch (e) { toast(e.message || String(e), true); }
+  }
+
+  async rename(p) {
+    p = p || this.sel;
+    if (!p) return;
+    const name = await modalPrompt('重命名', spotExportName(baseName(p)), '新名字（不含路径）');
+    if (!name || name === spotExportName(baseName(p))) return;
+    const err = checkName(spotEscape(name));
+    if (err) { toast(err, true); return; }
+    const to = joinPath(parentPath(p), spotEscape(name));
+    try {
+      await FS.move(p, to);
+      this.sel = to;
+      await this.load();
+      toast('已重命名');
+    } catch (e) { toast(e.message || String(e), true); }
+  }
+
+  async paste() {
+    if (!this.clip) { toast('剪贴板是空的'); return; }
+    const src = this.clip.path;
+    const name = spotExportName(baseName(src));
+    let to = joinPath(this.path, baseName(src));
+    let i = 2;
+    while (FS.exists(to)) { to = joinPath(this.path, spotEscape(name + ' ' + i)); i++; }
+    try {
+      if (this.clip.cut) await FS.move(src, to); else await FS.copy(src, to);
+      toast((this.clip.cut ? '已移动' : '已复制') + ' ' + name);
+      if (this.clip.cut) this.clip = null;
+      this.sel = to;
+      await this.load();
+    } catch (e) { toast(e.message || String(e), true); }
+  }
+
+  /* 新建：sptn 只建空节点；内容由编辑器再写（这就是「建/写分开」） */
   async newEntry(dir) {
     const name = await modal({
       title: dir ? '新建目录' : '新建文件',
-      body: `<label class="lbl">名称（字母/中文开头，可含数字 _ -）</label><input class="field" id="nn" placeholder="notes">`,
-      buttons: [{ label:'取消', value:null }, { label:'创建', primary:true, onClick:(w) => { const v = $('#nn', w).value.trim(); if (!v) return false; return v; } }]
+      body: `<label class="lbl">名称（留空自动起名 auto-时间戳）</label><input class="field" id="nn" placeholder="notes">`,
+      buttons: [{ label:'取消', value:null }, { label:'创建', primary:true, onClick:(w) => { const v = $('#nn', w).value.trim(); return v; } }]
     });
-    if (!name) return;
-    const err = checkName(name);
-    if (err) { toast(err, true); return; }
-    const p = joinPath(this.path, name);
-    if (dir) await FS.mkdir(p); else await FS.write(p, '');
-    toast((dir ? '目录 ' : '文件 ') + p + ' 已创建');
-    await this.load();
-    this.select(p);
+    if (name === null) return;
+    const c = Spot.caps(this.path);
+    if (!c.mk) { toast(c.why || '这个目录不能新建', true); return; }
+    try {
+      const st = name
+        ? await FS.sptn(joinPath(this.path, spotEscape(name)), { kind: dir ? 'dir' : 'file' })
+        : await FS.sptn(this.path, { kind: dir ? 'dir' : 'file' });
+      toast((dir ? '目录 ' : '文件 ') + spotExportName(baseName(st.path)) + ' 已创建');
+      await this.load();
+      this.select(st.path);
+    } catch (e) { toast(e.message || String(e), true); }
   }
+
   async upload() {
     const files = await pickFiles({ multiple:true });
     if (!files.length) return;
@@ -876,22 +1087,32 @@ class FilesApp {
     toast('已上传 ' + paths.length + ' 个文件');
     await this.load();
   }
+
   async del() {
     if (!this.sel) { toast('先选一个文件', true); return; }
-    if (!(await confirmDlg('删除', `确定删除 <span class="code">${esc(this.sel)}</span> 吗？目录会连同内容一起删除。`, true))) return;
-    await FS.remove(this.sel, true);
-    this.sel = null;
-    this.prevEl.textContent = '选择文件查看内容';
-    await this.load();
+    const st = await Spot.stat(this.sel);
+    if (!st) return;
+    if (st.kind === 'proc') {
+      if (!(await confirmDlg('结束进程', '删除 <span class="code">' + esc(this.sel) + '</span> 会真的结束这个进程，对应的窗口会被关掉。继续？', true))) return;
+    } else if (!(await confirmDlg('删除', `确定删除 <span class="code">${esc(this.sel)}</span> 吗？目录会连同内容一起删除。`, true))) return;
+    try {
+      await Spot.remove(this.sel);
+      this.sel = null;
+      this.prevEl.textContent = '选择文件查看内容';
+      await this.load();
+    } catch (e) { toast(e.message || String(e), true); }
   }
+
   async download() {
     if (!this.sel) { toast('先选一个文件', true); return; }
-    const st = await FS.stat(this.sel);
+    const st = await Spot.stat(this.sel);
     if (!st || st.kind === 'dir') { toast('目录不能直接下载', true); return; }
-    const r = await FS.read(this.sel);
-    await saveFileRaw(spotExportName(baseName(this.sel)), r.content, r.meta && r.meta.mime);
+    const r = await Spot.peek(this.sel);
+    await Spot.save(spotExportName(baseName(this.sel)), r.content, (r.meta && r.meta.mime) || 'application/octet-stream');
   }
+
   dispose() {
+    this._ctxClose();
     this._off && this._off();
     for (const c of this._blobs.values()) { try { URL.revokeObjectURL(c.url); } catch (e) {} }
     this._blobs.clear();
@@ -933,14 +1154,22 @@ class EditorApp {
   }
   async load() {
     try {
-      const r = await FS.read(this.path);
+      /* 走 Spot.read（= sptr）：.queryfile 里的东西读一次就没了，编辑器这一下
+       * 就是那「一次」；页面上写清楚，免得用户以为是 bug。 */
+      const r = await Spot.read(this.path);
       if (r.content instanceof ArrayBuffer || r.content instanceof Blob) {
         this.ta.value = ''; this.msg.textContent = '二进制文件，无法以文本编辑'; return;
       }
-      this.ta.value = r.content == null ? '' : String(r.content);
+      /* kind==='object' 的节点，sptr 回的是解析好的 `value` 而不是 `content`：
+       * 编辑器要的是原文，那就把它按 JSON 摆回来（2 空格缩进，和写进去的样子一致）。 */
+      let text = r.content;
+      if (text == null && r.value !== undefined) {
+        try { text = JSON.stringify(r.value, null, 2); } catch (e) { text = String(r.value); }
+      }
+      this.ta.value = text == null ? '' : String(text);
       this.mime = (r.meta && r.meta.mime) || this.mime;
       this.stats();
-      this.msg.textContent = '已加载';
+      this.msg.textContent = r.consumed ? '已加载（一次性文件，节点已消费）' : '已加载';
     } catch (e) { this.msg.textContent = '读取失败：' + e.message; }
   }
   stats() {
@@ -954,7 +1183,8 @@ class EditorApp {
       const meta = Object.assign({}, (st && st.meta) || {}, { mime:this.mime });
       if (st) meta.kind = st.kind;
       if (st && (st.kind === 'func' || st.kind === 'app')) meta.source = this.ta.value;
-      await FS.write(this.path, this.ta.value, meta);
+      /* Spot.write = 有就 sptc、没有就 sptn+sptc；能力表会挡住只读节点 */
+      await Spot.write(this.path, this.ta.value, meta);
       this.msg.textContent = '已保存 ' + new Date().toLocaleTimeString('zh-CN');
       toast('已保存');
     } catch (e) { this.msg.textContent = '保存失败：' + e.message; toast(e.message, true); }
