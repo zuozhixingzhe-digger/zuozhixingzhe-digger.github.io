@@ -20,7 +20,7 @@
 ## B. 窗口交互修复
 
 - [x] 双击最大化/还原改挂**窗口根** + `clientY - rect.top <= _hh + 2` 判顶部条带（`hidemax` 下标题条被盖住收不到事件）
-- [x] `_startDrag` 去掉 `if (win.maximized) return`：最大化/隐藏式都能拖下来（先 `maxMode(normal)` 再按指针定位）
+- [x] `_startDrag` 去掉 `if (win.maximized) return`：**常规最大化**能直接拖下来（先 `maxMode(normal)` 再按指针定位）；隐藏式最大化整窗是终端画面，还原仍走顶栏胶囊
 - [x] 四钮框与二级菜单**两级共存**：二级长按不再 `dotmenu.close()`
 - [x] `DotMenu._outside` 与 `WinMenu._outside` 互不算「外面」；真选中时 `WinMenu.closeAll()` 两级同收
 - [x] `WinMenu.open` 把 `return m` 移到 `addEventListener` 之后（原来监听器根本没挂上）
