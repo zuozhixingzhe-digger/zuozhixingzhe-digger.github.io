@@ -8167,7 +8167,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.35';
+const HT_VERSION = '0.0.1.36';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -11813,19 +11813,14 @@ const WindowManager = {
 
     /* 最大化 / 隐藏式也能一把拖下来：按指针位置还原成普通窗口再跟手。
      * 以前这里遇到 maximized 直接 return，于是「最大化之后拖到左下角换布局」
-     * 永远没反应——用户看到的就是「拖到左/右下角没法启动预设布局」。 */
+     * 永远没反应——用户看到的就是「拖到左/右下角没法启动预设布局」。
+     *
+     * 但**不能一按下就还原**：那样单击标题条（点一下、不动）也会把窗口还原，
+     * 「双击标题栏才还原」的约定就变成了「单击就还原」。
+     * 所以还原推迟到 draw() 里第一次「指针真的移动超过阈值」的那一刻，
+     * 由 detachFromMax() 完成；没移动的点按什么都不做，交给 dblclick / 双击计数。 */
     const mode0 = win.mode || (win.maximized ? 'max' : 'normal');
-    if (mode0 !== 'normal') {
-      const d0 = deskBox();
-      const rr = win.restoreRect || { x:40, y:24, w:Math.min(760, d0.w - 40), h:Math.min(520, d0.h - 60) };
-      const nx0 = Math.round(e.clientX - d0.left - rr.w / 2);
-      const ny0 = Math.round(e.clientY - d0.top - 18);
-      this.maxMode(win.id, 'normal');
-      win.el.style.left = clamp(nx0, 90 - rr.w, d0.w - 90) + 'px';
-      win.el.style.top = clamp(ny0, 0, Math.max(0, d0.h - 60)) + 'px';
-      win.el.style.width = rr.w + 'px';
-      win.el.style.height = rr.h + 'px';
-    }
+    let attached = (mode0 === 'normal');
 
     /* 关键技术：在标题栏上 setPointerCapture。
      * 不捕获时，指针一旦移到窗口内容区（尤其是 iframe 上），pointermove 就派发给
@@ -11834,15 +11829,44 @@ const WindowManager = {
     try { bar.setPointerCapture(pid); } catch (_) {}
 
     this.focus(win.id);
-    const startX = e.clientX, startY = e.clientY;
-    const box0 = deskBox();
+    let startX = e.clientX, startY = e.clientY;
+    let box0 = deskBox();
     const r = win.el.getBoundingClientRect();
     const sl = parseFloat(win.el.style.left), st = parseFloat(win.el.style.top);
     // style.left/top 相对 #desk；getBoundingClientRect 相对视口。优先用已写死的 style 值，
     // 没写过才用 rect 换算（少了这一步会把顶栏高度重复计进位移，拖一次往下跳一截）。
-    const ox = Number.isFinite(sl) ? sl : r.left - box0.left;
-    const oy = Number.isFinite(st) ? st : r.top - box0.top;
-    const w0 = r.width, h0 = r.height;
+    let ox = Number.isFinite(sl) ? sl : r.left - box0.left;
+    let oy = Number.isFinite(st) ? st : r.top - box0.top;
+    let w0 = r.width, h0 = r.height;
+
+    /* 真的拖起来了，才把最大化 / 隐藏式摘下来：按指针位置摆成一扇普通窗口，
+     * 然后把「位移基准」重置成这个新位置——接下来就是一次普通的拖动。
+     * 没移动的点按根本走不到这里，所以单击标题条不会还原。 */
+    const detachFromMax = (ev) => {
+      const d0 = deskBox();
+      const rr = (win.restoreRect && win.restoreRect.w >= 280 && win.restoreRect.h >= 200)
+        ? win.restoreRect
+        : { x:40, y:24, w:Math.min(760, d0.w - 40), h:Math.min(520, d0.h - 60) };
+      const nx0 = Math.round(ev.clientX - d0.left - rr.w / 2);
+      const ny0 = Math.round(ev.clientY - d0.top - 18);
+      this.maxMode(win.id, 'normal');
+      /* maxMode 给窗口挂了 320ms 的 .tween 过渡；这里马上要写死的几何，
+       * 留着过渡会「慢慢飘过去」，松手前又跟手不了。拖动态本来就不该有过渡。 */
+      clearTimeout(win._tweenT);
+      win.el.classList.remove('tween');
+      win.el.style.left = clamp(nx0, 90 - rr.w, d0.w - 90) + 'px';
+      win.el.style.top = clamp(ny0, 0, Math.max(0, d0.h - 60)) + 'px';
+      win.el.style.width = rr.w + 'px';
+      win.el.style.height = rr.h + 'px';
+      attached = true;
+      const r2 = win.el.getBoundingClientRect();
+      startX = ev.clientX; startY = ev.clientY;
+      box0 = d0;
+      ox = r2.left - d0.left;
+      oy = r2.top - d0.top;
+      w0 = r2.width; h0 = r2.height;
+      nx = ox; ny = oy;
+    };
 
     let moved = false, snapPos = null, raf = 0, last = null;
     /* 拖动期间只改 transform，松手才把最终坐标写回 left/top。
@@ -11856,8 +11880,13 @@ const WindowManager = {
     const draw = () => {
       raf = 0;
       const ev = last; if (!ev) return;
+      if (!moved) {
+        const dx0 = ev.clientX - startX, dy0 = ev.clientY - startY;
+        if (Math.abs(dx0) < 3 && Math.abs(dy0) < 3) return;   // 3px 阈值：防手抖
+        /* 第一次越过阈值：最大化 / 隐藏式在这里才退成普通窗口（见 detachFromMax） */
+        if (!attached) detachFromMax(ev);
+      }
       const dx = ev.clientX - startX, dy = ev.clientY - startY;
-      if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;  // 3px 阈值：防手抖
       moved = true;
       const box = deskBox();
       // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
