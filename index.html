@@ -448,7 +448,9 @@ body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
   from{opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06)}
   to  {opacity:1;transform:none}
 }
-.win.dragging,.win.resizing{will-change:left,top,width,height}
+/* 拖动只改 transform（合成层），缩放才改 left/top/width/height */
+.win.dragging{will-change:transform}
+.win.resizing{will-change:left,top,width,height}
 /* 拖动 / 缩放 / 几何过渡期间把毛玻璃关掉：这三个动作每帧都在改窗口尺寸或位置，
  * 而 backdrop-filter 每帧都要重新采样背景，是最容易掉帧的一环。松手立刻恢复。 */
 body.win-drag .win-band,
@@ -457,7 +459,10 @@ body.win-drag .win-handle,
   -webkit-backdrop-filter:none!important; backdrop-filter:none!important;
 }
 body.win-drag .win-handle{filter:none}
-body.win-drag .win-screen,.win.tween .win-screen{
+/* 注意：这里**不动 .win-screen**。以前拖动时把内容区的毛玻璃也关掉，
+ * 拖起来的那一瞬间背景从模糊变锐利，看起来就是「内容闪了一下」。
+ * 现在拖动走 transform，内容不重绘，毛玻璃留着也不掉帧。 */
+.win.tween .win-screen{
   -webkit-backdrop-filter:none!important; backdrop-filter:none!important;
 }
 /* 最大化/还原走几何过渡：只在加了 .tween 的那一瞬生效，
@@ -549,6 +554,16 @@ body.light .dotmenu{background:rgba(252,254,253,.96)}
   transform:none;
 }
 .dotmenu .win-dot svg{width:15px;height:15px}
+
+/* 二级菜单（从四钮框里长出来的那份）：DOM 与一级完全一样，只多一个小尖角，
+ * 指出「我是上面那个圆钮的下一层」。翻到上方时尖角跟着翻到底边。 */
+.winmenu.lv2::before{
+  content:''; position:absolute; left:calc(50% - 6px); width:12px; height:12px;
+  background:var(--panel-solid); border:1px solid var(--line);
+  transform:rotate(45deg);
+}
+.winmenu.lv2[data-place="below"]::before{ top:-7px; border-right:0; border-bottom:0; }
+.winmenu.lv2[data-place="above"]::before{ bottom:-7px; border-left:0; border-top:0; }
 
 /* ---------------------------------------------------------------- 提手
  * 宽度固定为窗宽的 ~43%，窗口变宽它不变形；标题塞不下就中间截断，
@@ -1172,7 +1187,7 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
   position:fixed; z-index:120; top:calc(var(--top) + env(safe-area-inset-top) + 6px); right:10px;
   width:min(230px,84vw); padding:6px;
   max-height:calc(100vh - var(--top) - env(safe-area-inset-top) - 20px); overflow:auto; overscroll-behavior:contain;
-  background:var(--panel-solid); border:1px solid var(--border-strong);
+  background:var(--panel-solid); border:1px solid var(--line);
   border-radius:12px; box-shadow:var(--shadow-lg);
   display:flex; flex-direction:column; gap:2px;
   animation:pop .14s var(--ease);
@@ -2494,6 +2509,8 @@ class LineEditor {
      * 那个是「等输出时空敲的字」，reopen 会把它插回输入行，语义完全不同。 */
     this._pasteBuf = '';
     this._cont = false;
+    /* Tab 候选循环：{ key, list, idx }，见下面的 \t 分支 */
+    this._tabCycle = null;
   }
   /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
   get cols() {
@@ -2509,6 +2526,7 @@ class LineEditor {
   promptText() { return typeof this.o.prompt === 'function' ? this.o.prompt() : (this.o.prompt || '> '); }
   start() {
     this.promptStr = this.promptText();
+    this._tabCycle = null;
     this.buf = ''; this.cur = 0;
     this._rows = 0;
     this._curRow = 0;
@@ -2641,6 +2659,7 @@ class LineEditor {
   }
   insertText(text) {
     if (!text) return;
+    this._tabCycle = null;
     this.buf = this.buf.slice(0, this.cur) + text + this.buf.slice(this.cur);
     this.cur += text.length;
     /* 不再有「在行尾就直接 out(text)」的快速路径：那条路依赖终端的自动折行，
@@ -2649,6 +2668,7 @@ class LineEditor {
   }
   backspace() {
     if (this.cur <= 0) return;
+    this._tabCycle = null;
     let n = 1;
     const prev = this.buf.charCodeAt(this.cur - 1);
     if (prev >= 0xdc00 && prev <= 0xdfff && this.cur >= 2) n = 2;
@@ -2920,41 +2940,69 @@ class LineEditor {
       if (ch === '\x0b') { i += 1; this.killToEnd(); continue; }
       if (ch === '\t') {
         i += 1;
-        if (this.o.onTab) {
-          const before = this.buf.slice(0, this.cur);
-          const after = this.buf.slice(this.cur);
-          this.busy = true;
-          let p;
-          try { p = Promise.resolve(this.o.onTab(before)); }
-          catch (e) { this.busy = false; this.redraw(); return; }
-          p.then(res => {
-            this.busy = false;
-            if (!res) { this.redraw(); return; }
-            const sameSpot = this._tabAt === before;
-            this._tabAt = before;
-            /* 有公共前缀就先补进去（bash 的手感）；已经在同一位置按过第二次，
-             * 或者本来就没得补，才把候选表打出来。一次刷 80 个名字等于没补。 */
-            if (res.value !== undefined && res.value !== before) {
-              this.buf = res.value + after;
-              this.cur = res.value.length;
-              this.redraw();
-              return;
-            }
-            if (res.candidates && res.candidates.length > 1) {
-              if (sameSpot || !res.value) {
-                out('\r\n');
-                const lines = res.lines || [res.candidates.map(c => c.name).join('   ')];
-                out(lines.join('\r\n') + '\r\n');
-                this._tabAt = '';
-                this.redraw();
-                return;
-              }
-              this.redraw();
-              return;
-            }
-            this.redraw();
-          }).catch(() => { this.busy = false; this.redraw(); });
+        if (!this.o.onTab) continue;
+        const before = this.buf.slice(0, this.cur);
+        const after = this.buf.slice(this.cur);
+
+        /* ---- 候选循环 ----
+         * 有多个候选时，Tab 不是「打一张表就完事」，而是依次填进去：
+         *   tab1 补公共前缀（有的话）
+         *   tab2 填第一个候选，并把表打出来
+         *   tab3 就地换成第二个，tab4 第三个……绕回第一个
+         * 判据只看「光标前的内容是不是恰好等于 key + 当前候选」：
+         * 用户多打一个字、或把光标挪走，循环自然失效，不会误替换。 */
+        const cyc = this._tabCycle;
+        if (cyc && before === cyc.key + cyc.list[cyc.idx]) {
+          cyc.idx = (cyc.idx + 1) % cyc.list.length;
+          const nm = cyc.list[cyc.idx];
+          this.buf = cyc.key + nm + after;
+          this.cur = cyc.key.length + nm.length;
+          this.redraw();
+          continue;
         }
+
+        this.busy = true;
+        let p;
+        try { p = Promise.resolve(this.o.onTab(before)); }
+        catch (e) { this.busy = false; this.redraw(); return; }
+        p.then(res => {
+          this.busy = false;
+          if (!res) { this.redraw(); return; }
+          /* 有公共前缀就先补进去（bash 的手感） */
+          if (res.value !== undefined && res.value !== before) {
+            this._tabCycle = null;
+            this.buf = res.value + after;
+            this.cur = res.value.length;
+            this.redraw();
+            return;
+          }
+          const cands = res.candidates || [];
+          /* base = 已经输入的那段「点号 / 斜杠」前缀；候选只需要替换光标前的那一截，
+           * 不能整段接在 before 后面（否则 document.query + querySelector 会拼成一串）。 */
+          const key = res.base != null ? res.base : before;
+          if (cands.length > 1) {
+            const list = cands.map(c => (c.value != null ? c.value : c.name));
+            /* 第一次：把候选表打出来，并填进第一个 */
+            out('\r\n');
+            const lines = res.lines || [cands.map(c => c.name).join('   ')];
+            out(lines.join('\r\n') + '\r\n');
+            const nm = list[0];
+            this.buf = key + nm + after;
+            this.cur = key.length + nm.length;
+            this._tabCycle = { key, list, idx: 0 };
+            this.redraw();
+            return;
+          }
+          if (cands.length === 1) {
+            const nm = cands[0].value != null ? cands[0].value : cands[0].name;
+            this._tabCycle = null;
+            this.buf = key + nm + after;
+            this.cur = key.length + nm.length;
+            this.redraw();
+            return;
+          }
+          this.redraw();
+        }).catch(() => { this.busy = false; this.redraw(); });
         continue;
       }
       if (cp < 0x20) { i += 1; continue; }
@@ -3440,13 +3488,13 @@ function makeShell(ctx) {
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
-      ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
+      ['页面', 'page.q(sel)  $("…") / $$("…") 查询简写  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
       ['hsb1', 'hsb1() 进交互式 Linux 风格 shell；hsb1("ls -la") 跑一行；hsb1 里 help 看命令表'],
       ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.app 放应用（脚本也是应用，不是二进制），.bin 已并入 .app，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
-      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。连按两次 Tab 列出候选。'],
+      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。多候选时继续按 Tab 依次换成下一个。'],
       ['全表', 'api() 打印全部内置 API（分组 + 一句话说明），api("窗口") 只看某一组。'],
     ];
     for (const [k, v] of lines) {
@@ -3751,10 +3799,11 @@ function makeShell(ctx) {
         kind: r.kind === 'dir' ? 'dir' : 'file',
         desc: r.kind === 'dir' ? '目录' : (fmtBytes(r.size || 0))
       }));
-    if (cands.length === 1) return { value: head + dirPart + cands[0].value, candidates: cands };
+    const base = head + dirPart;
+    if (cands.length === 1) return { base, value: base + cands[0].value, candidates: cands };
     const cp = commonPrefix(cands.map(c => c.name));
-    const value = (cands.length > 1 && cp.length > namePart.length) ? head + dirPart + cp : undefined;
-    return { candidates: cands, value, lines: tabLines(cands, state.cols) };
+    const value = (cands.length > 1 && cp.length > namePart.length) ? base + cp : undefined;
+    return { base, candidates: cands, value, lines: tabLines(cands, state.cols) };
   }
 
   async function complete(before) {
@@ -3774,9 +3823,10 @@ function makeShell(ctx) {
                        desc: descFor(base, k) }))
           .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
           .slice(0, 200);
-        if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+        if (cands.length === 1) return { base: head, value: head + cands[0].value, candidates: cands };
         const cp = commonPrefix(cands.map(c => c.name));
         return {
+          base: head,
           candidates: cands,
           value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
           lines: tabLines(cands, state.cols)
@@ -3804,9 +3854,10 @@ function makeShell(ctx) {
       })
       .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
       .slice(0, 200);
-    if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+    if (cands.length === 1) return { base: head, value: head + cands[0].value, candidates: cands };
     const cp = commonPrefix(cands.map(c => c.name));
     return {
+      base: head,
       candidates: cands,
       value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
       lines: tabLines(cands, state.cols)
@@ -4454,7 +4505,10 @@ function callDom(op, ref, ...args) {
  * 不改变任何语义——只是把「读」提前做了。 */
 async function prefetchDom(code) {
   if (!code || typeof code !== 'string') return;
-  if (!/\b(document|window|page|localStorage|getComputedStyle)\b/.test(code)) return;
+  /* `$` / `$$` 是 querySelector 的简写，但代码里根本没有 document 这个词。
+   * 以前这一行直接 return，于是 `$('#topbar')` 拿到一个永远没有快照的空壳
+   * （tagName 是 undefined、length 是 0）——用户看到的就是「$ 没法用」。 */
+  if (!/\b(document|window|page|localStorage|getComputedStyle)\b/.test(code) && !/\$\$?\(/.test(code)) return;
   /* 不要默认把 body/html 塞进来：deep 快照带 innerHTML，整页可能是几 MB，
    * 每条命令都拉一遍会把 REPL 拖到几百毫秒。只有代码里真出现才拉。 */
   const sels = new Set();
@@ -4474,6 +4528,13 @@ async function prefetchDom(code) {
     if (kind === 'getElementById') sels.add('#' + sel.replace(/[^\w-]/g, '\\$&'));
     else if (kind === 'querySelectorAll') listSels.add(sel);
     else sels.add(sel);
+  }
+  /* $('…') / $$('…')：和 querySelector / querySelectorAll 同义，也要预取 */
+  const reD = /(^|[^\w$])(\$\$?)\(\s*(['"`])((?:\\.|(?!\3)[^\\])*)\3/g;
+  while ((m = reD.exec(code))) {
+    const sel = m[4];
+    if (!sel) continue;
+    if (m[2] === '$$') listSels.add(sel); else sels.add(sel);
   }
   /* page.q('…') / page.el('…') 也是选择器，别漏 */
   const re2 = /page\.(?:q|el|text|html|attr|exists|click|setText|setValue|setAttr)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
@@ -8016,7 +8077,7 @@ const HTScript = (() => {
  * ==========================================================================*/
 'use strict';
 
-const HT_VERSION = '0.0.1.32';
+const HT_VERSION = '0.0.1.33';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -10439,7 +10500,31 @@ class TerminalSession {
     this._ro = new ResizeObserver(() => this.fitNow());
     this._ro.observe(this.container);
     setTimeout(() => this.fitNow(), 30);
-    this.term.focus();
+    this._bindZoom();
+    /* 这里**故意不 focus**。手机上一聚焦就弹输入法，开一扇终端窗口＝整屏被键盘吃掉。
+     * 只有「页面加载完那一次」由 70-boot 聚焦桌面终端，以及用户自己点进来才算数。 */
+  }
+
+  /* Ctrl / ⌘ + 滚轮：只缩放这一扇终端，别动全局字号。
+   * 用 term.options.fontSize 而不是 CSS transform —— 字要重新排版、列数要跟着变，
+   * 拉大 canvas 那种做法只会把字糊掉。 */
+  _bindZoom() {
+    const host = this.container;
+    if (!host) return;
+    this.fontSize = Number(Settings.get('font')) || 14;
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const step = e.deltaY > 0 ? -1 : 1;
+      const next = Math.max(8, Math.min(32, this.fontSize + step));
+      if (next === this.fontSize) return;
+      this.fontSize = next;
+      try { this.term.options.fontSize = next; } catch (err) {}
+      try { this.fit && this.fit.fit(); } catch (err) {}
+    };
+    host.addEventListener('wheel', onWheel, { passive: false });
+    this._zoomOff = () => host.removeEventListener('wheel', onWheel);
   }
 
   /* ---------------------------------------------------------------- 自定义光标
@@ -10726,6 +10811,7 @@ class TerminalSession {
     try { this.worker && this.worker.postMessage({ t:'terminate' }); } catch (e) {}
     try { this.worker && this.worker.terminate(); } catch (e) {}
     this.worker = null;
+    try { this._zoomOff && this._zoomOff(); } catch (e) {}
     try { this._ro && this._ro.disconnect(); } catch (e) {}
     try { clearTimeout(this.cur && this.cur.idle); } catch (e) {}
     try { if (this.cur && this.cur.raf) cancelAnimationFrame(this.cur.raf); } catch (e) {}
@@ -10851,6 +10937,62 @@ const WIN_DOT_SVG = {
      '<path fill-rule="evenodd" d="M 16.87 15.61 V 33 H 28.06 V 15.61 Z M 16.87 16.41 H 22.40 V 24.21 H 16.87 Z"/></g></svg>'
 };
 
+/* ---------------------------------------------------------------- 长按
+ * 色点、Dock 图标、顶栏胶囊、四钮框里的圆钮——四处都是「按住不动 550ms」。
+ * 以前这段每个地方抄一遍，改阈值要改四份；现在只留这一份。
+ *
+ * 两个细节：
+ *   1) 手指一旦移动超过 8px 就取消——那是拖拽，不是长按；
+ *   2) 长按弹框之后紧跟着的那次 click 必须吞掉，否则「长按红点」会先弹框再关窗。
+ */
+function bindLongPress(el, onLong, onMenu, ms) {
+  const wait = ms || 550;
+  let timer = 0, sx = 0, sy = 0, fired = false;
+  const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    fired = false; sx = e.clientX; sy = e.clientY;
+    clear();
+    timer = setTimeout(() => { timer = 0; fired = true; onLong(); }, wait);
+  });
+  el.addEventListener('pointermove', e => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => el.addEventListener(t, clear));
+  el.addEventListener('click', e => {
+    if (!fired) return;
+    fired = false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  if (onMenu) {
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      clear(); fired = false;
+      onMenu();
+    });
+  }
+}
+
+
+/* 浮层定位：四钮框、详细菜单、标题气泡都是「贴着锚点下方居中，
+ * 下面放不下就翻到上面，左右夹在视口内」。以前三处各抄一遍，改一处忘两处。 */
+function placePopover(el, anchor, gap) {
+  const g = gap == null ? 8 : gap;
+  const r = anchor.getBoundingClientRect();
+  const mw = el.offsetWidth, mh = el.offsetHeight;
+  let x = r.left + r.width / 2 - mw / 2;
+  let y = r.bottom + g;
+  let below = true;
+  if (y + mh > innerHeight - 8) { y = r.top - mh - g; below = false; }
+  x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+  y = Math.max(8, Math.min(y, innerHeight - mh - 8));
+  el.style.left = Math.round(x) + 'px';
+  el.style.top = Math.round(y) + 'px';
+  /* 小尖角朝哪边：翻到上面时角要长在底边 */
+  el.dataset.place = below ? 'below' : 'above';
+}
+
 const WindowManager = {
   windows: new Map(),
   z: 30,
@@ -10866,24 +11008,10 @@ const WindowManager = {
   _initModeChrome() {
     const chip = document.getElementById('hidChip');
     if (chip) {
-      let timer = 0, sx = 0, sy = 0, longPressed = false;
-      const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
-      chip.addEventListener('pointerdown', e => {
-        if (e.button !== 0) return;
-        longPressed = false; sx = e.clientX; sy = e.clientY;
-        clear();
-        timer = setTimeout(() => { timer = 0; longPressed = true; ChipMenu.open(chip, chip.dataset.win); }, 500);
-      });
-      chip.addEventListener('pointermove', e => {
-        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-      });
-      ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => chip.addEventListener(t, clear));
-      chip.addEventListener('contextmenu', e => {
-        e.preventDefault(); clear();
-        ChipMenu.open(chip, chip.dataset.win);
-      });
+      /* 单击 = 还原；长按 / 右键 = 四钮框（和窗口色点同一套手势） */
+      bindLongPress(chip, () => ChipMenu.open(chip, chip.dataset.win),
+                          () => ChipMenu.open(chip, chip.dataset.win));
       chip.addEventListener('click', () => {
-        if (longPressed) { longPressed = false; return; }
         const id = chip.dataset.win;
         if (id) WindowManager.maxMode(id, 'normal');
       });
@@ -11019,7 +11147,11 @@ const WindowManager = {
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
-    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+    /* 双击标题条 = 最大化 / 还原。色点与工具按钮不算标题（点两下别把窗口放大）。 */
+    bar.addEventListener('dblclick', e => {
+      if (e.target.closest('.win-dot, .win-tools')) return;
+      this.toggleMax(id);
+    });
     this._bindTitleTip(win);
 
     /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
@@ -11189,6 +11321,11 @@ const WindowManager = {
     const w0 = r.width, h0 = r.height;
 
     let moved = false, snapPos = null, raf = 0, last = null;
+    /* 拖动期间只改 transform，松手才把最终坐标写回 left/top。
+     * 为什么：left/top 每帧都要重新布局整个窗口（含终端 canvas、iframe），
+     * 内容会跟着重排重绘——用户看到的就是「拖动时内容闪」。transform 只走合成层，
+     * 窗口里的东西一个像素都不用重画。 */
+    let nx = ox, ny = oy;
     const snapEl = document.getElementById('winSnap');
     document.body.classList.add('win-drag');
 
@@ -11200,35 +11337,29 @@ const WindowManager = {
       moved = true;
       const box = deskBox();
       // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
-      const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
-      const ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
-      win.el.style.left = nx + 'px';
-      win.el.style.top = ny + 'px';
+      nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
+      ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
+      win.el.style.transform = 'translate3d(' + (nx - ox) + 'px,' + (ny - oy) + 'px,0)';
       win.el.classList.add('dragging');
 
       /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一，
        * 贴底中间 = 最小化（黄色提示框）。角优先于边——不然在左上角永远只能拿到「左半屏」。
        *
-       * 判据只有一个：**提手（把手）的位置**。
-       *   不看指针 —— 指针在窗口中间，窗口贴着左边，用户没打算吸边；
-       *   不看窗口边框/标题条/内容区 —— 提手是唯一的抓取点，它贴边才叫贴边。
-       *   阈值 10px：肉眼「几乎紧贴」，不是「靠近了就算」。以前 46px 太松，
-       *   稍微偏一点就弹绿框，用户的原话是「我只是往左偏一点点」。
-       * 底部同理：提手底边沉到画布底部 40px 内才算「拖到底」。 */
-      const SNAP = 10, BOTTOM = 40;
-      const hEl = win.el.querySelector('.win-handle');
-      const hr0 = hEl ? hEl.getBoundingClientRect() : null;
-      const hx = hr0 ? hr0.left - box.left : 0;
-      const hy = hr0 ? hr0.top - box.top : 0;
-      const hw = hr0 ? hr0.width : 0;
-      const hh = hr0 ? hr0.height : (win._hh || 42);
-      const hcx = hx + hw / 2;
-      const nearL = hx <= SNAP;
-      const nearR = hx + hw >= box.w - SNAP;
-      const nearT = hy <= SNAP;
-      const nearB = hy + hh >= box.h - BOTTOM;
-      /* 底部中间：提手中心落在画布中段，且不贴左右（贴角另有语义） */
-      const midX = !nearL && !nearR && hcx > box.w * 0.25 && hcx < box.w * 0.75;
+       * 判据只有一个：**指针（鼠标 / 手指）的位置**。
+       *   0.0.1.32 用的是提手矩形，其实是我把需求记错了——用户要的是
+       *   「手指拖到哪儿，就算贴哪儿」。手指在屏幕最左边，才吸左半屏；
+       *   手指还在窗口中间，窗口再靠边也不吸。
+       * 阈值 10px：肉眼「几乎挨着」，不是「靠近了就算」。
+       * 底部 28px：手指压到画布最下沿才算「拖到底」。 */
+      const SNAP = 10, BOTTOM = 28;
+      const px = ev.clientX - box.left;
+      const py = ev.clientY - box.top;
+      const nearL = px <= SNAP;
+      const nearR = px >= box.w - SNAP;
+      const nearT = py <= SNAP;
+      const nearB = py >= box.h - BOTTOM;
+      /* 底部中间：指针落在画布中段，且不贴左右（贴角另有语义） */
+      const midX = !nearL && !nearR && px > box.w * 0.25 && px < box.w * 0.75;
       if (nearB && midX) snapPos = 'min';
       else if (nearT && nearL) snapPos = 'tl';
       else if (nearT && nearR) snapPos = 'tr';
@@ -11260,6 +11391,10 @@ const WindowManager = {
       try { bar.releasePointerCapture(pid); } catch (_) {}
       document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
+      /* 把合成层的位移兑现成真实坐标：顺序必须是「先写 left/top，再清 transform」，
+       * 反过来的话会有一帧停在旧位置。 */
+      if (moved) { win.el.style.left = nx + 'px'; win.el.style.top = ny + 'px'; }
+      win.el.style.transform = '';
       if (snapEl) snapEl.style.display = 'none';
       if (snapPos === 'min') {
         /* 先放回原位再收进 Dock：恢复时才回到用户原本的位置，而不是拖到底部的位置 */
@@ -11274,6 +11409,17 @@ const WindowManager = {
         win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
         win.el.style.width = w0 + 'px'; win.el.style.height = h0 + 'px';
         this.snap(win.id, snapPos);
+      }
+      /* 触屏没有 dblclick：自己数两下。只认「没拖动的点按」，340ms 窗口。 */
+      if (ev && ev.pointerType !== 'mouse' && !moved) {
+        const now = performance.now();
+        if (now - (this._tapT || 0) < 340 &&
+            Math.hypot(ev.clientX - (this._tapX || 0), ev.clientY - (this._tapY || 0)) < 30) {
+          this._tapT = 0;
+          this.toggleMax(win.id);
+        } else {
+          this._tapT = now; this._tapX = ev.clientX; this._tapY = ev.clientY;
+        }
       }
     };
     bar.addEventListener('pointermove', move);
@@ -11348,6 +11494,14 @@ const WindowManager = {
     const win = this.windows.get(id);
     if (!win) return;
     if (typeof DotMenu !== 'undefined' && DotMenu.winId && DotMenu.winId !== id) DotMenu.close();
+    /* 快路径：点的是已经聚焦的那扇窗。以前这里无条件重建整条 Dock 的 DOM——
+     * 计算器里每点一个按键（pointerdown 会冒泡到这里）就 innerHTML 重排一次，
+     * 连点两下时第二下要等重排完，手感就是「按了没反应」。 */
+    if (this._focusedId === id && win.el.classList.contains('focus')) {
+      win.el.style.zIndex = ++this.z;
+      return;
+    }
+    this._focusedId = id;
     for (const w of this.windows.values()) w.el.classList.remove('focus');
     win.el.classList.add('focus');
     win.el.style.zIndex = ++this.z;
@@ -11561,33 +11715,10 @@ const WindowManager = {
     if (w) this.close(w.id);
   },
 
-  /* 色点的第二功能：长按 550ms → 四钮悬浮框；右键 → 完整菜单（带文字，含形态与吸附）。
-   * 长按结束后紧跟的那次 click 必须吞掉，否则「长按红点」会先弹框再把窗口关了。 */
+  /* 色点：长按 → 四钮悬浮框；右键 → 完整菜单（带文字，含形态与吸附）。 */
   _bindDotMenu(dot, id) {
     const act = dot.dataset.a;
-    let timer = null, sx = 0, sy = 0, fired = false;
-    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    dot.addEventListener('click', e => {
-      if (!fired) return;
-      fired = false;
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }, true);
-    dot.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      fired = false; sx = e.clientX; sy = e.clientY;
-      clear();
-      timer = setTimeout(() => { timer = null; fired = true; DotMenu.open(dot, id); }, 550);
-    });
-    dot.addEventListener('pointermove', e => {
-      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-    });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => dot.addEventListener(t, clear));
-    dot.addEventListener('contextmenu', e => {
-      e.preventDefault(); e.stopPropagation();
-      clear(); fired = false;
-      WinMenu.open(dot, id, act);
-    });
+    bindLongPress(dot, () => DotMenu.open(dot, id), () => WinMenu.open(dot, id, act));
   },
 
   /* 标题被中间截断时，完整标题得有个地方看：
@@ -11825,28 +11956,7 @@ const WindowManager = {
   /* Dock 图标：单击切换最小化（原有），长按 550ms 弹四钮框。
    * 和窗口色点、顶栏胶囊是同一个框——用户不用记三套菜单。 */
   _bindDockMenu(b) {
-    let timer = 0, sx = 0, sy = 0, fired = false;
-    const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
-    b.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      fired = false; sx = e.clientX; sy = e.clientY;
-      clear();
-      timer = setTimeout(() => { timer = 0; fired = true; DotMenu.open(b, b.dataset.win); }, 550);
-    });
-    b.addEventListener('pointermove', e => {
-      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-    });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, clear));
-    b.addEventListener('click', e => {
-      if (!fired) return;
-      fired = false;
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }, true);
-    b.addEventListener('contextmenu', e => {
-      e.preventDefault(); clear(); fired = false;
-      DotMenu.open(b, b.dataset.win);
-    });
+    bindLongPress(b, () => DotMenu.open(b, b.dataset.win), () => DotMenu.open(b, b.dataset.win));
   },
 
   /* 折叠 / 展开：把手点一下、Dock 往下拖、药丸往上滑、药丸点一下 —— 四条路都通 */
@@ -11942,13 +12052,7 @@ const DotMenu = {
       `<button class="win-dot x" data-a="max" aria-label="最大化">${WIN_DOT_SVG.x}</button>` +
       `<button class="win-dot b" data-a="back" aria-label="置于底层">${WIN_DOT_SVG.b}</button>`;
     document.body.appendChild(m);
-    const r = anchor.getBoundingClientRect();
-    const mw = m.offsetWidth, mh = m.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 9;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 9;
-    m.style.left = clamp(Math.round(x), 8, innerWidth - mw - 8) + 'px';
-    m.style.top = clamp(Math.round(y), 8, innerHeight - mh - 8) + 'px';
+    placePopover(m, anchor, 9);
 
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-a]');
@@ -11962,6 +12066,16 @@ const DotMenu = {
         WindowManager.maxMode(id, (cur === 'normal') ? 'max' : (cur === 'max' ? 'normal' : 'max'));
       } else if (a === 'back') WindowManager.sendToBack(id);
     });
+    /* 二级菜单：四钮框里的圆钮再长按一次，展开这个动作的完整菜单。
+     * 手势和窗口色点完全一样（bindLongPress），框也复用 WinMenu——
+     * 只是锚点从色点换成了框里的圆钮。 */
+    $$('.win-dot[data-a]', m).forEach(btn => bindLongPress(btn, () => {
+      const a = btn.dataset.a;
+      /* 二级框加一枚小尖角：形状和一级菜单略有不同，但 DOM 与内容完全复用。 */
+      const sub = WinMenu.open(btn, id, a);
+      if (sub) sub.classList.add('lv2');
+      this.close();
+    }));
     this.el = m; this.anchor = anchor; this.winId = id;
     setTimeout(() => {
       document.addEventListener('pointerdown', this._outside, true);
@@ -12003,16 +12117,7 @@ const WinMenu = {
     m.className = 'winmenu';
     m.innerHTML = this._html(w, act);
     document.body.appendChild(m);
-
-    const r = dot.getBoundingClientRect();
-    const mw = m.offsetWidth, mh = m.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 8;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
-    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
-    y = Math.max(8, y);
-    m.style.left = x + 'px';
-    m.style.top = y + 'px';
+    placePopover(m, dot, 8);
 
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-snap]');
@@ -12027,12 +12132,19 @@ const WinMenu = {
       else if (cmd === 'close-one') WindowManager.close(id);
       else if (cmd === 'down') WindowManager.sendDown(id);
       else if (cmd === 'bottom') WindowManager.sendToBack(id);
+      else if (cmd === 'min-one') WindowManager.minimize(id);
+      else if (cmd === 'min-type') {
+        for (const x of [...WindowManager.windows.values()]) {
+          if (x.type === w.type && !x.minimized) WindowManager.minimize(x.id);
+        }
+      }
       else if (cmd === 'mintype') WindowManager.minimize(id);
     });
 
     this.el = m;
     this.winId = id;
     this._dot = dot;
+    return m;
     setTimeout(() => {
       document.addEventListener('pointerdown', this._outside, true);
       document.addEventListener('keydown', this._esc, true);
@@ -12047,9 +12159,10 @@ const WinMenu = {
         <button data-cmd="close-one">只关闭这一个</button>`;
     }
     if (act === 'min') {
-      return `<div class="winmenu__title">黄色 · 待定</div>
-        <div class="wm-note">这个功能的定义还没定下来（需求里写的是「？，未实现」）。先把入口留在这儿，想好了再补。</div>
-        <button data-cmd="noop">知道了</button>`;
+      const same = [...WindowManager.windows.values()].filter(x => x.type === w.type && !x.minimized).length;
+      return `<div class="winmenu__title">黄色 · 最小化</div>
+        <button class="stack" data-cmd="min-one"><span>收进 Dock</span><em>点 Dock 上的图标再回来</em></button>
+        <button class="stack" data-cmd="min-type"><span>同类一起收（${same}）</span><em>把所有「${t}」窗口都最小化</em></button>`;
     }
     if (act === 'max') {
       const cur = w.mode || (w.maximized ? 'max' : 'normal');
@@ -12105,15 +12218,7 @@ const TitleTip = {
     this.el.innerHTML = esc(win.title || '') +
       `<i>${esc(win.type || 'window')}${win.mode && win.mode !== 'normal' ? ' · ' + esc(win.mode) : ''}</i>`;
     this.el.classList.add('on');
-    const r = (titleEl || win.el).getBoundingClientRect();
-    const mw = this.el.offsetWidth, mh = this.el.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 8;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
-    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
-    y = Math.max(8, y);
-    this.el.style.left = x + 'px';
-    this.el.style.top = y + 'px';
+    placePopover(this.el, titleEl || win.el, 8);
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.hide(), 3200);
   },
@@ -13468,12 +13573,28 @@ class CalcApp {
   }
   _bind() {
     const root = $('.calc', this.el);
-    root.addEventListener('click', (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
+    /* 按键走 pointerdown，不等 click。
+     * click 要等 pointerup（手指抬起）才合成，连点时第二下往往落在
+     * 「第一下的 click 刚处理完」之后，主观上就是「按了没反应」。
+     * 键盘触发的 click（Enter / 空格）没有 pointerdown，所以 click 那条也留着，
+     * 用时间戳去重，绝不重复输入。 */
+    const press = (b) => {
       const act = b.dataset.act;
       if (act) this.doAct(act, b);
       else if (b.dataset.ins != null) this.ins(this.second && b.dataset.alt != null ? b.dataset.alt : b.dataset.ins);
+    };
+    root.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      this._pdAt = performance.now();
+      press(b);
+    });
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (performance.now() - (this._pdAt || 0) < 700) return;
+      press(b);
     });
     root.addEventListener('keydown', (e) => this.onKey(e));
     root.addEventListener('focus', () => {});
@@ -22956,7 +23077,8 @@ const Drawer = {
     $('#drawer').classList.remove('on');
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-overlay').classList.remove('on');
-    if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
+    /* 这里以前会把焦点塞回桌面终端：手机上等于「一关抽屉就弹输入法」，
+     * 还顺带把视口顶起来，抽屉看起来就像闪了一下。焦点只在用户点击时给。 */
   },
   /* 右滑关闭：抽屉跟手移动，松手按「位移 + 速度」决定关还是弹回。
    * 用 pointer 事件而不是 touch，鼠标拖拽同样生效（桌面上也符合直觉）。
@@ -23019,34 +23141,45 @@ const Drawer = {
       if (!active) return;
       if (!engaged) { active = false; return; }
       const p = dx / w;
-      const far = p > 0.32 || (v > 0.5 && p > 0.12);
+      /* 松手阈值比原来松一档：位移过 26% 就关，快速轻扫（>0.35px/ms）只要 8% 也算。
+       * 以前 32% + 0.5，手指划得稍微快一点反而被判成「不够远」，弹回去——
+       * 用户看到的就是「闪一下闪回初始态」。 */
+      const far = p > 0.26 || (v > 0.35 && p > 0.08);
+      active = engaged = false;
+      /* 先把 .dragging 摘掉（它还带着 transition:none），再显式指定目标位置。
+       * 关键：不要清掉 inline transform 指望 CSS 的 translateX(100%) 接手——
+       * 那一帧会从 dx 直接跳到 100%，就是那个「闪」。 */
+      dr.classList.remove('dragging');
+      dr.style.transition = 'transform .22s cubic-bezier(.22,1,.36,1)';
+      ov.style.transition = 'opacity .22s cubic-bezier(.22,1,.36,1)';
       if (far) {
-        /* 关键顺序：inline transform 先留着——这样 .on 拿掉时画面不会闪回 0，
-         * 下一帧再清掉 inline，CSS 过渡才会从「手指松开的位置」接着滑出去 */
-        dr.style.transition = '';
-        ov.style.transition = '';
-        dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
-        active = engaged = false;
+        dr.style.transform = 'translateX(100%)';
+        ov.style.opacity = '0';
+        /* 滑动手势之后紧跟的 click 不能落到被划过的按钮上（否则会顺手打开一个窗口） */
+        dr.__swipe = true;
+        setTimeout(() => { dr.__swipe = false; }, 360);
         this.close();
-        requestAnimationFrame(() => {
-          dr.style.transform = '';
-          ov.style.opacity = '';
-          dr.classList.remove('dragging');
-        });
+        setTimeout(() => {
+          dr.style.transition = ''; dr.style.transform = '';
+          ov.style.transition = ''; ov.style.opacity = '';
+        }, 240);
       } else {
-        dr.style.transition = 'transform .24s cubic-bezier(.22,1,.36,1)';
-        ov.style.transition = 'opacity .24s cubic-bezier(.22,1,.36,1)';
         dr.style.transform = '';
         ov.style.opacity = '';
-        const done = () => { reset(); dr.removeEventListener('transitionend', done); };
-        dr.addEventListener('transitionend', done, { once: true });
-        setTimeout(done, 320);
-        active = engaged = false;
+        setTimeout(reset, 260);
       }
     };
     dr.addEventListener('pointerup', up);
     dr.addEventListener('pointercancel', up);
     dr.addEventListener('lostpointercapture', up);
+    /* 指针在抽屉外面松开（手指划出屏幕边缘）也要收尾 */
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    /* 划过之后那一次 click 一律吞掉：拖拽不是点击 */
+    dr.addEventListener('click', (e) => {
+      if (!dr.__swipe) return;
+      e.stopPropagation(); e.preventDefault();
+    }, true);
   },
   /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
    * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
@@ -23279,7 +23412,6 @@ async function nuke() {
 function execInDesktop(code) {
   const d = TerminalManager.desktop;
   if (!d) return false;
-  d.term && d.term.focus();
   const s = String(code);
   if (s.includes('\n')) d._post({ t:'in', data:'\x1b[200~' + s + '\x1b[201~' });
   else d._post({ t:'in', data:s + '\r' });
@@ -23694,6 +23826,13 @@ async function boot() {
     await sleep(320);
     bootEl.classList.add('gone');
     setTimeout(() => { bootEl.style.display = 'none'; }, 500);
+    /* 唯一一次「自动聚焦」：页面刚加载完，光标直接落在桌面终端里，敲键就能用。
+     * 其它场合（开新窗口、关抽屉、执行脚本）一律不抢焦点——手机上那等于
+     * 随时把输入法顶上来。详见 README「焦点规则」。 */
+    setTimeout(() => {
+      const d = TerminalManager.desktop;
+      if (d && d.term) { try { d.term.focus(); } catch (e) {} }
+    }, 360);
 
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);

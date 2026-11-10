@@ -448,7 +448,9 @@ body.light .win-screen,body.light #dock,body.light .drawer,body.light .launcher{
   from{opacity:0;transform:translate(var(--mx,0px),var(--my,0px)) scale(.06)}
   to  {opacity:1;transform:none}
 }
-.win.dragging,.win.resizing{will-change:left,top,width,height}
+/* 拖动只改 transform（合成层），缩放才改 left/top/width/height */
+.win.dragging{will-change:transform}
+.win.resizing{will-change:left,top,width,height}
 /* 拖动 / 缩放 / 几何过渡期间把毛玻璃关掉：这三个动作每帧都在改窗口尺寸或位置，
  * 而 backdrop-filter 每帧都要重新采样背景，是最容易掉帧的一环。松手立刻恢复。 */
 body.win-drag .win-band,
@@ -457,7 +459,10 @@ body.win-drag .win-handle,
   -webkit-backdrop-filter:none!important; backdrop-filter:none!important;
 }
 body.win-drag .win-handle{filter:none}
-body.win-drag .win-screen,.win.tween .win-screen{
+/* 注意：这里**不动 .win-screen**。以前拖动时把内容区的毛玻璃也关掉，
+ * 拖起来的那一瞬间背景从模糊变锐利，看起来就是「内容闪了一下」。
+ * 现在拖动走 transform，内容不重绘，毛玻璃留着也不掉帧。 */
+.win.tween .win-screen{
   -webkit-backdrop-filter:none!important; backdrop-filter:none!important;
 }
 /* 最大化/还原走几何过渡：只在加了 .tween 的那一瞬生效，
@@ -549,6 +554,16 @@ body.light .dotmenu{background:rgba(252,254,253,.96)}
   transform:none;
 }
 .dotmenu .win-dot svg{width:15px;height:15px}
+
+/* 二级菜单（从四钮框里长出来的那份）：DOM 与一级完全一样，只多一个小尖角，
+ * 指出「我是上面那个圆钮的下一层」。翻到上方时尖角跟着翻到底边。 */
+.winmenu.lv2::before{
+  content:''; position:absolute; left:calc(50% - 6px); width:12px; height:12px;
+  background:var(--panel-solid); border:1px solid var(--line);
+  transform:rotate(45deg);
+}
+.winmenu.lv2[data-place="below"]::before{ top:-7px; border-right:0; border-bottom:0; }
+.winmenu.lv2[data-place="above"]::before{ bottom:-7px; border-left:0; border-top:0; }
 
 /* ---------------------------------------------------------------- 提手
  * 宽度固定为窗宽的 ~43%，窗口变宽它不变形；标题塞不下就中间截断，
@@ -1172,7 +1187,7 @@ body.light .seg button[aria-pressed="true"]{color:#fff}
   position:fixed; z-index:120; top:calc(var(--top) + env(safe-area-inset-top) + 6px); right:10px;
   width:min(230px,84vw); padding:6px;
   max-height:calc(100vh - var(--top) - env(safe-area-inset-top) - 20px); overflow:auto; overscroll-behavior:contain;
-  background:var(--panel-solid); border:1px solid var(--border-strong);
+  background:var(--panel-solid); border:1px solid var(--line);
   border-radius:12px; box-shadow:var(--shadow-lg);
   display:flex; flex-direction:column; gap:2px;
   animation:pop .14s var(--ease);

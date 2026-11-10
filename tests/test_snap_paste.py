@@ -29,68 +29,66 @@ async def main():
         await pg.wait_for_timeout(900)
         out = {}
 
-        # ---------- A. 吸附：提手位置判定 ----------
-        async def drag_to(x_from_gutter, y_extra=0):
-            """把窗口拖到使「提手左边缘」位于 x_from_gutter 的位置"""
-            return await pg.evaluate("""async (gx) => {
+        # ---------- A. 吸附：指针位置判定（0.0.1.33 起） ----------
+        async def setup_win():
+            return await pg.evaluate("""async () => {
               const w = WindowManager.open({type:'editor', content:'x'});
               await sleep(400);
-              // 摆到一个明确的起点
               w.el.style.left = '600px'; w.el.style.top = '200px';
               await sleep(120);
-              const h = w.el.querySelector('.win-handle').getBoundingClientRect();
-              return {id: w.id, hx: h.x, hy: h.y, hw: h.width, hh: h.height};
-            }""", x_from_gutter)
-
-        async def drag_window(win, target_hx, target_hy):
-            # 用真实鼠标：抓提手中央，拖到目标位置
-            hx = win["hx"] + win["hw"] / 2
-            hy = win["hy"] + win["hh"] / 2
-            await pg.mouse.move(hx, hy)
-            await pg.mouse.down()
-            for i in range(10):
-                await pg.mouse.move(hx + (target_hx + win["hw"] / 2 - hx) * (i + 1) / 10,
-                                    hy + (target_hy + win["hh"] / 2 - hy) * (i + 1) / 10)
-                await pg.wait_for_timeout(25)
-            await pg.wait_for_timeout(200)
-            st = await pg.evaluate("""() => {
-              const s = document.querySelector('.win-snap');
-              return {pos: s && s.style.display !== 'none' ? s.dataset.pos : null};
+              const r = w.el.getBoundingClientRect();
+              const b = w.el.querySelector('.win-bar').getBoundingClientRect();
+              return { id: w.id, gx: r.left + r.width/2, gy: b.top + b.height/2 };
             }""")
-            return st
 
-        # 1) 提手离左边 30px —— 不该吸附
-        win = await drag_to(0)
-        st = await drag_window(win, 30, 200)
-        await pg.mouse.up()
-        await pg.wait_for_timeout(400)
-        out["edge_30px"] = st
+        async def drag_pointer(win, tx, ty):
+            """抓住标题条中央，把**指针**拖到 (tx, ty)"""
+            await pg.mouse.move(win["gx"], win["gy"])
+            await pg.mouse.down()
+            for i in range(1, 11):
+                await pg.mouse.move(win["gx"] + (tx - win["gx"]) * i / 10,
+                                    win["gy"] + (ty - win["gy"]) * i / 10)
+                await pg.wait_for_timeout(20)
+            await pg.wait_for_timeout(180)
+            return await pg.evaluate("""() => {
+              const s = document.querySelector('.win-snap');
+              return { pos: s && s.style.display !== 'none' ? s.dataset.pos : null };
+            }""")
 
-        # 2) 提手贴到左边 2px —— 应该吸附 left
-        win = await drag_to(0)
-        st = await drag_window(win, 2, 200)
-        await pg.mouse.up()
-        await pg.wait_for_timeout(500)
+        # 1) 窗口已经贴左（left=2），但指针还在窗口中间 —— 不该吸附
+        win = await setup_win()
+        await pg.evaluate("""(id) => { const w = WindowManager.windows.get(id); w.el.style.left = '2px'; }""", win["id"])
+        st = await drag_pointer(win, 600, 260)
+        await pg.mouse.up(); await pg.wait_for_timeout(400)
+        out["pointer_mid"] = st
+
+        # 2) 指针拖到左缘 2px —— 应该吸附 left
+        win = await setup_win()
+        st = await drag_pointer(win, 2, 260)
+        await pg.mouse.up(); await pg.wait_for_timeout(500)
         mode = await pg.evaluate("""(id) => {
           const w = WindowManager.windows.get(id);
           return w ? {mode: w.mode, x: Math.round(parseFloat(w.el.style.left)),
                       w: Math.round(parseFloat(w.el.style.width))} : null;
         }""", win["id"])
-        out["edge_2px"] = {"snap": st, "after": mode}
+        out["pointer_edge_left"] = {"snap": st, "after": mode}
 
-        # 3) 提手离右边 30px —— 不该吸附
-        win = await drag_to(0)
-        st = await drag_window(win, 1400 - 30 - win["hw"], 200)
-        await pg.mouse.up()
-        await pg.wait_for_timeout(400)
-        out["right_30px"] = st
+        # 3) 指针离左缘 30px —— 不该吸附
+        win = await setup_win()
+        st = await drag_pointer(win, 30, 260)
+        await pg.mouse.up(); await pg.wait_for_timeout(400)
+        out["pointer_30px"] = st
 
-        # 4) 提手贴右边 2px —— 应该吸附 right
-        win = await drag_to(0)
-        st = await drag_window(win, 1400 - 2 - win["hw"], 200)
-        await pg.mouse.up()
-        await pg.wait_for_timeout(500)
-        out["right_2px"] = st
+        # 4) 指针拖到右缘 —— 应该吸附 right
+        win = await setup_win()
+        st = await drag_pointer(win, 1398, 260)
+        await pg.mouse.up(); await pg.wait_for_timeout(500)
+        mode = await pg.evaluate("""(id) => {
+          const w = WindowManager.windows.get(id);
+          return w ? {mode: w.mode, x: Math.round(parseFloat(w.el.style.left)),
+                      w: Math.round(parseFloat(w.el.style.width))} : null;
+        }""", win["id"])
+        out["pointer_edge_right"] = {"snap": st, "after": mode}
 
         # 清理窗口
         await pg.evaluate("""() => { for (const w of [...WindowManager.windows.values()]) if (w.type !== 'shell') WindowManager.close(w.id); }""")

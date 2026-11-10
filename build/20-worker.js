@@ -215,6 +215,8 @@ class LineEditor {
      * 那个是「等输出时空敲的字」，reopen 会把它插回输入行，语义完全不同。 */
     this._pasteBuf = '';
     this._cont = false;
+    /* Tab 候选循环：{ key, list, idx }，见下面的 \t 分支 */
+    this._tabCycle = null;
   }
   /* 终端列数由宿主的 resize 消息同步过来；没有就按 80。 */
   get cols() {
@@ -230,6 +232,7 @@ class LineEditor {
   promptText() { return typeof this.o.prompt === 'function' ? this.o.prompt() : (this.o.prompt || '> '); }
   start() {
     this.promptStr = this.promptText();
+    this._tabCycle = null;
     this.buf = ''; this.cur = 0;
     this._rows = 0;
     this._curRow = 0;
@@ -362,6 +365,7 @@ class LineEditor {
   }
   insertText(text) {
     if (!text) return;
+    this._tabCycle = null;
     this.buf = this.buf.slice(0, this.cur) + text + this.buf.slice(this.cur);
     this.cur += text.length;
     /* 不再有「在行尾就直接 out(text)」的快速路径：那条路依赖终端的自动折行，
@@ -370,6 +374,7 @@ class LineEditor {
   }
   backspace() {
     if (this.cur <= 0) return;
+    this._tabCycle = null;
     let n = 1;
     const prev = this.buf.charCodeAt(this.cur - 1);
     if (prev >= 0xdc00 && prev <= 0xdfff && this.cur >= 2) n = 2;
@@ -641,41 +646,69 @@ class LineEditor {
       if (ch === '\x0b') { i += 1; this.killToEnd(); continue; }
       if (ch === '\t') {
         i += 1;
-        if (this.o.onTab) {
-          const before = this.buf.slice(0, this.cur);
-          const after = this.buf.slice(this.cur);
-          this.busy = true;
-          let p;
-          try { p = Promise.resolve(this.o.onTab(before)); }
-          catch (e) { this.busy = false; this.redraw(); return; }
-          p.then(res => {
-            this.busy = false;
-            if (!res) { this.redraw(); return; }
-            const sameSpot = this._tabAt === before;
-            this._tabAt = before;
-            /* 有公共前缀就先补进去（bash 的手感）；已经在同一位置按过第二次，
-             * 或者本来就没得补，才把候选表打出来。一次刷 80 个名字等于没补。 */
-            if (res.value !== undefined && res.value !== before) {
-              this.buf = res.value + after;
-              this.cur = res.value.length;
-              this.redraw();
-              return;
-            }
-            if (res.candidates && res.candidates.length > 1) {
-              if (sameSpot || !res.value) {
-                out('\r\n');
-                const lines = res.lines || [res.candidates.map(c => c.name).join('   ')];
-                out(lines.join('\r\n') + '\r\n');
-                this._tabAt = '';
-                this.redraw();
-                return;
-              }
-              this.redraw();
-              return;
-            }
-            this.redraw();
-          }).catch(() => { this.busy = false; this.redraw(); });
+        if (!this.o.onTab) continue;
+        const before = this.buf.slice(0, this.cur);
+        const after = this.buf.slice(this.cur);
+
+        /* ---- 候选循环 ----
+         * 有多个候选时，Tab 不是「打一张表就完事」，而是依次填进去：
+         *   tab1 补公共前缀（有的话）
+         *   tab2 填第一个候选，并把表打出来
+         *   tab3 就地换成第二个，tab4 第三个……绕回第一个
+         * 判据只看「光标前的内容是不是恰好等于 key + 当前候选」：
+         * 用户多打一个字、或把光标挪走，循环自然失效，不会误替换。 */
+        const cyc = this._tabCycle;
+        if (cyc && before === cyc.key + cyc.list[cyc.idx]) {
+          cyc.idx = (cyc.idx + 1) % cyc.list.length;
+          const nm = cyc.list[cyc.idx];
+          this.buf = cyc.key + nm + after;
+          this.cur = cyc.key.length + nm.length;
+          this.redraw();
+          continue;
         }
+
+        this.busy = true;
+        let p;
+        try { p = Promise.resolve(this.o.onTab(before)); }
+        catch (e) { this.busy = false; this.redraw(); return; }
+        p.then(res => {
+          this.busy = false;
+          if (!res) { this.redraw(); return; }
+          /* 有公共前缀就先补进去（bash 的手感） */
+          if (res.value !== undefined && res.value !== before) {
+            this._tabCycle = null;
+            this.buf = res.value + after;
+            this.cur = res.value.length;
+            this.redraw();
+            return;
+          }
+          const cands = res.candidates || [];
+          /* base = 已经输入的那段「点号 / 斜杠」前缀；候选只需要替换光标前的那一截，
+           * 不能整段接在 before 后面（否则 document.query + querySelector 会拼成一串）。 */
+          const key = res.base != null ? res.base : before;
+          if (cands.length > 1) {
+            const list = cands.map(c => (c.value != null ? c.value : c.name));
+            /* 第一次：把候选表打出来，并填进第一个 */
+            out('\r\n');
+            const lines = res.lines || [cands.map(c => c.name).join('   ')];
+            out(lines.join('\r\n') + '\r\n');
+            const nm = list[0];
+            this.buf = key + nm + after;
+            this.cur = key.length + nm.length;
+            this._tabCycle = { key, list, idx: 0 };
+            this.redraw();
+            return;
+          }
+          if (cands.length === 1) {
+            const nm = cands[0].value != null ? cands[0].value : cands[0].name;
+            this._tabCycle = null;
+            this.buf = key + nm + after;
+            this.cur = key.length + nm.length;
+            this.redraw();
+            return;
+          }
+          this.redraw();
+        }).catch(() => { this.busy = false; this.redraw(); });
         continue;
       }
       if (cp < 0x20) { i += 1; continue; }
@@ -1161,13 +1194,13 @@ function makeShell(ctx) {
       ['窗口', 'winOpen({type,title,url,code})  spawn(code)  winList()  winClose(id)  agentOpen()  jshel()'],
       ['系统', 'saveFile(name,body)  askFile()  fetchText(url)  openUrl(url)  notify(msg)  perm(name)  ps()  kill(pid)  nuke()  clear()  history()'],
       ['DOM', 'document 与 F12 一致：querySelector / createElement / appendChild / write / innerHTML / style / classList / addEventListener'],
-      ['页面', 'page.q(sel)  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
+      ['页面', 'page.q(sel)  $("…") / $$("…") 查询简写  page.text(sel)  page.wins()  page.toast(t)  page.eval(code)←主线程原生执行'],
       ['智能体', 'agentTui.open() 进交互模式（提示符变 agent>）· agent("…") 问一句 · agentTui.stop() 中断 · agentTui.close() 退出'],
       ['hsb1', 'hsb1() 进交互式 Linux 风格 shell；hsb1("ls -la") 跑一行；hsb1 里 help 看命令表'],
       ['hsb2', '可选组件（WASM + FreeBSD + v86）：有 GPL 相关风险，默认不加载；hsb2() 启动，hsb2.stop()/clear()/status() 管理'],
       ['真相', 'spotfs：节点对象图，不是 ext4（没有 inode、没有权限位）。.home 是家，.app 放应用（脚本也是应用，不是二进制），.bin 已并入 .app，.dev 是设备，.proc 是线程，.pkg 是包，.savefile 是“保存到本机”。'],
       ['提示', 'JSHeL 是纯 JS 求值环境（和浏览器控制台一致）：提示符固定为 JSHeL> ，没有「当前目录」；函数名不会自动执行，`ls` 只求值为函数对象，`ls()` 才调用。Linux 命令请 hsb1()。'],
-      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。连按两次 Tab 列出候选。'],
+      ['补全', 'Tab 补的是 JS：全局函数 / 对象成员（document.、Math.、FS.）/ 你自己的变量；输入 / 或 ./ 才补文件路径。多候选时继续按 Tab 依次换成下一个。'],
       ['全表', 'api() 打印全部内置 API（分组 + 一句话说明），api("窗口") 只看某一组。'],
     ];
     for (const [k, v] of lines) {
@@ -1472,10 +1505,11 @@ function makeShell(ctx) {
         kind: r.kind === 'dir' ? 'dir' : 'file',
         desc: r.kind === 'dir' ? '目录' : (fmtBytes(r.size || 0))
       }));
-    if (cands.length === 1) return { value: head + dirPart + cands[0].value, candidates: cands };
+    const base = head + dirPart;
+    if (cands.length === 1) return { base, value: base + cands[0].value, candidates: cands };
     const cp = commonPrefix(cands.map(c => c.name));
-    const value = (cands.length > 1 && cp.length > namePart.length) ? head + dirPart + cp : undefined;
-    return { candidates: cands, value, lines: tabLines(cands, state.cols) };
+    const value = (cands.length > 1 && cp.length > namePart.length) ? base + cp : undefined;
+    return { base, candidates: cands, value, lines: tabLines(cands, state.cols) };
   }
 
   async function complete(before) {
@@ -1495,9 +1529,10 @@ function makeShell(ctx) {
                        desc: descFor(base, k) }))
           .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
           .slice(0, 200);
-        if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+        if (cands.length === 1) return { base: head, value: head + cands[0].value, candidates: cands };
         const cp = commonPrefix(cands.map(c => c.name));
         return {
+          base: head,
           candidates: cands,
           value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
           lines: tabLines(cands, state.cols)
@@ -1525,9 +1560,10 @@ function makeShell(ctx) {
       })
       .sort((a, b) => (a.kind === 'func' ? 0 : 1) - (b.kind === 'func' ? 0 : 1) || a.name.localeCompare(b.name))
       .slice(0, 200);
-    if (cands.length === 1) return { value: head + cands[0].value, candidates: cands };
+    if (cands.length === 1) return { base: head, value: head + cands[0].value, candidates: cands };
     const cp = commonPrefix(cands.map(c => c.name));
     return {
+      base: head,
       candidates: cands,
       value: (cands.length > 1 && cp.length > part.length) ? head + cp : undefined,
       lines: tabLines(cands, state.cols)
@@ -2175,7 +2211,10 @@ function callDom(op, ref, ...args) {
  * 不改变任何语义——只是把「读」提前做了。 */
 async function prefetchDom(code) {
   if (!code || typeof code !== 'string') return;
-  if (!/\b(document|window|page|localStorage|getComputedStyle)\b/.test(code)) return;
+  /* `$` / `$$` 是 querySelector 的简写，但代码里根本没有 document 这个词。
+   * 以前这一行直接 return，于是 `$('#topbar')` 拿到一个永远没有快照的空壳
+   * （tagName 是 undefined、length 是 0）——用户看到的就是「$ 没法用」。 */
+  if (!/\b(document|window|page|localStorage|getComputedStyle)\b/.test(code) && !/\$\$?\(/.test(code)) return;
   /* 不要默认把 body/html 塞进来：deep 快照带 innerHTML，整页可能是几 MB，
    * 每条命令都拉一遍会把 REPL 拖到几百毫秒。只有代码里真出现才拉。 */
   const sels = new Set();
@@ -2195,6 +2234,13 @@ async function prefetchDom(code) {
     if (kind === 'getElementById') sels.add('#' + sel.replace(/[^\w-]/g, '\\$&'));
     else if (kind === 'querySelectorAll') listSels.add(sel);
     else sels.add(sel);
+  }
+  /* $('…') / $$('…')：和 querySelector / querySelectorAll 同义，也要预取 */
+  const reD = /(^|[^\w$])(\$\$?)\(\s*(['"`])((?:\\.|(?!\3)[^\\])*)\3/g;
+  while ((m = reD.exec(code))) {
+    const sel = m[4];
+    if (!sel) continue;
+    if (m[2] === '$$') listSels.add(sel); else sels.add(sel);
   }
   /* page.q('…') / page.el('…') 也是选择器，别漏 */
   const re2 = /page\.(?:q|el|text|html|attr|exists|click|setText|setValue|setAttr)\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;

@@ -374,12 +374,28 @@ class CalcApp {
   }
   _bind() {
     const root = $('.calc', this.el);
-    root.addEventListener('click', (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
+    /* 按键走 pointerdown，不等 click。
+     * click 要等 pointerup（手指抬起）才合成，连点时第二下往往落在
+     * 「第一下的 click 刚处理完」之后，主观上就是「按了没反应」。
+     * 键盘触发的 click（Enter / 空格）没有 pointerdown，所以 click 那条也留着，
+     * 用时间戳去重，绝不重复输入。 */
+    const press = (b) => {
       const act = b.dataset.act;
       if (act) this.doAct(act, b);
       else if (b.dataset.ins != null) this.ins(this.second && b.dataset.alt != null ? b.dataset.alt : b.dataset.ins);
+    };
+    root.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      this._pdAt = performance.now();
+      press(b);
+    });
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (performance.now() - (this._pdAt || 0) < 700) return;
+      press(b);
     });
     root.addEventListener('keydown', (e) => this.onKey(e));
     root.addEventListener('focus', () => {});

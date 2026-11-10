@@ -627,7 +627,31 @@ class TerminalSession {
     this._ro = new ResizeObserver(() => this.fitNow());
     this._ro.observe(this.container);
     setTimeout(() => this.fitNow(), 30);
-    this.term.focus();
+    this._bindZoom();
+    /* 这里**故意不 focus**。手机上一聚焦就弹输入法，开一扇终端窗口＝整屏被键盘吃掉。
+     * 只有「页面加载完那一次」由 70-boot 聚焦桌面终端，以及用户自己点进来才算数。 */
+  }
+
+  /* Ctrl / ⌘ + 滚轮：只缩放这一扇终端，别动全局字号。
+   * 用 term.options.fontSize 而不是 CSS transform —— 字要重新排版、列数要跟着变，
+   * 拉大 canvas 那种做法只会把字糊掉。 */
+  _bindZoom() {
+    const host = this.container;
+    if (!host) return;
+    this.fontSize = Number(Settings.get('font')) || 14;
+    const onWheel = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const step = e.deltaY > 0 ? -1 : 1;
+      const next = Math.max(8, Math.min(32, this.fontSize + step));
+      if (next === this.fontSize) return;
+      this.fontSize = next;
+      try { this.term.options.fontSize = next; } catch (err) {}
+      try { this.fit && this.fit.fit(); } catch (err) {}
+    };
+    host.addEventListener('wheel', onWheel, { passive: false });
+    this._zoomOff = () => host.removeEventListener('wheel', onWheel);
   }
 
   /* ---------------------------------------------------------------- 自定义光标
@@ -914,6 +938,7 @@ class TerminalSession {
     try { this.worker && this.worker.postMessage({ t:'terminate' }); } catch (e) {}
     try { this.worker && this.worker.terminate(); } catch (e) {}
     this.worker = null;
+    try { this._zoomOff && this._zoomOff(); } catch (e) {}
     try { this._ro && this._ro.disconnect(); } catch (e) {}
     try { clearTimeout(this.cur && this.cur.idle); } catch (e) {}
     try { if (this.cur && this.cur.raf) cancelAnimationFrame(this.cur.raf); } catch (e) {}
@@ -1039,6 +1064,62 @@ const WIN_DOT_SVG = {
      '<path fill-rule="evenodd" d="M 16.87 15.61 V 33 H 28.06 V 15.61 Z M 16.87 16.41 H 22.40 V 24.21 H 16.87 Z"/></g></svg>'
 };
 
+/* ---------------------------------------------------------------- 长按
+ * 色点、Dock 图标、顶栏胶囊、四钮框里的圆钮——四处都是「按住不动 550ms」。
+ * 以前这段每个地方抄一遍，改阈值要改四份；现在只留这一份。
+ *
+ * 两个细节：
+ *   1) 手指一旦移动超过 8px 就取消——那是拖拽，不是长按；
+ *   2) 长按弹框之后紧跟着的那次 click 必须吞掉，否则「长按红点」会先弹框再关窗。
+ */
+function bindLongPress(el, onLong, onMenu, ms) {
+  const wait = ms || 550;
+  let timer = 0, sx = 0, sy = 0, fired = false;
+  const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    fired = false; sx = e.clientX; sy = e.clientY;
+    clear();
+    timer = setTimeout(() => { timer = 0; fired = true; onLong(); }, wait);
+  });
+  el.addEventListener('pointermove', e => {
+    if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => el.addEventListener(t, clear));
+  el.addEventListener('click', e => {
+    if (!fired) return;
+    fired = false;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+  }, true);
+  if (onMenu) {
+    el.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      clear(); fired = false;
+      onMenu();
+    });
+  }
+}
+
+
+/* 浮层定位：四钮框、详细菜单、标题气泡都是「贴着锚点下方居中，
+ * 下面放不下就翻到上面，左右夹在视口内」。以前三处各抄一遍，改一处忘两处。 */
+function placePopover(el, anchor, gap) {
+  const g = gap == null ? 8 : gap;
+  const r = anchor.getBoundingClientRect();
+  const mw = el.offsetWidth, mh = el.offsetHeight;
+  let x = r.left + r.width / 2 - mw / 2;
+  let y = r.bottom + g;
+  let below = true;
+  if (y + mh > innerHeight - 8) { y = r.top - mh - g; below = false; }
+  x = Math.max(8, Math.min(x, innerWidth - mw - 8));
+  y = Math.max(8, Math.min(y, innerHeight - mh - 8));
+  el.style.left = Math.round(x) + 'px';
+  el.style.top = Math.round(y) + 'px';
+  /* 小尖角朝哪边：翻到上面时角要长在底边 */
+  el.dataset.place = below ? 'below' : 'above';
+}
+
 const WindowManager = {
   windows: new Map(),
   z: 30,
@@ -1054,24 +1135,10 @@ const WindowManager = {
   _initModeChrome() {
     const chip = document.getElementById('hidChip');
     if (chip) {
-      let timer = 0, sx = 0, sy = 0, longPressed = false;
-      const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
-      chip.addEventListener('pointerdown', e => {
-        if (e.button !== 0) return;
-        longPressed = false; sx = e.clientX; sy = e.clientY;
-        clear();
-        timer = setTimeout(() => { timer = 0; longPressed = true; ChipMenu.open(chip, chip.dataset.win); }, 500);
-      });
-      chip.addEventListener('pointermove', e => {
-        if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-      });
-      ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => chip.addEventListener(t, clear));
-      chip.addEventListener('contextmenu', e => {
-        e.preventDefault(); clear();
-        ChipMenu.open(chip, chip.dataset.win);
-      });
+      /* 单击 = 还原；长按 / 右键 = 四钮框（和窗口色点同一套手势） */
+      bindLongPress(chip, () => ChipMenu.open(chip, chip.dataset.win),
+                          () => ChipMenu.open(chip, chip.dataset.win));
       chip.addEventListener('click', () => {
-        if (longPressed) { longPressed = false; return; }
         const id = chip.dataset.win;
         if (id) WindowManager.maxMode(id, 'normal');
       });
@@ -1207,7 +1274,11 @@ const WindowManager = {
     });
     const bar = $('.win-bar', el);
     bar.addEventListener('pointerdown', e => this._startDrag(e, win));
-    bar.addEventListener('dblclick', e => { if (!e.target.closest('.win-dot')) this.toggleMax(id); });
+    /* 双击标题条 = 最大化 / 还原。色点与工具按钮不算标题（点两下别把窗口放大）。 */
+    bar.addEventListener('dblclick', e => {
+      if (e.target.closest('.win-dot, .win-tools')) return;
+      this.toggleMax(id);
+    });
     this._bindTitleTip(win);
 
     /* 提手/色点/标题全部按窗口宽度重算：窗口 280 和 1600 用的是同一套比例，
@@ -1377,6 +1448,11 @@ const WindowManager = {
     const w0 = r.width, h0 = r.height;
 
     let moved = false, snapPos = null, raf = 0, last = null;
+    /* 拖动期间只改 transform，松手才把最终坐标写回 left/top。
+     * 为什么：left/top 每帧都要重新布局整个窗口（含终端 canvas、iframe），
+     * 内容会跟着重排重绘——用户看到的就是「拖动时内容闪」。transform 只走合成层，
+     * 窗口里的东西一个像素都不用重画。 */
+    let nx = ox, ny = oy;
     const snapEl = document.getElementById('winSnap');
     document.body.classList.add('win-drag');
 
@@ -1388,35 +1464,29 @@ const WindowManager = {
       moved = true;
       const box = deskBox();
       // 左右至少留 90px 在桌面内，上下至少留 44px（标题栏）可抓
-      const nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
-      const ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
-      win.el.style.left = nx + 'px';
-      win.el.style.top = ny + 'px';
+      nx = clamp(Math.round(ox + dx), 90 - w0, box.w - 90);
+      ny = clamp(Math.round(oy + dy), 0, box.h - (win._hh || 56));
+      win.el.style.transform = 'translate3d(' + (nx - ox) + 'px,' + (ny - oy) + 'px,0)';
       win.el.classList.add('dragging');
 
       /* 边缘吸附：贴顶 = 最大化，贴左右 = 半屏，贴角 = 四分之一，
        * 贴底中间 = 最小化（黄色提示框）。角优先于边——不然在左上角永远只能拿到「左半屏」。
        *
-       * 判据只有一个：**提手（把手）的位置**。
-       *   不看指针 —— 指针在窗口中间，窗口贴着左边，用户没打算吸边；
-       *   不看窗口边框/标题条/内容区 —— 提手是唯一的抓取点，它贴边才叫贴边。
-       *   阈值 10px：肉眼「几乎紧贴」，不是「靠近了就算」。以前 46px 太松，
-       *   稍微偏一点就弹绿框，用户的原话是「我只是往左偏一点点」。
-       * 底部同理：提手底边沉到画布底部 40px 内才算「拖到底」。 */
-      const SNAP = 10, BOTTOM = 40;
-      const hEl = win.el.querySelector('.win-handle');
-      const hr0 = hEl ? hEl.getBoundingClientRect() : null;
-      const hx = hr0 ? hr0.left - box.left : 0;
-      const hy = hr0 ? hr0.top - box.top : 0;
-      const hw = hr0 ? hr0.width : 0;
-      const hh = hr0 ? hr0.height : (win._hh || 42);
-      const hcx = hx + hw / 2;
-      const nearL = hx <= SNAP;
-      const nearR = hx + hw >= box.w - SNAP;
-      const nearT = hy <= SNAP;
-      const nearB = hy + hh >= box.h - BOTTOM;
-      /* 底部中间：提手中心落在画布中段，且不贴左右（贴角另有语义） */
-      const midX = !nearL && !nearR && hcx > box.w * 0.25 && hcx < box.w * 0.75;
+       * 判据只有一个：**指针（鼠标 / 手指）的位置**。
+       *   0.0.1.32 用的是提手矩形，其实是我把需求记错了——用户要的是
+       *   「手指拖到哪儿，就算贴哪儿」。手指在屏幕最左边，才吸左半屏；
+       *   手指还在窗口中间，窗口再靠边也不吸。
+       * 阈值 10px：肉眼「几乎挨着」，不是「靠近了就算」。
+       * 底部 28px：手指压到画布最下沿才算「拖到底」。 */
+      const SNAP = 10, BOTTOM = 28;
+      const px = ev.clientX - box.left;
+      const py = ev.clientY - box.top;
+      const nearL = px <= SNAP;
+      const nearR = px >= box.w - SNAP;
+      const nearT = py <= SNAP;
+      const nearB = py >= box.h - BOTTOM;
+      /* 底部中间：指针落在画布中段，且不贴左右（贴角另有语义） */
+      const midX = !nearL && !nearR && px > box.w * 0.25 && px < box.w * 0.75;
       if (nearB && midX) snapPos = 'min';
       else if (nearT && nearL) snapPos = 'tl';
       else if (nearT && nearR) snapPos = 'tr';
@@ -1448,6 +1518,10 @@ const WindowManager = {
       try { bar.releasePointerCapture(pid); } catch (_) {}
       document.body.classList.remove('win-drag');
       win.el.classList.remove('dragging');
+      /* 把合成层的位移兑现成真实坐标：顺序必须是「先写 left/top，再清 transform」，
+       * 反过来的话会有一帧停在旧位置。 */
+      if (moved) { win.el.style.left = nx + 'px'; win.el.style.top = ny + 'px'; }
+      win.el.style.transform = '';
       if (snapEl) snapEl.style.display = 'none';
       if (snapPos === 'min') {
         /* 先放回原位再收进 Dock：恢复时才回到用户原本的位置，而不是拖到底部的位置 */
@@ -1462,6 +1536,17 @@ const WindowManager = {
         win.el.style.left = ox + 'px'; win.el.style.top = oy + 'px';
         win.el.style.width = w0 + 'px'; win.el.style.height = h0 + 'px';
         this.snap(win.id, snapPos);
+      }
+      /* 触屏没有 dblclick：自己数两下。只认「没拖动的点按」，340ms 窗口。 */
+      if (ev && ev.pointerType !== 'mouse' && !moved) {
+        const now = performance.now();
+        if (now - (this._tapT || 0) < 340 &&
+            Math.hypot(ev.clientX - (this._tapX || 0), ev.clientY - (this._tapY || 0)) < 30) {
+          this._tapT = 0;
+          this.toggleMax(win.id);
+        } else {
+          this._tapT = now; this._tapX = ev.clientX; this._tapY = ev.clientY;
+        }
       }
     };
     bar.addEventListener('pointermove', move);
@@ -1536,6 +1621,14 @@ const WindowManager = {
     const win = this.windows.get(id);
     if (!win) return;
     if (typeof DotMenu !== 'undefined' && DotMenu.winId && DotMenu.winId !== id) DotMenu.close();
+    /* 快路径：点的是已经聚焦的那扇窗。以前这里无条件重建整条 Dock 的 DOM——
+     * 计算器里每点一个按键（pointerdown 会冒泡到这里）就 innerHTML 重排一次，
+     * 连点两下时第二下要等重排完，手感就是「按了没反应」。 */
+    if (this._focusedId === id && win.el.classList.contains('focus')) {
+      win.el.style.zIndex = ++this.z;
+      return;
+    }
+    this._focusedId = id;
     for (const w of this.windows.values()) w.el.classList.remove('focus');
     win.el.classList.add('focus');
     win.el.style.zIndex = ++this.z;
@@ -1749,33 +1842,10 @@ const WindowManager = {
     if (w) this.close(w.id);
   },
 
-  /* 色点的第二功能：长按 550ms → 四钮悬浮框；右键 → 完整菜单（带文字，含形态与吸附）。
-   * 长按结束后紧跟的那次 click 必须吞掉，否则「长按红点」会先弹框再把窗口关了。 */
+  /* 色点：长按 → 四钮悬浮框；右键 → 完整菜单（带文字，含形态与吸附）。 */
   _bindDotMenu(dot, id) {
     const act = dot.dataset.a;
-    let timer = null, sx = 0, sy = 0, fired = false;
-    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    dot.addEventListener('click', e => {
-      if (!fired) return;
-      fired = false;
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }, true);
-    dot.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      fired = false; sx = e.clientX; sy = e.clientY;
-      clear();
-      timer = setTimeout(() => { timer = null; fired = true; DotMenu.open(dot, id); }, 550);
-    });
-    dot.addEventListener('pointermove', e => {
-      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-    });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => dot.addEventListener(t, clear));
-    dot.addEventListener('contextmenu', e => {
-      e.preventDefault(); e.stopPropagation();
-      clear(); fired = false;
-      WinMenu.open(dot, id, act);
-    });
+    bindLongPress(dot, () => DotMenu.open(dot, id), () => WinMenu.open(dot, id, act));
   },
 
   /* 标题被中间截断时，完整标题得有个地方看：
@@ -2013,28 +2083,7 @@ const WindowManager = {
   /* Dock 图标：单击切换最小化（原有），长按 550ms 弹四钮框。
    * 和窗口色点、顶栏胶囊是同一个框——用户不用记三套菜单。 */
   _bindDockMenu(b) {
-    let timer = 0, sx = 0, sy = 0, fired = false;
-    const clear = () => { if (timer) { clearTimeout(timer); timer = 0; } };
-    b.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      fired = false; sx = e.clientX; sy = e.clientY;
-      clear();
-      timer = setTimeout(() => { timer = 0; fired = true; DotMenu.open(b, b.dataset.win); }, 550);
-    });
-    b.addEventListener('pointermove', e => {
-      if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
-    });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, clear));
-    b.addEventListener('click', e => {
-      if (!fired) return;
-      fired = false;
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }, true);
-    b.addEventListener('contextmenu', e => {
-      e.preventDefault(); clear(); fired = false;
-      DotMenu.open(b, b.dataset.win);
-    });
+    bindLongPress(b, () => DotMenu.open(b, b.dataset.win), () => DotMenu.open(b, b.dataset.win));
   },
 
   /* 折叠 / 展开：把手点一下、Dock 往下拖、药丸往上滑、药丸点一下 —— 四条路都通 */
@@ -2130,13 +2179,7 @@ const DotMenu = {
       `<button class="win-dot x" data-a="max" aria-label="最大化">${WIN_DOT_SVG.x}</button>` +
       `<button class="win-dot b" data-a="back" aria-label="置于底层">${WIN_DOT_SVG.b}</button>`;
     document.body.appendChild(m);
-    const r = anchor.getBoundingClientRect();
-    const mw = m.offsetWidth, mh = m.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 9;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 9;
-    m.style.left = clamp(Math.round(x), 8, innerWidth - mw - 8) + 'px';
-    m.style.top = clamp(Math.round(y), 8, innerHeight - mh - 8) + 'px';
+    placePopover(m, anchor, 9);
 
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-a]');
@@ -2150,6 +2193,16 @@ const DotMenu = {
         WindowManager.maxMode(id, (cur === 'normal') ? 'max' : (cur === 'max' ? 'normal' : 'max'));
       } else if (a === 'back') WindowManager.sendToBack(id);
     });
+    /* 二级菜单：四钮框里的圆钮再长按一次，展开这个动作的完整菜单。
+     * 手势和窗口色点完全一样（bindLongPress），框也复用 WinMenu——
+     * 只是锚点从色点换成了框里的圆钮。 */
+    $$('.win-dot[data-a]', m).forEach(btn => bindLongPress(btn, () => {
+      const a = btn.dataset.a;
+      /* 二级框加一枚小尖角：形状和一级菜单略有不同，但 DOM 与内容完全复用。 */
+      const sub = WinMenu.open(btn, id, a);
+      if (sub) sub.classList.add('lv2');
+      this.close();
+    }));
     this.el = m; this.anchor = anchor; this.winId = id;
     setTimeout(() => {
       document.addEventListener('pointerdown', this._outside, true);
@@ -2191,16 +2244,7 @@ const WinMenu = {
     m.className = 'winmenu';
     m.innerHTML = this._html(w, act);
     document.body.appendChild(m);
-
-    const r = dot.getBoundingClientRect();
-    const mw = m.offsetWidth, mh = m.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 8;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
-    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
-    y = Math.max(8, y);
-    m.style.left = x + 'px';
-    m.style.top = y + 'px';
+    placePopover(m, dot, 8);
 
     m.addEventListener('click', e => {
       const b = e.target.closest('[data-snap]');
@@ -2215,12 +2259,19 @@ const WinMenu = {
       else if (cmd === 'close-one') WindowManager.close(id);
       else if (cmd === 'down') WindowManager.sendDown(id);
       else if (cmd === 'bottom') WindowManager.sendToBack(id);
+      else if (cmd === 'min-one') WindowManager.minimize(id);
+      else if (cmd === 'min-type') {
+        for (const x of [...WindowManager.windows.values()]) {
+          if (x.type === w.type && !x.minimized) WindowManager.minimize(x.id);
+        }
+      }
       else if (cmd === 'mintype') WindowManager.minimize(id);
     });
 
     this.el = m;
     this.winId = id;
     this._dot = dot;
+    return m;
     setTimeout(() => {
       document.addEventListener('pointerdown', this._outside, true);
       document.addEventListener('keydown', this._esc, true);
@@ -2235,9 +2286,10 @@ const WinMenu = {
         <button data-cmd="close-one">只关闭这一个</button>`;
     }
     if (act === 'min') {
-      return `<div class="winmenu__title">黄色 · 待定</div>
-        <div class="wm-note">这个功能的定义还没定下来（需求里写的是「？，未实现」）。先把入口留在这儿，想好了再补。</div>
-        <button data-cmd="noop">知道了</button>`;
+      const same = [...WindowManager.windows.values()].filter(x => x.type === w.type && !x.minimized).length;
+      return `<div class="winmenu__title">黄色 · 最小化</div>
+        <button class="stack" data-cmd="min-one"><span>收进 Dock</span><em>点 Dock 上的图标再回来</em></button>
+        <button class="stack" data-cmd="min-type"><span>同类一起收（${same}）</span><em>把所有「${t}」窗口都最小化</em></button>`;
     }
     if (act === 'max') {
       const cur = w.mode || (w.maximized ? 'max' : 'normal');
@@ -2293,15 +2345,7 @@ const TitleTip = {
     this.el.innerHTML = esc(win.title || '') +
       `<i>${esc(win.type || 'window')}${win.mode && win.mode !== 'normal' ? ' · ' + esc(win.mode) : ''}</i>`;
     this.el.classList.add('on');
-    const r = (titleEl || win.el).getBoundingClientRect();
-    const mw = this.el.offsetWidth, mh = this.el.offsetHeight;
-    let x = r.left + r.width / 2 - mw / 2;
-    let y = r.bottom + 8;
-    if (y + mh > innerHeight - 8) y = r.top - mh - 8;
-    x = Math.max(8, Math.min(x, innerWidth - mw - 8));
-    y = Math.max(8, y);
-    this.el.style.left = x + 'px';
-    this.el.style.top = y + 'px';
+    placePopover(this.el, titleEl || win.el, 8);
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.hide(), 3200);
   },

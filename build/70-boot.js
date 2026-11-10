@@ -478,7 +478,8 @@ const Drawer = {
     $('#drawer').classList.remove('on');
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-overlay').classList.remove('on');
-    if (TerminalManager.desktop && TerminalManager.desktop.term) TerminalManager.desktop.term.focus();
+    /* 这里以前会把焦点塞回桌面终端：手机上等于「一关抽屉就弹输入法」，
+     * 还顺带把视口顶起来，抽屉看起来就像闪了一下。焦点只在用户点击时给。 */
   },
   /* 右滑关闭：抽屉跟手移动，松手按「位移 + 速度」决定关还是弹回。
    * 用 pointer 事件而不是 touch，鼠标拖拽同样生效（桌面上也符合直觉）。
@@ -541,34 +542,45 @@ const Drawer = {
       if (!active) return;
       if (!engaged) { active = false; return; }
       const p = dx / w;
-      const far = p > 0.32 || (v > 0.5 && p > 0.12);
+      /* 松手阈值比原来松一档：位移过 26% 就关，快速轻扫（>0.35px/ms）只要 8% 也算。
+       * 以前 32% + 0.5，手指划得稍微快一点反而被判成「不够远」，弹回去——
+       * 用户看到的就是「闪一下闪回初始态」。 */
+      const far = p > 0.26 || (v > 0.35 && p > 0.08);
+      active = engaged = false;
+      /* 先把 .dragging 摘掉（它还带着 transition:none），再显式指定目标位置。
+       * 关键：不要清掉 inline transform 指望 CSS 的 translateX(100%) 接手——
+       * 那一帧会从 dx 直接跳到 100%，就是那个「闪」。 */
+      dr.classList.remove('dragging');
+      dr.style.transition = 'transform .22s cubic-bezier(.22,1,.36,1)';
+      ov.style.transition = 'opacity .22s cubic-bezier(.22,1,.36,1)';
       if (far) {
-        /* 关键顺序：inline transform 先留着——这样 .on 拿掉时画面不会闪回 0，
-         * 下一帧再清掉 inline，CSS 过渡才会从「手指松开的位置」接着滑出去 */
-        dr.style.transition = '';
-        ov.style.transition = '';
-        dr.style.transform = 'translateX(' + dx.toFixed(1) + 'px)';
-        active = engaged = false;
+        dr.style.transform = 'translateX(100%)';
+        ov.style.opacity = '0';
+        /* 滑动手势之后紧跟的 click 不能落到被划过的按钮上（否则会顺手打开一个窗口） */
+        dr.__swipe = true;
+        setTimeout(() => { dr.__swipe = false; }, 360);
         this.close();
-        requestAnimationFrame(() => {
-          dr.style.transform = '';
-          ov.style.opacity = '';
-          dr.classList.remove('dragging');
-        });
+        setTimeout(() => {
+          dr.style.transition = ''; dr.style.transform = '';
+          ov.style.transition = ''; ov.style.opacity = '';
+        }, 240);
       } else {
-        dr.style.transition = 'transform .24s cubic-bezier(.22,1,.36,1)';
-        ov.style.transition = 'opacity .24s cubic-bezier(.22,1,.36,1)';
         dr.style.transform = '';
         ov.style.opacity = '';
-        const done = () => { reset(); dr.removeEventListener('transitionend', done); };
-        dr.addEventListener('transitionend', done, { once: true });
-        setTimeout(done, 320);
-        active = engaged = false;
+        setTimeout(reset, 260);
       }
     };
     dr.addEventListener('pointerup', up);
     dr.addEventListener('pointercancel', up);
     dr.addEventListener('lostpointercapture', up);
+    /* 指针在抽屉外面松开（手指划出屏幕边缘）也要收尾 */
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    /* 划过之后那一次 click 一律吞掉：拖拽不是点击 */
+    dr.addEventListener('click', (e) => {
+      if (!dr.__swipe) return;
+      e.stopPropagation(); e.preventDefault();
+    }, true);
   },
   /* 抽屉里的窗口列表：和 Dock 用同一份 WindowManager.windows，
    * 所以收起 Dock 之后仍然能从这里切窗口 / 还原。 */
@@ -801,7 +813,6 @@ async function nuke() {
 function execInDesktop(code) {
   const d = TerminalManager.desktop;
   if (!d) return false;
-  d.term && d.term.focus();
   const s = String(code);
   if (s.includes('\n')) d._post({ t:'in', data:'\x1b[200~' + s + '\x1b[201~' });
   else d._post({ t:'in', data:s + '\r' });
@@ -1216,6 +1227,13 @@ async function boot() {
     await sleep(320);
     bootEl.classList.add('gone');
     setTimeout(() => { bootEl.style.display = 'none'; }, 500);
+    /* 唯一一次「自动聚焦」：页面刚加载完，光标直接落在桌面终端里，敲键就能用。
+     * 其它场合（开新窗口、关抽屉、执行脚本）一律不抢焦点——手机上那等于
+     * 随时把输入法顶上来。详见 README「焦点规则」。 */
+    setTimeout(() => {
+      const d = TerminalManager.desktop;
+      if (d && d.term) { try { d.term.focus(); } catch (e) {} }
+    }, 360);
 
     // 后台检查后端
     setTimeout(() => Drawer.checkBackend(), 800);
